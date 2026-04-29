@@ -7,6 +7,7 @@
 #include "boot/boot_info.hpp"
 #include "memory/heap.hpp"
 #include "memory/page_allocator.hpp"
+#include "storage/boot_volume.hpp"
 
 constexpr size_t kShellHistoryCapacity = 16;       // 第一版先记最近 16 条命令，够演示 ring buffer。
 constexpr size_t kShellHistoryEntryCapacity = 32;  // 和当前 shell 输入缓冲区保持同量级，先不做超长命令历史。
@@ -25,6 +26,7 @@ struct ShellState {
   const BootInfo* boot_info;        // `bootinfo` / `e820` 命令要从这里看启动阶段交进来的信息。
   const PageAllocator* allocator;  // `mem` 命令会从这里拿当前页分配器状态。
   const KernelHeap* heap;          // `heap` 命令会从这里拿当前堆状态。
+  const BootVolume* boot_volume;   // `disk` 命令会从这里看 stage2 预读进来的启动卷信息。
   ShellOutput output;              // 所有 shell 输出最终都走这个回调。
   uint16_t history_count;          // 当前 ring buffer 里实际存了多少条命令。
   uint16_t history_next_slot;      // 下一条命令应该写进哪个槽位。
@@ -43,6 +45,7 @@ bool initialize_shell(ShellState* shell,
                       const BootInfo* boot_info,
                       const PageAllocator* allocator,
                       const KernelHeap* heap,
+                      const BootVolume* boot_volume,
                       const ShellOutput* output);
 
 // 打印最小提示符，让用户知道 shell 已经在等输入了。
@@ -54,6 +57,7 @@ void shell_print_prompt(const ShellState* shell);
 // - mem
 // - ticks
 // - heap
+// - disk
 // - irq
 // - bootinfo
 // - e820

@@ -42,6 +42,10 @@
    再继续往前，把“执行完就忘”的 shell 扩成“能保存最近命令历史”的第一版交互系统。
 19. [从命令历史到行编辑 + 历史浏览 + 内核观察命令](./KERNEL_SHELL_EDITOR_INSPECT_GUIDE.md)
    再继续往前，把“只会记历史”的 shell 扩成“能编辑、能回看、还能观察启动链状态”的真正调试终端骨架。
+20. [从可释放堆到对象分配 + 更正式的内核内存子系统](./KERNEL_MEMORY_OBJECT_GUIDE.md)
+   这一步重新回到 `memory/`，把“只会分原始字节”的堆提升成“后面模块能正式调用的 kmalloc/knew 层”。
+21. [从对象分配到最小扇区读取 + 启动卷](./KERNEL_BOOT_VOLUME_GUIDE.md)
+   这一步开始进入“存储”方向，但先不硬写控制器驱动，而是先把 stage2 预读卷和内核里的 sector read 接口打通。
 
 一句话记忆这个顺序：
 
@@ -65,4 +69,6 @@ stage1
 -> observable shell + command arguments
 -> shell command history
 -> shell line editor + history browse + inspect commands
+-> kernel object allocator + formal memory subsystem
+-> boot volume + minimal sector reads
 ```

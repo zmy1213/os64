@@ -20,6 +20,9 @@ struct KernelHeap {
   uint64_t mapped_limit;            // 已经映射好的堆虚拟地址上界（不包含自身）。
   uint64_t virtual_limit;           // 这版堆允许长到哪儿为止，先固定一个上界。
   uint64_t used_bytes;              // 当前真正还在使用中的 payload 总字节数。
+  uint64_t active_allocations;      // 现在还有多少块分配尚未 free。
+  uint64_t total_allocations;       // 自堆初始化以来，一共成功分配过多少次。
+  uint64_t failed_allocations;      // 自堆初始化以来，一共有多少次分配失败。
   KernelHeapFreeRegion* free_list;  // 所有空闲区按地址顺序串成一条链。
 };
 
@@ -29,5 +32,8 @@ bool heap_free(KernelHeap* heap, void* allocation);
 uint64_t heap_used_bytes(const KernelHeap* heap);
 uint64_t heap_mapped_bytes(const KernelHeap* heap);
 uint64_t heap_free_bytes(const KernelHeap* heap);
+uint64_t heap_active_allocations(const KernelHeap* heap);
+uint64_t heap_total_allocations(const KernelHeap* heap);
+uint64_t heap_failed_allocations(const KernelHeap* heap);
 
 #endif

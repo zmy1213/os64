@@ -1,6 +1,6 @@
 # kernel 目录说明
 
-现在 `kernel/` 已经按职责拆成 6 类：
+现在 `kernel/` 已经按职责拆成 7 类：
 
 ```text
 kernel/
@@ -29,7 +29,12 @@ kernel/
 │   ├── paging.hpp
 │   ├── paging.cpp
 │   ├── heap.hpp
-│   └── heap.cpp
+│   ├── heap.cpp
+│   ├── kmemory.hpp
+│   └── kmemory.cpp
+├── storage/
+│   ├── boot_volume.hpp
+│   └── boot_volume.cpp
 ├── shell/
 │   ├── shell.hpp
 │   └── shell.cpp
@@ -71,6 +76,7 @@ kernel/
 - 页分配器初始化
 - 页表测试
 - 堆测试
+- boot volume / 最小按扇区读取测试
 - 定时器中断测试
 - 基于 tick 的最小等待 / sleep 测试
 - 键盘 IRQ + 字符缓冲区测试
@@ -129,10 +135,12 @@ kernel/
   管页表和虚拟地址映射。
 - `heap.*`
   在页表和物理页之上，提供更像“分配器”的堆接口。
+- `kmemory.*`
+  在堆之上再包一层正式入口，给后面的 C++ 对象分配提供 `kmalloc/kfree/knew/kdelete`。
 
 一句话理解：
 
-> `memory/` 管“物理内存怎么拿、虚拟地址怎么映射、堆内存怎么分”。
+> `memory/` 管“物理内存怎么拿、虚拟地址怎么映射、堆内存怎么分，以及对象怎么落到堆上”。
 
 ---
 
@@ -149,7 +157,20 @@ kernel/
 
 ---
 
-## 7. `runtime/`
+## 7. `storage/`
+
+这里放和“启动介质数据如何被内核读取”有关的代码：
+
+- `boot_volume.cpp/.hpp`
+  负责把 stage2 预读进内存的一小段启动卷包装成“可以按扇区读取”的最小接口。
+
+一句话理解：
+
+> `storage/` 管“内核现在怎样先读到一段块设备数据，即使还没有真正的磁盘控制器驱动”。
+
+---
+
+## 8. `runtime/`
 
 这里放 freestanding 内核里最小的运行时工具：
 
@@ -174,7 +195,7 @@ kernel/
 
 ---
 
-## 8. 为什么现在这样分
+## 9. 为什么现在这样分
 
 因为如果所有文件都继续平铺在 `kernel/` 根目录，
 后面一多起来你会很快分不清：

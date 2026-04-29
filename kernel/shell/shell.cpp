@@ -4,6 +4,7 @@
 #include "interrupts/keyboard.hpp"
 #include "interrupts/pit.hpp"
 #include "runtime/runtime.hpp"
+#include "storage/boot_volume.hpp"
 
 namespace {
 
@@ -84,6 +85,18 @@ void write_hex64(const ShellState* shell, uint64_t value) {
   for (int shift = 60; shift >= 0; shift -= 4) {
     const uint8_t nibble = static_cast<uint8_t>((value >> shift) & 0x0F);
     write_hex_nibble(shell, nibble);
+  }
+}
+
+void write_bounded_string(const ShellState* shell,
+                          const char* text,
+                          size_t limit) {
+  if (text == nullptr) {
+    return;
+  }
+
+  for (size_t i = 0; i < limit && text[i] != '\0'; ++i) {
+    write_char(shell, text[i]);
   }
 }
 
@@ -275,6 +288,8 @@ void handle_help_command(const ShellState* shell) {
   write_newline(shell);
   write_string(shell, "heap  - show kernel heap stats");
   write_newline(shell);
+  write_string(shell, "disk  - show boot volume info");
+  write_newline(shell);
   write_string(shell, "irq   - show timer/keyboard irq stats");
   write_newline(shell);
   write_string(shell, "bootinfo - show boot handoff info");
@@ -336,6 +351,65 @@ void handle_heap_command(const ShellState* shell) {
   write_string(shell, "heap_free_bytes=");
   write_u64(shell, heap_free_bytes(shell->heap));
   write_newline(shell);
+
+  write_string(shell, "heap_active_allocations=");
+  write_u64(shell, heap_active_allocations(shell->heap));
+  write_newline(shell);
+
+  write_string(shell, "heap_total_allocations=");
+  write_u64(shell, heap_total_allocations(shell->heap));
+  write_newline(shell);
+
+  write_string(shell, "heap_failed_allocations=");
+  write_u64(shell, heap_failed_allocations(shell->heap));
+  write_newline(shell);
+}
+
+void handle_disk_command(const ShellState* shell) {
+  if (shell == nullptr || !boot_volume_is_ready(shell->boot_volume)) {
+    write_string(shell, "disk unavailable");
+    write_newline(shell);
+    return;
+  }
+
+  const BootVolumeHeader* const header = boot_volume_header(shell->boot_volume);
+  if (header == nullptr) {
+    write_string(shell, "disk unavailable");
+    write_newline(shell);
+    return;
+  }
+
+  write_string(shell, "disk_start_lba=");
+  write_u64(shell, shell->boot_volume->start_lba);
+  write_newline(shell);
+
+  write_string(shell, "disk_sector_count=");
+  write_u64(shell, shell->boot_volume->sector_count);
+  write_newline(shell);
+
+  write_string(shell, "disk_sector_size=");
+  write_u64(shell, shell->boot_volume->sector_size);
+  write_newline(shell);
+
+  write_string(shell, "disk_total_bytes=");
+  write_u64(shell, boot_volume_total_bytes(shell->boot_volume));
+  write_newline(shell);
+
+  write_string(shell, "disk_signature=");
+  write_bounded_string(shell, header->signature, sizeof(header->signature));
+  write_newline(shell);
+
+  write_string(shell, "disk_volume_name=");
+  write_bounded_string(shell, header->volume_name, sizeof(header->volume_name));
+  write_newline(shell);
+
+  write_string(shell, "disk_readme_sector=");
+  write_u64(shell, header->readme_sector_index);
+  write_newline(shell);
+
+  write_string(shell, "disk_notes_sector=");
+  write_u64(shell, header->notes_sector_index);
+  write_newline(shell);
 }
 
 void handle_irq_command(const ShellState* shell) {
@@ -381,6 +455,22 @@ void handle_bootinfo_command(const ShellState* shell) {
 
   write_string(shell, "bootinfo_memory_map_ptr=0x");
   write_hex64(shell, shell->boot_info->memory_map_ptr);
+  write_newline(shell);
+
+  write_string(shell, "bootinfo_boot_volume_ptr=0x");
+  write_hex64(shell, shell->boot_info->boot_volume_ptr);
+  write_newline(shell);
+
+  write_string(shell, "bootinfo_boot_volume_start_lba=");
+  write_u64(shell, shell->boot_info->boot_volume_start_lba);
+  write_newline(shell);
+
+  write_string(shell, "bootinfo_boot_volume_sector_count=");
+  write_u64(shell, shell->boot_info->boot_volume_sector_count);
+  write_newline(shell);
+
+  write_string(shell, "bootinfo_boot_volume_sector_size=");
+  write_u64(shell, shell->boot_info->boot_volume_sector_size);
   write_newline(shell);
 }
 
@@ -524,6 +614,7 @@ bool initialize_shell(ShellState* shell,
                       const BootInfo* boot_info,
                       const PageAllocator* allocator,
                       const KernelHeap* heap,
+                      const BootVolume* boot_volume,
                       const ShellOutput* output) {
   if (shell == nullptr || output == nullptr || output->write_char == nullptr) {
     return false;
@@ -532,6 +623,7 @@ bool initialize_shell(ShellState* shell,
   shell->boot_info = boot_info;
   shell->allocator = allocator;
   shell->heap = heap;
+  shell->boot_volume = boot_volume;
   shell->output = *output;
   shell->history_count = 0;
   shell->history_next_slot = 0;
@@ -600,6 +692,12 @@ ShellCommandResult shell_execute_line(ShellState* shell,
   if (command_matches(trimmed_line, "heap", &arguments) &&
       is_empty_after_trim(arguments)) {
     handle_heap_command(shell);
+    return kShellCommandExecuted;
+  }
+
+  if (command_matches(trimmed_line, "disk", &arguments) &&
+      is_empty_after_trim(arguments)) {
+    handle_disk_command(shell);
     return kShellCommandExecuted;
   }
 

@@ -44,6 +44,7 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "a20 ok" "$SERIAL_LOG" \
   && grep -q "e820 ok" "$SERIAL_LOG" \
   && grep -q "kernel loaded ok" "$SERIAL_LOG" \
+  && grep -q "boot volume loaded ok" "$SERIAL_LOG" \
   && grep -q "protected mode ok" "$SERIAL_LOG" \
   && grep -q "paging ok" "$SERIAL_LOG" \
   && grep -q "long mode ok" "$SERIAL_LOG" \
@@ -67,7 +68,32 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "heap_reuse=0x" "$SERIAL_LOG" \
   && grep -q "heap_coalesced=0x" "$SERIAL_LOG" \
   && grep -q "heap_free_bytes=" "$SERIAL_LOG" \
+  && grep -q "heap_active_allocations=" "$SERIAL_LOG" \
+  && grep -q "heap_total_allocations=" "$SERIAL_LOG" \
+  && grep -q "heap_failed_allocations=0" "$SERIAL_LOG" \
   && grep -q "heap alloc ok" "$SERIAL_LOG" \
+  && grep -q "kernel_memory_page_allocator=0x" "$SERIAL_LOG" \
+  && grep -q "kernel_memory_heap=0x" "$SERIAL_LOG" \
+  && grep -q "kmalloc_block=0x" "$SERIAL_LOG" \
+  && grep -q "kcalloc_block=0x" "$SERIAL_LOG" \
+  && grep -q "kcalloc_zero_words=4" "$SERIAL_LOG" \
+  && grep -q "kobject_sum=0x2222222222222222" "$SERIAL_LOG" \
+  && grep -q "kobject_aligned_ptr=0x" "$SERIAL_LOG" \
+  && grep -q "kobject_alignment=64" "$SERIAL_LOG" \
+  && grep -q "kobject_ctor_count=2" "$SERIAL_LOG" \
+  && grep -q "kobject_dtor_count=2" "$SERIAL_LOG" \
+  && grep -q "kernel_memory_active_before=" "$SERIAL_LOG" \
+  && grep -q "kernel_memory_active_after=" "$SERIAL_LOG" \
+  && grep -q "kernel memory ok" "$SERIAL_LOG" \
+  && grep -q "boot_volume_ptr=0x" "$SERIAL_LOG" \
+  && grep -q "boot_volume_start_lba=" "$SERIAL_LOG" \
+  && grep -q "boot_volume_sector_count=4" "$SERIAL_LOG" \
+  && grep -q "boot_volume_sector_size=512" "$SERIAL_LOG" \
+  && grep -q "boot_volume_signature=OS64VOL1" "$SERIAL_LOG" \
+  && grep -q "boot_volume_name=boot-volume" "$SERIAL_LOG" \
+  && grep -q "boot_volume_readme=boot volume sector 1: hello from os64" "$SERIAL_LOG" \
+  && grep -q "boot_volume_notes=boot volume sector 2: next step is filesystem" "$SERIAL_LOG" \
+  && grep -q "disk read ok" "$SERIAL_LOG" \
   && grep -q "pic ok" "$SERIAL_LOG" \
   && grep -q "pit ok" "$SERIAL_LOG" \
   && grep -q "pit_frequency_hz=100" "$SERIAL_LOG" \
@@ -102,6 +128,7 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "mem   - show free physical pages" "$SERIAL_LOG" \
   && grep -q "ticks - show timer tick count" "$SERIAL_LOG" \
   && grep -q "heap  - show kernel heap stats" "$SERIAL_LOG" \
+  && grep -q "disk  - show boot volume info" "$SERIAL_LOG" \
   && grep -q "irq   - show timer/keyboard irq stats" "$SERIAL_LOG" \
   && grep -q "bootinfo - show boot handoff info" "$SERIAL_LOG" \
   && grep -q "e820  - show boot memory map" "$SERIAL_LOG" \
@@ -119,6 +146,18 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "heap_used_bytes=" "$SERIAL_LOG" \
   && grep -q "heap_mapped_bytes=" "$SERIAL_LOG" \
   && grep -q "heap_free_bytes=" "$SERIAL_LOG" \
+  && grep -q "heap_active_allocations=" "$SERIAL_LOG" \
+  && grep -q "heap_total_allocations=" "$SERIAL_LOG" \
+  && grep -q "heap_failed_allocations=0" "$SERIAL_LOG" \
+  && grep -q "shell_line=disk" "$SERIAL_LOG" \
+  && grep -q "disk_start_lba=" "$SERIAL_LOG" \
+  && grep -q "disk_sector_count=4" "$SERIAL_LOG" \
+  && grep -q "disk_sector_size=512" "$SERIAL_LOG" \
+  && grep -q "disk_total_bytes=2048" "$SERIAL_LOG" \
+  && grep -q "disk_signature=OS64VOL1" "$SERIAL_LOG" \
+  && grep -q "disk_volume_name=boot-volume" "$SERIAL_LOG" \
+  && grep -q "disk_readme_sector=1" "$SERIAL_LOG" \
+  && grep -q "disk_notes_sector=2" "$SERIAL_LOG" \
   && grep -q "shell_line=irq" "$SERIAL_LOG" \
   && grep -q "irq_timer_ticks=" "$SERIAL_LOG" \
   && grep -q "irq_timer_frequency_hz=100" "$SERIAL_LOG" \
@@ -130,6 +169,10 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "bootinfo_memory_map_count=" "$SERIAL_LOG" \
   && grep -q "bootinfo_memory_map_entry_size=24" "$SERIAL_LOG" \
   && grep -q "bootinfo_memory_map_ptr=0x" "$SERIAL_LOG" \
+  && grep -q "bootinfo_boot_volume_ptr=0x" "$SERIAL_LOG" \
+  && grep -q "bootinfo_boot_volume_start_lba=" "$SERIAL_LOG" \
+  && grep -q "bootinfo_boot_volume_sector_count=4" "$SERIAL_LOG" \
+  && grep -q "bootinfo_boot_volume_sector_size=512" "$SERIAL_LOG" \
   && grep -q "shell_line=e820" "$SERIAL_LOG" \
   && grep -q "e820_count=" "$SERIAL_LOG" \
   && grep -Fq "e820_shell[0] base=0x" "$SERIAL_LOG" \
@@ -145,32 +188,33 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "uptime_frequency_hz=100" "$SERIAL_LOG" \
   && grep -q "uptime_ms=" "$SERIAL_LOG" \
   && grep -q "shell_line=history" "$SERIAL_LOG" \
-  && grep -q "history_buffered=11" "$SERIAL_LOG" \
-  && grep -q "history_total=11" "$SERIAL_LOG" \
+  && grep -q "history_buffered=12" "$SERIAL_LOG" \
+  && grep -q "history_total=12" "$SERIAL_LOG" \
   && grep -Fq "history[1]=help" "$SERIAL_LOG" \
   && grep -Fq "history[2]=mem" "$SERIAL_LOG" \
   && grep -Fq "history[3]=ticks" "$SERIAL_LOG" \
   && grep -Fq "history[4]=heap" "$SERIAL_LOG" \
-  && grep -Fq "history[5]=irq" "$SERIAL_LOG" \
-  && grep -Fq "history[6]=bootinfo" "$SERIAL_LOG" \
-  && grep -Fq "history[7]=e820" "$SERIAL_LOG" \
-  && grep -Fq "history[8]=cpu" "$SERIAL_LOG" \
-  && grep -Fq "history[9]=echo hi42" "$SERIAL_LOG" \
-  && grep -Fq "history[10]=uptime" "$SERIAL_LOG" \
-  && grep -Fq "history[11]=history" "$SERIAL_LOG" \
-  && grep -q "history_buffered=12" "$SERIAL_LOG" \
-  && grep -q "history_total=12" "$SERIAL_LOG" \
+  && grep -Fq "history[5]=disk" "$SERIAL_LOG" \
+  && grep -Fq "history[6]=irq" "$SERIAL_LOG" \
+  && grep -Fq "history[7]=bootinfo" "$SERIAL_LOG" \
+  && grep -Fq "history[8]=e820" "$SERIAL_LOG" \
+  && grep -Fq "history[9]=cpu" "$SERIAL_LOG" \
+  && grep -Fq "history[10]=echo hi42" "$SERIAL_LOG" \
+  && grep -Fq "history[11]=uptime" "$SERIAL_LOG" \
   && grep -Fq "history[12]=history" "$SERIAL_LOG" \
+  && grep -q "history_buffered=13" "$SERIAL_LOG" \
+  && grep -q "history_total=13" "$SERIAL_LOG" \
+  && grep -Fq "history[13]=history" "$SERIAL_LOG" \
   && grep -q "shell_line=clear" "$SERIAL_LOG" \
   && grep -q "shell_line=bad" "$SERIAL_LOG" \
   && grep -q "shell_result=unknown" "$SERIAL_LOG" \
   && grep -q "unknown command: bad" "$SERIAL_LOG" \
   && grep -q "shell ok" "$SERIAL_LOG"; then
-  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep->keyboard->char-input->console-line->shell serial test passed"
+  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->kmemory->boot-volume->pic->pit->timer->sleep->keyboard->char-input->console-line->shell serial test passed"
   cat "$SERIAL_LOG"
   exit 0
 fi
 
-echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep->keyboard->char-input->console-line->shell serial test failed" >&2
+echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->kmemory->boot-volume->pic->pit->timer->sleep->keyboard->char-input->console-line->shell serial test failed" >&2
 cat "$SERIAL_LOG" >&2
 exit 1

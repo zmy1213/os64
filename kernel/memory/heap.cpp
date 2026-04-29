@@ -20,6 +20,12 @@ namespace {
 constexpr uint64_t kHeapAlignment = 16;   // 先把堆元数据和普通小对象都按 16 字节对齐。
 constexpr uint64_t kAllocationMagic = 0x48454150414C4C4FULL;  // ASCII 看起来像 "HEAPALLO"。
 
+void record_failed_allocation(KernelHeap* heap) {
+  if (heap != nullptr) {
+    ++heap->failed_allocations;
+  }
+}
+
 bool is_power_of_two(uint64_t value) {
   return value != 0 && (value & (value - 1)) == 0;
 }
@@ -202,12 +208,16 @@ bool initialize_kernel_heap(KernelHeap* heap, PageAllocator* allocator) {
   heap->mapped_limit = kKernelHeapStart;
   heap->virtual_limit = kKernelHeapLimit;
   heap->used_bytes = 0;
+  heap->active_allocations = 0;
+  heap->total_allocations = 0;
+  heap->failed_allocations = 0;
   heap->free_list = nullptr;
   return heap->virtual_start < heap->virtual_limit;
 }
 
 void* heap_alloc(KernelHeap* heap, size_t size, size_t alignment) {
   if (heap == nullptr || heap->page_allocator == nullptr || size == 0) {
+    record_failed_allocation(heap);
     return nullptr;
   }
 
@@ -216,6 +226,7 @@ void* heap_alloc(KernelHeap* heap, size_t size, size_t alignment) {
   }
 
   if (!is_power_of_two(alignment)) {
+    record_failed_allocation(heap);
     return nullptr;
   }
 
@@ -226,6 +237,7 @@ void* heap_alloc(KernelHeap* heap, size_t size, size_t alignment) {
   const uint64_t payload_bytes =
       align_up(static_cast<uint64_t>(size), kHeapAlignment);
   if (payload_bytes < size) {
+    record_failed_allocation(heap);
     return nullptr;
   }
 
@@ -239,6 +251,8 @@ void* heap_alloc(KernelHeap* heap, size_t size, size_t alignment) {
                                    static_cast<uint64_t>(alignment),
                                    &allocation)) {
         memory_set(allocation, 0, size);    // 对调用者仍然保持“新拿到的内存先清零”。
+        ++heap->active_allocations;
+        ++heap->total_allocations;
         return allocation;
       }
 
@@ -250,6 +264,7 @@ void* heap_alloc(KernelHeap* heap, size_t size, size_t alignment) {
             heap,
             align_up(minimum_growth_bytes(payload_bytes, alignment),
                      kPagingPageSize))) {
+      record_failed_allocation(heap);
       return nullptr;
     }
   }
@@ -283,6 +298,9 @@ bool heap_free(KernelHeap* heap, void* allocation) {
   const uint64_t region_start = header->region_start;
   const uint64_t region_bytes = header->region_bytes;
   heap->used_bytes -= header->payload_bytes;
+  if (heap->active_allocations != 0) {
+    --heap->active_allocations;
+  }
   header->magic = 0;
   insert_free_region(heap, region_start, region_bytes);
   return true;
@@ -316,4 +334,28 @@ uint64_t heap_free_bytes(const KernelHeap* heap) {
   }
 
   return total;
+}
+
+uint64_t heap_active_allocations(const KernelHeap* heap) {
+  if (heap == nullptr) {
+    return 0;
+  }
+
+  return heap->active_allocations;
+}
+
+uint64_t heap_total_allocations(const KernelHeap* heap) {
+  if (heap == nullptr) {
+    return 0;
+  }
+
+  return heap->total_allocations;
+}
+
+uint64_t heap_failed_allocations(const KernelHeap* heap) {
+  if (heap == nullptr) {
+    return 0;
+  }
+
+  return heap->failed_allocations;
 }

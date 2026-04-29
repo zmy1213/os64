@@ -8,9 +8,11 @@
 #include "interrupts/pic.hpp"
 #include "interrupts/pit.hpp"
 #include "memory/heap.hpp"
+#include "memory/kmemory.hpp"
 #include "memory/page_allocator.hpp"
 #include "memory/paging.hpp"
 #include "shell/shell.hpp"
+#include "storage/boot_volume.hpp"
 
 namespace {
 
@@ -33,6 +35,18 @@ constexpr size_t kHeapReuseSize = 32;                                  // 释放
 constexpr size_t kHeapMergeBlockASize = 512;                           // 合并测试里的第一个相邻块。
 constexpr size_t kHeapMergeBlockBSize = 768;                           // 合并测试里的第二个相邻块。
 constexpr size_t kHeapMergedRequestSize = 1024;                        // 如果 A/B 真合并了，这个请求应该能从 A 位置拿到。
+constexpr size_t kKmallocTestSize = 48;                                // 先拿一块普通小内存，证明 kmalloc 这层已经能独立工作。
+constexpr size_t kKcallocWordCount = 4;                                // 再拿 4 个 64 位字，验证 kcalloc 返回的区域确实全是 0。
+constexpr uint64_t kKmallocTestPattern = 0x13579BDF2468ACE0ULL;        // 用一个好认的模式值验证 kmalloc 返回的块真的可写可读。
+constexpr uint64_t kKernelObjectOperand = 0x1111111111111111ULL;       // 两个操作数先故意取一样，方便你一眼认出加法结果。
+constexpr uint64_t kKernelObjectExpectedSum = 0x2222222222222222ULL;   // 这就是上面两个值相加后的预期结果。
+constexpr uint64_t kKernelObjectCookie = 0x4B4F424A45435431ULL;        // ASCII 看起来像 "KOBJECT1"，用于校验对象真的构造过。
+constexpr uint64_t kAlignedObjectMarker = 0xA55AA55AA55AA55AULL;       // 再给高对齐对象一个单独的标记值。
+constexpr uint64_t kAlignedObjectAlignment = 64;                       // 故意把对象对齐拉到 64，证明 knew<T>() 不只会处理 16 字节对齐。
+constexpr char kBootVolumeExpectedSignature[] = "OS64VOL1";            // 启动卷头第一个字段固定就是这个 8 字节签名。
+constexpr char kBootVolumeExpectedName[] = "boot-volume";              // 给这段预读卷起一个易认的名字。
+constexpr char kBootVolumeExpectedReadme[] = "boot volume sector 1: hello from os64";
+constexpr char kBootVolumeExpectedNotes[] = "boot volume sector 2: next step is filesystem";
 constexpr uint32_t kPitFrequencyHz = 100;                              // 先把时钟中断频率设成 100Hz，够平滑也够好测。
 constexpr uint64_t kTimerFirstLogTick = 10;                            // 先在第 10 个 tick 打一次点。
 constexpr uint64_t kTimerSecondLogTick = 20;                           // 第 20 个 tick 再打一次点，证明中断在持续发生。
@@ -41,9 +55,9 @@ constexpr uint64_t kTimerSleepTestMs = 50;                             // 第二
 constexpr uint64_t kTimerSleepMinTicks = 5;                            // 50ms 在 100Hz 下至少应该跨过 5 个 tick。
 constexpr uint8_t kKeyboardIrqLine = 1;                                // 传统 PC 键盘走主 PIC 的 IRQ1。
 constexpr uint64_t kKeyboardTestTimeoutTicks = 20;                     // 键盘测试每轮最多等 20 个 tick，避免异常时无限卡住。
-constexpr uint16_t kConsoleTestStartRow = 16;                          // 把控制台测试区域放到更下面，避免覆盖前面的状态行。
+constexpr uint16_t kConsoleTestStartRow = 18;                          // 把控制台测试区域继续下移，给新增的内存/磁盘状态行留位置。
 constexpr size_t kConsoleLineBufferCapacity = 32;                      // 这一轮测试只读短行，32 字节足够验证流程。
-constexpr uint16_t kShellTestStartRow = 16;                            // shell 也复用下半屏区域，避免和状态行互相覆盖。
+constexpr uint16_t kShellTestStartRow = 18;                            // shell 也复用更靠下的区域，减少和状态行互相覆盖。
 constexpr size_t kShellLineBufferCapacity = 32;                        // `help`/`ticks` 这种命令很短，32 字节够第一版 shell 用。
 constexpr uint8_t kKeyboardTestScancodes[] = {
     0x1E,  // A 按下 -> 'a'
@@ -84,6 +98,9 @@ constexpr uint8_t kShellTicksScancodes[] = {
 };
 constexpr uint8_t kShellHeapScancodes[] = {
     0x23, 0x12, 0x1E, 0x19, 0x1C,  // heap + Enter
+};
+constexpr uint8_t kShellDiskScancodes[] = {
+    0x20, 0x17, 0x1F, 0x25, 0x1C,  // disk + Enter
 };
 constexpr uint8_t kShellIrqScancodes[] = {
     0x17, 0x13, 0x10, 0x1C,        // irq + Enter
@@ -138,6 +155,57 @@ constexpr uint64_t kPageFaultSmokePattern = 0x0BADF00DCAFED00DULL;     // 页错
 PageAllocator g_page_allocator;               // 第一版物理页分配器状态先放在一个全局对象里。
 KernelHeap g_kernel_heap;                     // 第一版内核堆状态也先放成全局对象，方便后面各模块共享。
 ShellState g_shell;                           // 最小 shell 的状态也先放在全局对象里，后面交互循环会一直复用。
+BootVolume g_boot_volume;                     // 这一轮新增的启动卷状态，表示 stage2 预读进来的那段扇区数据。
+uint64_t g_kernel_object_ctor_count = 0;      // 对象层测试里一共成功调用过多少次构造函数。
+uint64_t g_kernel_object_dtor_count = 0;      // 对象层测试里一共成功调用过多少次析构函数。
+
+struct KernelObjectProbe {
+  uint64_t left;       // 构造函数收到的第一个参数。
+  uint64_t right;      // 构造函数收到的第二个参数。
+  uint64_t sum;        // 构造时顺手把两者加起来，后面拿它验证对象内部状态。
+  uint64_t cookie;     // 如果构造函数确实运行过，这里会写入固定魔数。
+
+  KernelObjectProbe(uint64_t left_value, uint64_t right_value)
+      : left(left_value),
+        right(right_value),
+        sum(left_value + right_value),
+        cookie(kKernelObjectCookie) {
+    ++g_kernel_object_ctor_count;
+  }
+
+  ~KernelObjectProbe() {
+    cookie = 0;
+    ++g_kernel_object_dtor_count;
+  }
+
+  bool is_valid() const {
+    return left == kKernelObjectOperand &&
+           right == kKernelObjectOperand &&
+           sum == kKernelObjectExpectedSum &&
+           cookie == kKernelObjectCookie;
+  }
+};
+
+struct alignas(64) KernelAlignedObjectProbe {
+  uint64_t marker;     // 这类对象主要用来验证“高对齐 + 构造函数”这条路径。
+  uint64_t cookie;     // 继续沿用同一个魔数，证明这块不是只有地址对齐，构造也真的跑了。
+
+  explicit KernelAlignedObjectProbe(uint64_t marker_value)
+      : marker(marker_value),
+        cookie(kKernelObjectCookie) {
+    ++g_kernel_object_ctor_count;
+  }
+
+  ~KernelAlignedObjectProbe() {
+    marker = 0;
+    cookie = 0;
+    ++g_kernel_object_dtor_count;
+  }
+
+  bool is_valid() const {
+    return marker == kAlignedObjectMarker && cookie == kKernelObjectCookie;
+  }
+};
 
 // 往 I/O 端口写一个字节。内核里没有现成库函数，所以这里自己直接发机器指令。
 inline void out8(uint16_t port, uint8_t value) {
@@ -230,6 +298,16 @@ void serial_write_hex64(uint64_t value) {
   }
 }
 
+void serial_write_bounded_string(const char* text, size_t limit) {
+  if (text == nullptr) {
+    return;
+  }
+
+  for (size_t i = 0; i < limit && text[i] != '\0'; ++i) {
+    serial_write_char(text[i]);
+  }
+}
+
 // 十进制打印主要用来显示“第几条 E820 记录”和“还有多少页”。
 void serial_write_u64(uint64_t value) {
   char digits[kMaxDecimalDigits];
@@ -285,6 +363,26 @@ bool strings_equal(const char* left, const char* right) {
       return true;
     }
   }
+}
+
+bool bounded_text_equals(const char* actual,
+                         const char* expected,
+                         size_t limit) {
+  if (actual == nullptr || expected == nullptr) {
+    return actual == expected;
+  }
+
+  for (size_t i = 0; i < limit; ++i) {
+    if (expected[i] == '\0') {
+      return actual[i] == '\0';
+    }
+
+    if (actual[i] != expected[i]) {
+      return false;
+    }
+  }
+
+  return expected[limit] == '\0';
 }
 
 // 直接往 VGA 文本缓冲区写一整行，让你在 QEMU 图形窗口里也能看到结果。
@@ -516,6 +614,230 @@ bool run_heap_smoke_test(KernelHeap* heap) {
          cross_page_read_back == kHeapTestLargePattern1 &&
          is_aligned(reinterpret_cast<uint64_t>(large_block), kPagingPageSize) &&
          reused_small == small_block && merged_block == merge_block_a;
+}
+
+// 这一轮把“原始堆分配”再向上抬一层：
+// 现在不只要验证 heap_alloc()/heap_free()，
+// 还要验证 kmalloc/kcalloc，以及 C++ 对象真的能通过 knew/kdelete 完整走完构造和析构。
+bool run_kernel_memory_smoke_test(PageAllocator* allocator,
+                                  KernelHeap* heap) {
+  if (allocator == nullptr || heap == nullptr) {
+    return false;
+  }
+
+  if (!initialize_kernel_memory_system(allocator, heap) ||
+      !kernel_memory_system_ready()) {
+    return false;
+  }
+
+  serial_write_string("kernel_memory_page_allocator=0x");
+  serial_write_hex64(reinterpret_cast<uint64_t>(kernel_memory_page_allocator()));
+  serial_write_crlf();
+
+  serial_write_string("kernel_memory_heap=0x");
+  serial_write_hex64(reinterpret_cast<uint64_t>(kernel_memory_heap()));
+  serial_write_crlf();
+
+  const uint64_t active_before = heap_active_allocations(heap);
+  const uint64_t total_before = heap_total_allocations(heap);
+  g_kernel_object_ctor_count = 0;
+  g_kernel_object_dtor_count = 0;
+
+  auto* const kmalloc_block =
+      static_cast<uint64_t*>(kmalloc(kKmallocTestSize));
+  if (kmalloc_block == nullptr) {
+    return false;
+  }
+
+  serial_write_string("kmalloc_block=0x");
+  serial_write_hex64(reinterpret_cast<uint64_t>(kmalloc_block));
+  serial_write_crlf();
+
+  *kmalloc_block = kKmallocTestPattern;
+  const uint64_t kmalloc_read_back = *kmalloc_block;
+
+  auto* const kcalloc_block = static_cast<uint64_t*>(
+      kcalloc(kKcallocWordCount, sizeof(uint64_t)));
+  if (kcalloc_block == nullptr) {
+    return false;
+  }
+
+  serial_write_string("kcalloc_block=0x");
+  serial_write_hex64(reinterpret_cast<uint64_t>(kcalloc_block));
+  serial_write_crlf();
+
+  uint64_t zero_word_count = 0;
+  for (size_t i = 0; i < kKcallocWordCount; ++i) {
+    if (kcalloc_block[i] == 0) {
+      ++zero_word_count;
+    }
+  }
+
+  serial_write_string("kcalloc_zero_words=");
+  serial_write_u64(zero_word_count);
+  serial_write_crlf();
+
+  auto* const object =
+      knew<KernelObjectProbe>(kKernelObjectOperand, kKernelObjectOperand);
+  if (object == nullptr) {
+    return false;
+  }
+
+  serial_write_string("kobject_ptr=0x");
+  serial_write_hex64(reinterpret_cast<uint64_t>(object));
+  serial_write_crlf();
+
+  serial_write_string("kobject_sum=0x");
+  serial_write_hex64(object->sum);
+  serial_write_crlf();
+
+  auto* const aligned_object =
+      knew<KernelAlignedObjectProbe>(kAlignedObjectMarker);
+  if (aligned_object == nullptr) {
+    return false;
+  }
+
+  serial_write_string("kobject_aligned_ptr=0x");
+  serial_write_hex64(reinterpret_cast<uint64_t>(aligned_object));
+  serial_write_crlf();
+
+  const bool object_valid = object->is_valid();
+  const bool aligned_object_valid = aligned_object->is_valid();
+  const bool aligned_ok = is_aligned(
+      reinterpret_cast<uint64_t>(aligned_object), kAlignedObjectAlignment);
+
+  serial_write_string("kobject_alignment=");
+  serial_write_u64(aligned_ok ? kAlignedObjectAlignment : 0);
+  serial_write_crlf();
+
+  const bool freed_aligned_object = kdelete(aligned_object);
+  const bool freed_object = kdelete(object);
+  const bool freed_kcalloc_block = kfree(kcalloc_block);
+  const bool freed_kmalloc_block = kfree(kmalloc_block);
+
+  const uint64_t active_after = heap_active_allocations(heap);
+  const uint64_t total_after = heap_total_allocations(heap);
+
+  serial_write_string("kobject_ctor_count=");
+  serial_write_u64(g_kernel_object_ctor_count);
+  serial_write_crlf();
+
+  serial_write_string("kobject_dtor_count=");
+  serial_write_u64(g_kernel_object_dtor_count);
+  serial_write_crlf();
+
+  serial_write_string("kernel_memory_active_before=");
+  serial_write_u64(active_before);
+  serial_write_crlf();
+
+  serial_write_string("kernel_memory_active_after=");
+  serial_write_u64(active_after);
+  serial_write_crlf();
+
+  return kernel_memory_page_allocator() == allocator &&
+         kernel_memory_heap() == heap &&
+         kmalloc_read_back == kKmallocTestPattern &&
+         zero_word_count == kKcallocWordCount &&
+         object_valid &&
+         aligned_object_valid &&
+         aligned_ok &&
+         freed_aligned_object &&
+         freed_object &&
+         freed_kcalloc_block &&
+         freed_kmalloc_block &&
+         g_kernel_object_ctor_count == 2 &&
+         g_kernel_object_dtor_count == 2 &&
+         active_after == active_before &&
+         total_after == total_before + 4 &&
+         heap_failed_allocations(heap) == 0;
+}
+
+// 这一步不是“真正的磁盘控制器驱动”，
+// 而是先用 stage2 在实模式下把一小段启动卷预读进内存，
+// 再让 64 位内核按扇区去读它。
+// 这样下一步做文件系统时，先有一条稳定的 sector-read 链可用。
+bool run_boot_volume_smoke_test(const BootInfo* boot_info,
+                                BootVolume* volume) {
+  if (boot_info == nullptr || volume == nullptr) {
+    return false;
+  }
+
+  if (!initialize_boot_volume(volume, boot_info) ||
+      !boot_volume_is_ready(volume)) {
+    return false;
+  }
+
+  const BootVolumeHeader* const header = boot_volume_header(volume);
+  if (header == nullptr) {
+    return false;
+  }
+
+  uint8_t sector0[kBootVolumeSectorSize];
+  uint8_t readme_sector[kBootVolumeSectorSize];
+  uint8_t notes_sector[kBootVolumeSectorSize];
+
+  if (!boot_volume_read_sector(volume, 0, sector0, sizeof(sector0)) ||
+      !boot_volume_read_sector(volume, header->readme_sector_index,
+                               readme_sector, sizeof(readme_sector)) ||
+      !boot_volume_read_sector(volume, header->notes_sector_index,
+                               notes_sector, sizeof(notes_sector))) {
+    return false;
+  }
+
+  const auto* const sector0_header =
+      reinterpret_cast<const BootVolumeHeader*>(sector0);
+  const char* const readme_text =
+      reinterpret_cast<const char*>(readme_sector);
+  const char* const notes_text =
+      reinterpret_cast<const char*>(notes_sector);
+
+  serial_write_string("boot_volume_ptr=0x");
+  serial_write_hex64(reinterpret_cast<uint64_t>(volume->base));
+  serial_write_crlf();
+
+  serial_write_string("boot_volume_start_lba=");
+  serial_write_u64(volume->start_lba);
+  serial_write_crlf();
+
+  serial_write_string("boot_volume_sector_count=");
+  serial_write_u64(volume->sector_count);
+  serial_write_crlf();
+
+  serial_write_string("boot_volume_sector_size=");
+  serial_write_u64(volume->sector_size);
+  serial_write_crlf();
+
+  serial_write_string("boot_volume_signature=");
+  serial_write_bounded_string(header->signature, sizeof(header->signature));
+  serial_write_crlf();
+
+  serial_write_string("boot_volume_name=");
+  serial_write_bounded_string(header->volume_name, sizeof(header->volume_name));
+  serial_write_crlf();
+
+  serial_write_string("boot_volume_readme=");
+  serial_write_string(readme_text);
+  serial_write_crlf();
+
+  serial_write_string("boot_volume_notes=");
+  serial_write_string(notes_text);
+  serial_write_crlf();
+
+  return bounded_text_equals(header->signature, kBootVolumeExpectedSignature,
+                             sizeof(header->signature)) &&
+         bounded_text_equals(sector0_header->signature,
+                             kBootVolumeExpectedSignature,
+                             sizeof(sector0_header->signature)) &&
+         strings_equal(header->volume_name, kBootVolumeExpectedName) &&
+         header->version == 1 &&
+         header->total_sectors == volume->sector_count &&
+         header->sector_size == volume->sector_size &&
+         header->readme_sector_index == 1 &&
+         header->notes_sector_index == 2 &&
+         header->readme_length == string_length(kBootVolumeExpectedReadme) &&
+         header->notes_length == string_length(kBootVolumeExpectedNotes) &&
+         strings_equal(readme_text, kBootVolumeExpectedReadme) &&
+         strings_equal(notes_text, kBootVolumeExpectedNotes);
 }
 
 bool run_timer_smoke_test() {
@@ -808,6 +1130,9 @@ constexpr ShellSmokeCommand kShellSmokeCommands[] = {
     {"heap", kShellHeapScancodes,
      sizeof(kShellHeapScancodes) / sizeof(kShellHeapScancodes[0]),
      kShellCommandExecuted},
+    {"disk", kShellDiskScancodes,
+     sizeof(kShellDiskScancodes) / sizeof(kShellDiskScancodes[0]),
+     kShellCommandExecuted},
     {"irq", kShellIrqScancodes,
      sizeof(kShellIrqScancodes) / sizeof(kShellIrqScancodes[0]),
      kShellCommandExecuted},
@@ -871,11 +1196,12 @@ bool inject_scancode_sequence(const char* log_prefix,
   return true;
 }
 
-bool run_shell_smoke_test(const BootInfo* boot_info) {
+bool run_shell_smoke_test(const BootInfo* boot_info,
+                          const BootVolume* boot_volume) {
   initialize_console(kShellTestStartRow, kShellTextColor);
 
   if (!initialize_shell(&g_shell, boot_info, &g_page_allocator, &g_kernel_heap,
-                        &kShellOutput)) {
+                        boot_volume, &kShellOutput)) {
     return false;
   }
 
@@ -1013,41 +1339,55 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 
   write_status_line(11, "heap alloc ok");
 
-  if (!run_timer_smoke_test()) {
-    write_status_line(12, "timer bad");
+  if (!run_kernel_memory_smoke_test(&g_page_allocator, &g_kernel_heap)) {
+    write_status_line(12, "kernel memory bad");
     return;
   }
 
-  write_status_line(12, "timer ok");
+  write_status_line(12, "kernel memory ok");
+
+  if (!run_boot_volume_smoke_test(boot_info, &g_boot_volume)) {
+    write_status_line(13, "disk read bad");
+    return;
+  }
+
+  write_status_line(13, "disk read ok");
+
+  if (!run_timer_smoke_test()) {
+    write_status_line(14, "timer bad");
+    return;
+  }
+
+  write_status_line(14, "timer ok");
 
   if (!run_keyboard_smoke_test()) {
-    write_status_line(13, "keyboard bad");
+    write_status_line(15, "keyboard bad");
     return;
   }
 
-  write_status_line(13, "keyboard ok");
+  write_status_line(15, "keyboard ok");
 
   if (!run_console_input_smoke_test()) {
-    write_status_line(14, "console input bad");
+    write_status_line(16, "console input bad");
     return;
   }
 
-  write_status_line(14, "console input ok");
+  write_status_line(16, "console input ok");
 
-  if (!run_shell_smoke_test(boot_info)) {
-    write_status_line(15, "shell bad");
+  if (!run_shell_smoke_test(boot_info, &g_boot_volume)) {
+    write_status_line(17, "shell bad");
     return;
   }
 
-  write_status_line(15, "shell ok");
+  write_status_line(17, "shell ok");
 
 #if defined(OS64_ENABLE_PAGE_FAULT_SMOKE)
-  write_status_line(16, "page fault smoke");
+  write_status_line(18, "page fault smoke");
   run_page_fault_smoke_test();
 #endif
 
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
-  write_status_line(16, "invalid opcode smoke");
+  write_status_line(18, "invalid opcode smoke");
   run_invalid_opcode_smoke_test();
 #endif
 

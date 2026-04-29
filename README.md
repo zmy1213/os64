@@ -139,6 +139,7 @@ os64>
 - `mem`
 - `ticks`
 - `heap`
+- `disk`
 - `irq`
 - `bootinfo`
 - `e820`
@@ -163,6 +164,21 @@ os64>
 
 这样做的原因不是“好看优先”，
 而是为了让长时间调试时屏幕不那么刺眼，同时又能一眼找到交互入口。
+
+当前内存子系统也已经不只停在“能分原始字节”：
+
+- `PageAllocator` 负责物理页
+- `paging` 负责虚拟地址映射
+- `KernelHeap` 负责小块堆分配和回收
+- `kmalloc` / `kfree` / `kcalloc` 负责正式的内核分配入口
+- `knew<T>` / `kdelete<T>` 负责 C++ 对象构造和析构
+
+当前存储方向也已经往前走了一步：
+
+- `stage2` 会先把一小段 `boot volume` 从启动介质读进内存
+- `BootInfo` 会把这段卷的位置和扇区信息交给 64 位内核
+- kernel 里现在已经有最小 `sector read` 接口
+- shell 里可以用 `disk` 查看这段启动卷信息
 
 ### 一个很重要的提醒
 
