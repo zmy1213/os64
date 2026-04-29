@@ -3,6 +3,7 @@
 
 #include "boot/boot_info.hpp"
 #include "interrupts/interrupts.hpp"
+#include "interrupts/keyboard.hpp"
 #include "interrupts/pic.hpp"
 #include "interrupts/pit.hpp"
 #include "memory/heap.hpp"
@@ -33,6 +34,9 @@ constexpr uint64_t kTimerSecondLogTick = 20;                           // 第 20
 constexpr uint64_t kTimerWaitTestTicks = 3;                            // 第一段先直接按 tick 等 3 下。
 constexpr uint64_t kTimerSleepTestMs = 50;                             // 第二段再按毫秒等 50ms，在 100Hz 下约等于 5 个 tick。
 constexpr uint64_t kTimerSleepMinTicks = 5;                            // 50ms 在 100Hz 下至少应该跨过 5 个 tick。
+constexpr uint8_t kKeyboardIrqLine = 1;                                // 传统 PC 键盘走主 PIC 的 IRQ1。
+constexpr uint8_t kKeyboardTestScancode = 0x1E;                        // Set 1 扫描码里的 'A' make code。
+constexpr uint64_t kKeyboardTestTimeoutTicks = 20;                     // 键盘测试最多等 20 个 tick，避免异常时无限卡住。
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
 constexpr uint64_t kInvalidOpcodeMarker = 0x55443231494E5641ULL;       // 只是为了日志里有个好认的常量。
 #endif
@@ -73,7 +77,10 @@ void serial_write_string(const char* text) {
 
 // 换行在串口里要写 CRLF，这样终端和日志都更稳定。
 void serial_write_crlf() {
-  serial_write_string("\r\n");
+  // 这里故意拆成两个单字符发送，而不是再走一遍字符串遍历。
+  // 这样这一层的行为更直接，也更容易排查最早期串口日志问题。
+  serial_write_char('\r');
+  serial_write_char('\n');
 }
 
 // 打印 1 个十六进制字符，比如 10 -> 'A'。
@@ -435,6 +442,58 @@ bool run_timer_smoke_test() {
          sleep_elapsed_ticks >= kTimerSleepMinTicks;
 }
 
+bool run_keyboard_smoke_test() {
+  if (!initialize_keyboard()) {
+    return false;
+  }
+
+  serial_write_string("keyboard init ok");
+  serial_write_crlf();
+
+  // 这一轮只单独放开 IRQ1，让键盘中断第一次真的能进入内核。
+  if (!enable_pic_irq(kKeyboardIrqLine)) {
+    return false;
+  }
+
+  serial_write_string("keyboard irq1 enabled");
+  serial_write_crlf();
+
+  const uint64_t before_irq_count = keyboard_irq_count();
+
+  serial_write_string("keyboard_test_scancode=0x");
+  serial_write_hex64(kKeyboardTestScancode);
+  serial_write_crlf();
+
+  enable_interrupts();
+
+  if (!keyboard_inject_test_scancode(kKeyboardTestScancode)) {
+    disable_interrupts();
+    return false;
+  }
+
+  const uint64_t start_tick = timer_tick_count();
+  while (keyboard_irq_count() == before_irq_count &&
+         (timer_tick_count() - start_tick) < kKeyboardTestTimeoutTicks) {
+    wait_for_interrupt();  // 键盘没来就继续睡，期间 timer IRQ 会把 CPU 周期性唤醒。
+  }
+
+  disable_interrupts();
+
+  const uint64_t after_irq_count = keyboard_irq_count();
+  const uint8_t last_scancode = keyboard_last_scancode();
+
+  serial_write_string("keyboard_irq_count=");
+  serial_write_u64(after_irq_count);
+  serial_write_crlf();
+
+  serial_write_string("keyboard_last_scancode=0x");
+  serial_write_hex64(last_scancode);
+  serial_write_crlf();
+
+  return after_irq_count == before_irq_count + 1 &&
+         last_scancode == kKeyboardTestScancode;
+}
+
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
 void run_invalid_opcode_smoke_test() {
   serial_write_string("invalid_opcode_marker=0x");
@@ -521,13 +580,20 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 
   write_status_line(12, "timer ok");
 
+  if (!run_keyboard_smoke_test()) {
+    write_status_line(13, "keyboard bad");
+    return;
+  }
+
+  write_status_line(13, "keyboard ok");
+
 #if defined(OS64_ENABLE_PAGE_FAULT_SMOKE)
-  write_status_line(13, "page fault smoke");
+  write_status_line(14, "page fault smoke");
   run_page_fault_smoke_test();
 #endif
 
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
-  write_status_line(13, "invalid opcode smoke");
+  write_status_line(14, "invalid opcode smoke");
   run_invalid_opcode_smoke_test();
 #endif
 }

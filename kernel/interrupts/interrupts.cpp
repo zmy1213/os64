@@ -1,5 +1,6 @@
 #include "interrupts/interrupts.hpp"
 
+#include "interrupts/keyboard.hpp"
 #include "interrupts/pic.hpp"
 #include "interrupts/pit.hpp"
 #include "runtime/runtime.hpp"
@@ -133,9 +134,10 @@ extern "C" void kernel_handle_irq(const InterruptFrame* frame) {
     return;
   }
 
-  // 这一轮只打开了 IRQ0，所以这里先只识别“时钟中断”这一类 IRQ。
   if (frame->vector == kPicMasterVectorBase) {
     handle_timer_irq();
+  } else if (frame->vector == static_cast<uint8_t>(kPicMasterVectorBase + 1)) {
+    handle_keyboard_irq();
   }
 
   // IRQ 收到以后，不管具体是哪一路，最后都要记得 EOI。

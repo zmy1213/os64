@@ -28,6 +28,8 @@
    再继续往前，把 CPU 异常体系扩成真正能接外部硬件时钟的第一版 IRQ 框架。
 12. [从 timer tick 到最小 wait / sleep 接口](./KERNEL_TIMER_SLEEP_GUIDE.md)
    再继续往前，把“会计数的 tick”变成“内核真的能等一段时间再继续”的最小时间接口。
+13. [从最小 wait / sleep 到键盘 IRQ](./KERNEL_KEYBOARD_IRQ_GUIDE.md)
+   再继续往前，把“只会按时间醒来”的内核扩成“能响应外部输入事件”的内核。
 
 一句话记忆这个顺序：
 
@@ -44,4 +46,5 @@ stage1
 -> 通用 trap 框架 + 可释放堆
 -> PIC + PIT + timer tick
 -> tick 驱动的最小 wait / sleep
+-> keyboard IRQ
 ```

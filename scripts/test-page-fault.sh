@@ -37,6 +37,7 @@ if ! [ -f "$SERIAL_LOG" ]; then
 fi
 
 if grep -q "heap alloc ok" "$SERIAL_LOG" \
+  && grep -q "keyboard ok" "$SERIAL_LOG" \
   && grep -q "page fault smoke" "$SERIAL_LOG" \
   && grep -q "page_fault_smoke_address=0x0000000000900000" "$SERIAL_LOG" \
   && grep -q "exception=page fault" "$SERIAL_LOG" \

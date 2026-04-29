@@ -20,6 +20,12 @@ inline void out8(uint16_t port, uint8_t value) {
   asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
 }
 
+inline uint8_t in8(uint16_t port) {
+  uint8_t value = 0;
+  asm volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
+  return value;
+}
+
 void io_wait() {
   // 往 0x80 这个历史上常用的“延迟端口”写一个无意义字节，
   // 只是为了给比较老的硬件一点点 I/O 间隔时间。
@@ -58,6 +64,49 @@ bool initialize_pic() {
   // 这样这一轮只会收到时钟中断，不会一下子把键盘等别的硬件也引进来。
   out8(kPic1DataPort, kMasterMaskAllowTimerOnly);
   out8(kPic2DataPort, kSlaveMaskAllBlocked);
+  return true;
+}
+
+bool enable_pic_irq(uint8_t irq_line) {
+  if (irq_line >= kHardwareIrqCount) {
+    return false;
+  }
+
+  if (irq_line < 8) {
+    const uint8_t current_mask = in8(kPic1DataPort);
+    out8(kPic1DataPort,
+         static_cast<uint8_t>(current_mask & ~(1u << irq_line)));
+    return true;
+  }
+
+  // 如果以后要开从片 IRQ，还要顺手确保主片的 IRQ2 级联线也放开。
+  const uint8_t current_master_mask = in8(kPic1DataPort);
+  out8(kPic1DataPort,
+       static_cast<uint8_t>(current_master_mask & ~(1u << 2)));
+
+  const uint8_t slave_line = static_cast<uint8_t>(irq_line - 8);
+  const uint8_t current_slave_mask = in8(kPic2DataPort);
+  out8(kPic2DataPort,
+       static_cast<uint8_t>(current_slave_mask & ~(1u << slave_line)));
+  return true;
+}
+
+bool disable_pic_irq(uint8_t irq_line) {
+  if (irq_line >= kHardwareIrqCount) {
+    return false;
+  }
+
+  if (irq_line < 8) {
+    const uint8_t current_mask = in8(kPic1DataPort);
+    out8(kPic1DataPort,
+         static_cast<uint8_t>(current_mask | (1u << irq_line)));
+    return true;
+  }
+
+  const uint8_t slave_line = static_cast<uint8_t>(irq_line - 8);
+  const uint8_t current_slave_mask = in8(kPic2DataPort);
+  out8(kPic2DataPort,
+       static_cast<uint8_t>(current_slave_mask | (1u << slave_line)));
   return true;
 }
 

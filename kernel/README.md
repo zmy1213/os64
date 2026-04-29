@@ -17,7 +17,9 @@ kernel/
 │   ├── pic.hpp
 │   ├── pic.cpp
 │   ├── pit.hpp
-│   └── pit.cpp
+│   ├── pit.cpp
+│   ├── keyboard.hpp
+│   └── keyboard.cpp
 ├── memory/
 │   ├── page_allocator.hpp
 │   ├── page_allocator.cpp
@@ -65,6 +67,7 @@ kernel/
 - 堆测试
 - 定时器中断测试
 - 基于 tick 的最小等待 / sleep 测试
+- 键盘 IRQ 测试
 - 异常测试入口
 
 一句话理解：
@@ -85,6 +88,8 @@ kernel/
   初始化 8259A PIC，把硬件 IRQ 重映射到 32~47，并在 IRQ 结束后发 EOI。
 - `pit.cpp/.hpp`
   初始化 8253/8254 PIT，让 IRQ0 周期性地产生时钟 tick，并提供最小 `wait/sleep` 接口。
+- `keyboard.cpp/.hpp`
+  读取 IRQ1 键盘扫描码，并提供当前这轮的最小键盘自测能力。
 
 一句话理解：
 

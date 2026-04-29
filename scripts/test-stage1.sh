@@ -76,12 +76,18 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "timer_wait_elapsed_ticks=" "$SERIAL_LOG" \
   && grep -q "timer_sleep_ms=50" "$SERIAL_LOG" \
   && grep -q "timer_sleep_elapsed_ticks=" "$SERIAL_LOG" \
-  && grep -q "timer ok" "$SERIAL_LOG"; then
-  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep serial test passed"
+  && grep -q "timer ok" "$SERIAL_LOG" \
+  && grep -q "keyboard init ok" "$SERIAL_LOG" \
+  && grep -q "keyboard irq1 enabled" "$SERIAL_LOG" \
+  && grep -q "keyboard_test_scancode=0x000000000000001E" "$SERIAL_LOG" \
+  && grep -q "keyboard_irq_count=1" "$SERIAL_LOG" \
+  && grep -q "keyboard_last_scancode=0x000000000000001E" "$SERIAL_LOG" \
+  && grep -q "keyboard ok" "$SERIAL_LOG"; then
+  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep->keyboard serial test passed"
   cat "$SERIAL_LOG"
   exit 0
 fi
 
-echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep serial test failed" >&2
+echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep->keyboard serial test failed" >&2
 cat "$SERIAL_LOG" >&2
 exit 1

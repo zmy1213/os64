@@ -213,6 +213,8 @@
     再继续看内核怎么第一次真正接外部硬件中断，并得到第一版系统 tick。
 12. [从 timer tick 到最小 wait / sleep 接口](./docs/KERNEL_TIMER_SLEEP_GUIDE.md)
     再继续看内核怎么把“只会计数”的 tick 变成真正可用的时间等待能力。
+13. [从最小 wait / sleep 到键盘 IRQ](./docs/KERNEL_KEYBOARD_IRQ_GUIDE.md)
+    再继续看内核怎么第一次接收外部输入设备发来的中断和扫描码。
 
 如果你想直接在 `docs/` 目录里按顺序读，也可以先看：
 

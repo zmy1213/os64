@@ -321,3 +321,7 @@ make test-stage1
 一句话总结这一轮：
 
 > 现在内核不只是“知道时间在流逝”，而是第一次真正能“等一段时间再继续执行”了。
+
+下一份接着看的文档就是：
+
+- [从最小 wait / sleep 到键盘 IRQ](./KERNEL_KEYBOARD_IRQ_GUIDE.md)
