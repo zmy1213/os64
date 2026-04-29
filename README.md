@@ -72,7 +72,7 @@
 2. 你的 MBR 能加载 second stage
 3. second stage 能进入 64 位模式
 4. 能跳到你的 kernel
-5. kernel 能打印 `hello from os64`
+5. kernel 能打印 `hello from os64 kernel`
 
 只要这 5 点打通，这个项目就真正开工了。
 
@@ -194,6 +194,7 @@
 - [Boot 寄存器小白说明](./docs/BOOT_REGISTERS_BEGINNER.md)
 - [E820 逐行讲解版](./docs/E820_LINE_BY_LINE_GUIDE.md)
 - [页表 + Long Mode 小白说明](./docs/LONG_MODE_GUIDE.md)
+- [从 Long Mode 到 C++ 内核](./docs/KERNEL_ENTRY_GUIDE.md)
 
 ---
 
