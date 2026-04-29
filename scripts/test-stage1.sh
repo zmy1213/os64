@@ -13,10 +13,11 @@ rm -f "$SERIAL_LOG"
 
 # Run QEMU headless and capture COM1 output into a file for assertions.
 "$QEMU_BIN" \
-  -drive format=raw,file="$DISK_IMG" \
+  -drive format=raw,file="$DISK_IMG",if=floppy,index=0 \
   -display none \
   -monitor none \
   -serial "file:$SERIAL_LOG" \
+  -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
   -no-reboot \
   -no-shutdown &
 
@@ -26,7 +27,8 @@ trap 'kill "$qemu_pid" 2>/dev/null || true; wait "$qemu_pid" 2>/dev/null || true
 # Give BIOS and the two boot stages enough time to print their milestones.
 sleep 2
 
-# The test does not depend on QEMU debug-exit; it force-stops QEMU after capture.
+# 如果来得及走到 bootloader/kernel 的 debug-exit 路径，QEMU 会自己退出；
+# 如果没有退出，这里再兜底强制停止，避免测试卡死。
 kill "$qemu_pid" 2>/dev/null || true
 wait "$qemu_pid" 2>/dev/null || true
 
@@ -51,12 +53,16 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "page allocator ok" "$SERIAL_LOG" \
   && grep -q "alloc_page_0=0x" "$SERIAL_LOG" \
   && grep -q "alloc_page_1=0x" "$SERIAL_LOG" \
-  && grep -q "alloc_page_2=0x" "$SERIAL_LOG"; then
-  echo "stage1->stage2->protected-mode->long-mode->kernel->allocator serial test passed"
+  && grep -q "alloc_page_2=0x" "$SERIAL_LOG" \
+  && grep -q "mapped_test_page=0x" "$SERIAL_LOG" \
+  && grep -q "mapped_virtual=0x" "$SERIAL_LOG" \
+  && grep -q "read_back_value=0x1122334455667788" "$SERIAL_LOG" \
+  && grep -q "map_page ok" "$SERIAL_LOG"; then
+  echo "stage1->stage2->protected-mode->long-mode->kernel->allocator->paging serial test passed"
   cat "$SERIAL_LOG"
   exit 0
 fi
 
-echo "stage1->stage2->protected-mode->long-mode->kernel->allocator serial test failed" >&2
+echo "stage1->stage2->protected-mode->long-mode->kernel->allocator->paging serial test failed" >&2
 cat "$SERIAL_LOG" >&2
 exit 1

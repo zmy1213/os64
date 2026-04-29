@@ -9,12 +9,16 @@ STAGE2_SRC="$ROOT_DIR/boot/stage2.asm"
 KERNEL_ENTRY_SRC="$ROOT_DIR/kernel/entry64.asm"
 KERNEL_MAIN_SRC="$ROOT_DIR/kernel/kernel_main.cpp"
 KERNEL_PAGE_ALLOCATOR_SRC="$ROOT_DIR/kernel/page_allocator.cpp"
+KERNEL_PAGING_SRC="$ROOT_DIR/kernel/paging.cpp"
+KERNEL_RUNTIME_SRC="$ROOT_DIR/kernel/runtime.cpp"
 KERNEL_LINKER_SCRIPT="$ROOT_DIR/kernel/linker.ld"
 STAGE1_BIN="$BUILD_DIR/stage1.bin"
 STAGE2_BIN="$BUILD_DIR/stage2.bin"
 KERNEL_ENTRY_OBJ="$BUILD_DIR/entry64.o"
 KERNEL_MAIN_OBJ="$BUILD_DIR/kernel_main.o"
 KERNEL_PAGE_ALLOCATOR_OBJ="$BUILD_DIR/page_allocator.o"
+KERNEL_PAGING_OBJ="$BUILD_DIR/paging.o"
+KERNEL_RUNTIME_OBJ="$BUILD_DIR/runtime.o"
 KERNEL_ELF="$BUILD_DIR/kernel.elf"
 KERNEL_BIN="$BUILD_DIR/kernel.bin"
 KERNEL_META_INC="$BUILD_DIR/kernel_meta.inc"
@@ -78,31 +82,65 @@ echo "[4/11] compiling page_allocator.cpp"
   -c "$KERNEL_PAGE_ALLOCATOR_SRC" \
   -o "$KERNEL_PAGE_ALLOCATOR_OBJ"
 
+echo "[5/13] compiling paging.cpp"
+"$CLANGXX_BIN" \
+  --target=x86_64-elf \
+  -ffreestanding \
+  -fno-exceptions \
+  -fno-rtti \
+  -fno-stack-protector \
+  -fno-pic \
+  -mno-red-zone \
+  -mcmodel=kernel \
+  -O0 \
+  -Wall \
+  -Wextra \
+  -c "$KERNEL_PAGING_SRC" \
+  -o "$KERNEL_PAGING_OBJ"
+
+echo "[6/13] compiling runtime.cpp"
+"$CLANGXX_BIN" \
+  --target=x86_64-elf \
+  -ffreestanding \
+  -fno-exceptions \
+  -fno-rtti \
+  -fno-stack-protector \
+  -fno-pic \
+  -mno-red-zone \
+  -mcmodel=kernel \
+  -O0 \
+  -Wall \
+  -Wextra \
+  -c "$KERNEL_RUNTIME_SRC" \
+  -o "$KERNEL_RUNTIME_OBJ"
+
 # Link the kernel to a fixed address. For this learning round we intentionally keep it low
 # so stage2 can keep using the simplest BIOS CHS read path.
-echo "[5/11] linking kernel.elf"
+echo "[7/13] linking kernel.elf"
 "$LD_BIN" \
   -m elf_x86_64 \
   -T "$KERNEL_LINKER_SCRIPT" \
   -o "$KERNEL_ELF" \
   "$KERNEL_ENTRY_OBJ" \
   "$KERNEL_MAIN_OBJ" \
-  "$KERNEL_PAGE_ALLOCATOR_OBJ"
+  "$KERNEL_PAGE_ALLOCATOR_OBJ" \
+  "$KERNEL_PAGING_OBJ" \
+  "$KERNEL_RUNTIME_OBJ"
 
 # Stage2 wants a raw blob on disk, so we strip the ELF container and keep only the loadable bytes.
-echo "[6/11] generating kernel.bin"
+echo "[8/13] generating kernel.bin"
 "$OBJCOPY_BIN" -O binary "$KERNEL_ELF" "$KERNEL_BIN"
 
 kernel_size="$(wc -c < "$KERNEL_BIN" | tr -d ' ')"
 kernel_sectors="$(((kernel_size + 511) / 512))"
 
-if [ "$kernel_sectors" -le 0 ] || [ "$kernel_sectors" -gt 9 ]; then
-  echo "kernel.bin must occupy between 1 and 9 sectors in this CHS-only round, got $kernel_sectors sectors" >&2
+if [ "$kernel_sectors" -le 0 ] || [ "$kernel_sectors" -gt 127 ]; then
+  echo "kernel.bin must occupy between 1 and 127 sectors in this CHS-only round, got $kernel_sectors sectors" >&2
   exit 1
 fi
 
 # Stage2 needs to know how many sectors to read and what fixed address the kernel expects.
-echo "[7/11] generating kernel metadata for stage2"
+echo "[9/13] generating kernel metadata for stage2"
 cat > "$KERNEL_META_INC" <<EOF
 %define KERNEL_LOAD_ADDR 0x00010000
 %define KERNEL_LOAD_SEGMENT 0x1000
@@ -112,7 +150,7 @@ cat > "$KERNEL_META_INC" <<EOF
 EOF
 
 # Stage2 now spans eight sectors because it also sets up A20/E820/GDT/page tables/long mode.
-echo "[8/11] assembling stage2"
+echo "[10/13] assembling stage2"
 nasm -f bin -i "$BUILD_DIR/" "$STAGE2_SRC" -o "$STAGE2_BIN"
 
 size="$(wc -c < "$STAGE2_BIN" | tr -d ' ')"
@@ -122,14 +160,14 @@ if [ "$size" -ne "$STAGE2_EXPECTED_SIZE" ]; then
 fi
 
 # Create a raw floppy-sized image and place stage1/stage2/kernel in the first sectors.
-echo "[9/11] creating raw disk image"
+echo "[11/13] creating raw disk image"
 truncate -s "$IMAGE_SIZE" "$DISK_IMG"
 dd if="$STAGE1_BIN" of="$DISK_IMG" bs=512 count=1 conv=notrunc status=none
 dd if="$STAGE2_BIN" of="$DISK_IMG" bs=512 seek=1 count=8 conv=notrunc status=none
 dd if="$KERNEL_BIN" of="$DISK_IMG" bs=512 seek=9 conv=notrunc status=none
 
 # BIOS boot sectors must end with the 0x55aa signature.
-echo "[10/11] verifying boot signature"
+echo "[12/13] verifying boot signature"
 signature="$(hexdump -n 2 -s 510 -e '2/1 "%02x"' "$STAGE1_BIN")"
 if [ "$signature" != "55aa" ]; then
   echo "boot signature mismatch: expected 55aa, got $signature" >&2
@@ -137,7 +175,7 @@ if [ "$signature" != "55aa" ]; then
 fi
 
 # Emit the key output paths so manual runs can inspect the artifacts directly.
-echo "[11/11] build complete"
+echo "[13/13] build complete"
 echo "stage1.bin: $STAGE1_BIN"
 echo "stage2.bin: $STAGE2_BIN"
 echo "kernel.elf: $KERNEL_ELF"

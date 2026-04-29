@@ -398,7 +398,7 @@ stage1 ok
 运行：
 
 ```bash
-qemu-system-x86_64 -drive format=raw,file=disk.img
+qemu-system-x86_64 -drive format=raw,file=disk.img,if=floppy,index=0
 ```
 
 ### Step E：观察现象

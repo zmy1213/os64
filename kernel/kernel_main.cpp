@@ -3,6 +3,7 @@
 
 #include "boot_info.hpp"
 #include "page_allocator.hpp"
+#include "paging.hpp"
 
 namespace {
 
@@ -11,6 +12,8 @@ constexpr uintptr_t kVgaBase = 0xB8000;       // VGA 文本缓冲区从这个物
 constexpr uint16_t kCom1Base = 0x3F8;         // COM1 串口的标准 I/O 端口基址。
 constexpr uint8_t kTextColor = 0x0F;          // 白字黑底，和前面的 stage2 风格保持一致。
 constexpr uint16_t kMaxDecimalDigits = 20;    // 打印 64 位十进制时最多不会超过 20 位。
+constexpr uint64_t kPagingTestVirtualAddress = 0x0000000000200000ULL;  // 2 MiB，正好落在当前临时映射之外。
+constexpr uint64_t kPagingTestPattern = 0x1122334455667788ULL;         // 用一个好认的模式值验证读写。
 
 PageAllocator g_page_allocator;               // 第一版物理页分配器状态先放在一个全局对象里。
 
@@ -172,6 +175,43 @@ void log_allocated_pages(PageAllocator* allocator) {
   }
 }
 
+// 这一步才是真正把“物理页分配器”和“页表管理器”接起来：
+// 先拿到一个物理页，再把它映射到一个新的虚拟地址，然后实际写进去读出来。
+bool run_paging_smoke_test(PageAllocator* allocator) {
+  if (allocator == nullptr) {
+    return false;
+  }
+
+  const uint64_t mapped_physical_page = alloc_page(allocator);
+  if (mapped_physical_page == 0) {
+    return false;
+  }
+
+  serial_write_string("mapped_test_page=0x");
+  serial_write_hex64(mapped_physical_page);
+  serial_write_crlf();
+
+  if (!map_page(allocator, kPagingTestVirtualAddress, mapped_physical_page,
+                kPageWritable)) {
+    return false;
+  }
+
+  serial_write_string("mapped_virtual=0x");
+  serial_write_hex64(kPagingTestVirtualAddress);
+  serial_write_crlf();
+
+  auto* const mapped_value =
+      reinterpret_cast<volatile uint64_t*>(static_cast<uintptr_t>(kPagingTestVirtualAddress));
+  *mapped_value = kPagingTestPattern;
+  const uint64_t read_back = *mapped_value;
+
+  serial_write_string("read_back_value=0x");
+  serial_write_hex64(read_back);
+  serial_write_crlf();
+
+  return read_back == kPagingTestPattern;
+}
+
 }  // namespace
 
 extern "C" void kernel_main(const BootInfo* boot_info) {
@@ -200,4 +240,11 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
   serial_write_crlf();
 
   write_status_line(7, "page allocator ok");
+
+  if (!run_paging_smoke_test(&g_page_allocator)) {
+    write_status_line(8, "map_page bad");
+    return;
+  }
+
+  write_status_line(8, "map_page ok");
 }

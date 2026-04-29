@@ -203,6 +203,8 @@
    最后再看 bootloader 怎么把控制权真正交给 `kernel_main.cpp`。
 7. [从 E820 到第一版页分配器](./docs/E820_PAGE_ALLOCATOR_GUIDE.md)
    当内核已经能启动后，再继续理解它怎么真正开始管理“哪些物理内存能用”。
+8. [从物理页到页表管理器](./docs/KERNEL_PAGING_GUIDE.md)
+   再往前一步，理解“拿到物理页”和“把它映射到虚拟地址”其实是两件不同的事。
 
 如果你想直接在 `docs/` 目录里按顺序读，也可以先看：
 
@@ -305,8 +307,13 @@ hexdump -C disk.img | head
 运行方式：
 
 ```bash
-qemu-system-x86_64 -drive format=raw,file=disk.img
+qemu-system-x86_64 -drive format=raw,file=disk.img,if=floppy,index=0
 ```
+
+这里要特意加上 `if=floppy`，因为当前这张 `disk.img` 是按 1.44MB 软盘几何参数来做的，
+我们的 stage1/stage2 也一直按最基础的 BIOS CHS 软盘方式在读扇区。
+如果你把它当成普通硬盘挂载，前面少量扇区可能还能“碰巧读对”，
+但一旦跨过软盘和硬盘几何参数开始分叉的位置，后面的扇区就会读错。
 
 通过标准：
 
