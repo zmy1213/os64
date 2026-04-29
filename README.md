@@ -211,6 +211,8 @@
     再继续看内核怎么把最小异常处理扩成统一 trap 框架，并把堆升级成能 `free` 的正式版本。
 11. [从通用 Trap 到 PIC + PIT + 定时器中断](./docs/KERNEL_TIMER_IRQ_GUIDE.md)
     再继续看内核怎么第一次真正接外部硬件中断，并得到第一版系统 tick。
+12. [从 timer tick 到最小 wait / sleep 接口](./docs/KERNEL_TIMER_SLEEP_GUIDE.md)
+    再继续看内核怎么把“只会计数”的 tick 变成真正可用的时间等待能力。
 
 如果你想直接在 `docs/` 目录里按顺序读，也可以先看：
 

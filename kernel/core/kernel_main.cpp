@@ -30,6 +30,9 @@ constexpr size_t kHeapMergedRequestSize = 1024;                        // 如果
 constexpr uint32_t kPitFrequencyHz = 100;                              // 先把时钟中断频率设成 100Hz，够平滑也够好测。
 constexpr uint64_t kTimerFirstLogTick = 10;                            // 先在第 10 个 tick 打一次点。
 constexpr uint64_t kTimerSecondLogTick = 20;                           // 第 20 个 tick 再打一次点，证明中断在持续发生。
+constexpr uint64_t kTimerWaitTestTicks = 3;                            // 第一段先直接按 tick 等 3 下。
+constexpr uint64_t kTimerSleepTestMs = 50;                             // 第二段再按毫秒等 50ms，在 100Hz 下约等于 5 个 tick。
+constexpr uint64_t kTimerSleepMinTicks = 5;                            // 50ms 在 100Hz 下至少应该跨过 5 个 tick。
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
 constexpr uint64_t kInvalidOpcodeMarker = 0x55443231494E5641ULL;       // 只是为了日志里有个好认的常量。
 #endif
@@ -367,6 +370,10 @@ bool run_timer_smoke_test() {
   serial_write_string("pit ok");
   serial_write_crlf();
 
+  serial_write_string("pit_frequency_hz=");
+  serial_write_u64(timer_frequency_hz());
+  serial_write_crlf();
+
   enable_interrupts();   // 到这里才真正允许外部硬件中断进来。
 
   bool logged_first_tick = false;
@@ -394,8 +401,38 @@ bool run_timer_smoke_test() {
     wait_for_interrupt();  // 没有到目标 tick 之前，就先让 CPU 睡到下一次中断再醒。
   }
 
+  // 第一段：直接按 tick 等待，证明“系统已经能靠中断睡到未来某个 tick 再醒”。
+  const uint64_t wait_start_tick = timer_tick_count();
+  timer_wait_ticks(kTimerWaitTestTicks);
+  const uint64_t wait_end_tick = timer_tick_count();
+  const uint64_t wait_elapsed_ticks = wait_end_tick - wait_start_tick;
+
+  serial_write_string("timer_wait_elapsed_ticks=");
+  serial_write_u64(wait_elapsed_ticks);
+  serial_write_crlf();
+
+  // 第二段：再给一个更像用户视角的接口，按毫秒等待。
+  const uint64_t sleep_start_tick = timer_tick_count();
+  if (!timer_sleep_ms(kTimerSleepTestMs)) {
+    disable_interrupts();
+    return false;
+  }
+  const uint64_t sleep_end_tick = timer_tick_count();
+  const uint64_t sleep_elapsed_ticks = sleep_end_tick - sleep_start_tick;
+
+  serial_write_string("timer_sleep_ms=");
+  serial_write_u64(kTimerSleepTestMs);
+  serial_write_crlf();
+
+  serial_write_string("timer_sleep_elapsed_ticks=");
+  serial_write_u64(sleep_elapsed_ticks);
+  serial_write_crlf();
+
   disable_interrupts();             // 测试结束先关掉中断，避免后面异常测试被时钟持续打断。
-  return true;
+  return timer_is_ready() &&
+         timer_frequency_hz() == kPitFrequencyHz &&
+         wait_elapsed_ticks >= kTimerWaitTestTicks &&
+         sleep_elapsed_ticks >= kTimerSleepMinTicks;
 }
 
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)

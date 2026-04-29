@@ -64,6 +64,7 @@ kernel/
 - 页表测试
 - 堆测试
 - 定时器中断测试
+- 基于 tick 的最小等待 / sleep 测试
 - 异常测试入口
 
 一句话理解：
@@ -83,7 +84,7 @@ kernel/
 - `pic.cpp/.hpp`
   初始化 8259A PIC，把硬件 IRQ 重映射到 32~47，并在 IRQ 结束后发 EOI。
 - `pit.cpp/.hpp`
-  初始化 8253/8254 PIT，让 IRQ0 周期性地产生时钟 tick。
+  初始化 8253/8254 PIT，让 IRQ0 周期性地产生时钟 tick，并提供最小 `wait/sleep` 接口。
 
 一句话理解：
 

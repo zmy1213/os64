@@ -479,3 +479,7 @@ make test-page-fault
 一句话总结这一轮：
 
 > 现在内核不只是“CPU 出错时能接住”，而是第一次真正能接住“外部硬件周期性打来的时钟中断”了。
+
+下一份接着看的文档就是：
+
+- [从 timer tick 到最小 wait / sleep 接口](./KERNEL_TIMER_SLEEP_GUIDE.md)

@@ -70,14 +70,18 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "heap alloc ok" "$SERIAL_LOG" \
   && grep -q "pic ok" "$SERIAL_LOG" \
   && grep -q "pit ok" "$SERIAL_LOG" \
+  && grep -q "pit_frequency_hz=100" "$SERIAL_LOG" \
   && grep -q "timer_tick=10" "$SERIAL_LOG" \
   && grep -q "timer_tick=20" "$SERIAL_LOG" \
+  && grep -q "timer_wait_elapsed_ticks=" "$SERIAL_LOG" \
+  && grep -q "timer_sleep_ms=50" "$SERIAL_LOG" \
+  && grep -q "timer_sleep_elapsed_ticks=" "$SERIAL_LOG" \
   && grep -q "timer ok" "$SERIAL_LOG"; then
-  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer serial test passed"
+  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep serial test passed"
   cat "$SERIAL_LOG"
   exit 0
 fi
 
-echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer serial test failed" >&2
+echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep serial test failed" >&2
 cat "$SERIAL_LOG" >&2
 exit 1
