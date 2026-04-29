@@ -2,7 +2,7 @@
 # without extra PATH setup.
 QEMU ?= /opt/homebrew/bin/qemu-system-x86_64
 
-.PHONY: all stage1 run-stage1 run-stage1-gui test-stage1 clean
+.PHONY: all stage1 run-stage1 run-stage1-gui test-stage1 test-page-fault clean
 
 # The default target only builds the current boot image.
 all: stage1
@@ -14,7 +14,7 @@ stage1:
 # Headless run: useful when we only care about serial output in the terminal.
 run-stage1: stage1
 	$(QEMU) \
-		-drive format=raw,file=build/disk.img \
+		-drive format=raw,file=build/disk.img,if=floppy,index=0 \
 		-display none \
 		-monitor none \
 		-serial stdio \
@@ -25,7 +25,7 @@ run-stage1: stage1
 # GUI run: useful when we want to see the BIOS text screen directly.
 run-stage1-gui: stage1
 	$(QEMU) \
-		-drive format=raw,file=build/disk.img \
+		-drive format=raw,file=build/disk.img,if=floppy,index=0 \
 		-serial stdio \
 		-no-reboot \
 		-no-shutdown \
@@ -34,6 +34,9 @@ run-stage1-gui: stage1
 # Automated regression test: build the image, boot QEMU, and inspect serial log.
 test-stage1: stage1
 	bash scripts/test-stage1.sh
+
+test-page-fault:
+	bash scripts/test-page-fault.sh
 
 # Remove build outputs so the next run starts from a clean image.
 clean:

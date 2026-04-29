@@ -2,6 +2,8 @@
 #include <stdint.h>
 
 #include "boot_info.hpp"
+#include "heap.hpp"
+#include "interrupts.hpp"
 #include "page_allocator.hpp"
 #include "paging.hpp"
 
@@ -14,8 +16,18 @@ constexpr uint8_t kTextColor = 0x0F;          // 白字黑底，和前面的 sta
 constexpr uint16_t kMaxDecimalDigits = 20;    // 打印 64 位十进制时最多不会超过 20 位。
 constexpr uint64_t kPagingTestVirtualAddress = 0x0000000000200000ULL;  // 2 MiB，正好落在当前临时映射之外。
 constexpr uint64_t kPagingTestPattern = 0x1122334455667788ULL;         // 用一个好认的模式值验证读写。
+constexpr uint64_t kHeapTestSmallPattern = 0xA1B2C3D4E5F60718ULL;      // 小块堆分配测试用的模式值。
+constexpr uint64_t kHeapTestLargePattern0 = 0x0123456789ABCDEFULL;     // 大块堆分配第一页起始位置的模式值。
+constexpr uint64_t kHeapTestLargePattern1 = 0xFEDCBA9876543210ULL;     // 大块堆分配跨页位置的模式值。
+constexpr size_t kHeapTestSmallSize = 64;                              // 第一块堆内存，故意做得很小。
+constexpr size_t kHeapTestLargeSize = 6000;                            // 第二块堆内存，故意让它跨过一个 4 KiB 页边界。
+#if defined(OS64_ENABLE_PAGE_FAULT_SMOKE)
+constexpr uint64_t kPageFaultSmokeAddress = 0x0000000000900000ULL;     // 9 MiB，这一轮没有映射它，专门拿来触发页错误。
+constexpr uint64_t kPageFaultSmokePattern = 0x0BADF00DCAFED00DULL;     // 页错误测试里尝试写入的值。
+#endif
 
 PageAllocator g_page_allocator;               // 第一版物理页分配器状态先放在一个全局对象里。
+KernelHeap g_kernel_heap;                     // 第一版内核堆状态也先放成全局对象，方便后面各模块共享。
 
 // 往 I/O 端口写一个字节。内核里没有现成库函数，所以这里自己直接发机器指令。
 inline void out8(uint16_t port, uint8_t value) {
@@ -212,23 +224,116 @@ bool run_paging_smoke_test(PageAllocator* allocator) {
   return read_back == kPagingTestPattern;
 }
 
+// 这里用两次堆分配证明两件事：
+// 1. 小块对象已经能落在新的堆虚拟地址上
+// 2. 大块对象已经能跨页工作，而不是只会在单页里凑巧成功
+bool run_heap_smoke_test(KernelHeap* heap) {
+  if (heap == nullptr) {
+    return false;
+  }
+
+  auto* const small_block =
+      static_cast<uint64_t*>(heap_alloc(heap, kHeapTestSmallSize, 16));
+  if (small_block == nullptr) {
+    return false;
+  }
+
+  serial_write_string("heap_small=0x");
+  serial_write_hex64(reinterpret_cast<uint64_t>(small_block));
+  serial_write_crlf();
+
+  auto* const large_block =
+      static_cast<uint8_t*>(heap_alloc(heap, kHeapTestLargeSize,
+                                       kPagingPageSize));
+  if (large_block == nullptr) {
+    return false;
+  }
+
+  serial_write_string("heap_large=0x");
+  serial_write_hex64(reinterpret_cast<uint64_t>(large_block));
+  serial_write_crlf();
+
+  auto* const large_first_word =
+      reinterpret_cast<uint64_t*>(large_block);
+  auto* const large_cross_page_word =
+      reinterpret_cast<uint64_t*>(large_block + kPagingPageSize);
+
+  *small_block = kHeapTestSmallPattern;
+  *large_first_word = kHeapTestLargePattern0;
+  *large_cross_page_word = kHeapTestLargePattern1;
+
+  const uint64_t small_read_back = *small_block;
+  const uint64_t cross_page_read_back = *large_cross_page_word;
+
+  serial_write_string("heap_cross_page_value=0x");
+  serial_write_hex64(cross_page_read_back);
+  serial_write_crlf();
+
+  serial_write_string("heap_used_bytes=");
+  serial_write_u64(heap_used_bytes(heap));
+  serial_write_crlf();
+
+  serial_write_string("heap_mapped_bytes=");
+  serial_write_u64(heap_mapped_bytes(heap));
+  serial_write_crlf();
+
+  return small_read_back == kHeapTestSmallPattern &&
+         cross_page_read_back == kHeapTestLargePattern1;
+}
+
+const char* exception_name(uint64_t vector) {
+  switch (vector) {
+    case 0:
+      return "divide error";
+    case 6:
+      return "invalid opcode";
+    case 8:
+      return "double fault";
+    case 13:
+      return "general protection fault";
+    case 14:
+      return "page fault";
+    default:
+      return "unknown exception";
+  }
+}
+
+#if defined(OS64_ENABLE_PAGE_FAULT_SMOKE)
+void run_page_fault_smoke_test() {
+  serial_write_string("page_fault_smoke_address=0x");
+  serial_write_hex64(kPageFaultSmokeAddress);
+  serial_write_crlf();
+
+  auto* const fault_ptr = reinterpret_cast<volatile uint64_t*>(
+      static_cast<uintptr_t>(kPageFaultSmokeAddress));
+  *fault_ptr = kPageFaultSmokePattern;  // 这里应该触发 page fault，正常不会再往下走。
+}
+#endif
+
 }  // namespace
 
 extern "C" void kernel_main(const BootInfo* boot_info) {
   write_status_line(4, "hello from os64 kernel");
 
-  if (!is_boot_info_valid(boot_info)) {
-    write_status_line(5, "boot info bad");
+  if (!initialize_idt()) {
+    write_status_line(5, "idt bad");
     return;
   }
 
-  write_status_line(5, "boot info ok");
+  write_status_line(5, "idt ok");
+
+  if (!is_boot_info_valid(boot_info)) {
+    write_status_line(6, "boot info bad");
+    return;
+  }
+
+  write_status_line(6, "boot info ok");
 
   log_e820_entries(boot_info);                 // 第一步：真正把 BIOS 给的内存地图读出来。
-  write_status_line(6, "e820 parse ok");
+  write_status_line(7, "e820 parse ok");
 
   if (!initialize_page_allocator(&g_page_allocator, boot_info)) {
-    write_status_line(7, "page allocator bad");
+    write_status_line(8, "page allocator bad");
     return;
   }
 
@@ -239,12 +344,58 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
   serial_write_u64(count_free_pages(&g_page_allocator));
   serial_write_crlf();
 
-  write_status_line(7, "page allocator ok");
+  write_status_line(8, "page allocator ok");
 
   if (!run_paging_smoke_test(&g_page_allocator)) {
-    write_status_line(8, "map_page bad");
+    write_status_line(9, "map_page bad");
     return;
   }
 
-  write_status_line(8, "map_page ok");
+  write_status_line(9, "map_page ok");
+
+  if (!initialize_kernel_heap(&g_kernel_heap, &g_page_allocator)) {
+    write_status_line(10, "heap init bad");
+    return;
+  }
+
+  write_status_line(10, "heap init ok");
+
+  if (!run_heap_smoke_test(&g_kernel_heap)) {
+    write_status_line(11, "heap alloc bad");
+    return;
+  }
+
+  write_status_line(11, "heap alloc ok");
+
+#if defined(OS64_ENABLE_PAGE_FAULT_SMOKE)
+  write_status_line(12, "page fault smoke");
+  run_page_fault_smoke_test();
+#endif
+}
+
+extern "C" void kernel_handle_exception(const InterruptFrame* frame,
+                                         uint64_t fault_address) {
+  vga_write_line(12, "kernel exception", kTextColor);
+
+  serial_write_string("exception=");
+  serial_write_string(exception_name(frame->vector));
+  serial_write_crlf();
+
+  serial_write_string("vector=0x");
+  serial_write_hex64(frame->vector);
+  serial_write_crlf();
+
+  serial_write_string("error_code=0x");
+  serial_write_hex64(frame->error_code);
+  serial_write_crlf();
+
+  if (frame->vector == 14) {
+    serial_write_string("fault_address=0x");
+    serial_write_hex64(fault_address);
+    serial_write_crlf();
+  }
+
+  serial_write_string("fault_rip=0x");
+  serial_write_hex64(frame->rip);
+  serial_write_crlf();
 }

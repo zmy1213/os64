@@ -48,6 +48,7 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "paging ok" "$SERIAL_LOG" \
   && grep -q "long mode ok" "$SERIAL_LOG" \
   && grep -q "hello from os64 kernel" "$SERIAL_LOG" \
+  && grep -q "idt ok" "$SERIAL_LOG" \
   && grep -q "boot info ok" "$SERIAL_LOG" \
   && grep -q "e820 parse ok" "$SERIAL_LOG" \
   && grep -q "page allocator ok" "$SERIAL_LOG" \
@@ -57,12 +58,17 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "mapped_test_page=0x" "$SERIAL_LOG" \
   && grep -q "mapped_virtual=0x" "$SERIAL_LOG" \
   && grep -q "read_back_value=0x1122334455667788" "$SERIAL_LOG" \
-  && grep -q "map_page ok" "$SERIAL_LOG"; then
-  echo "stage1->stage2->protected-mode->long-mode->kernel->allocator->paging serial test passed"
+  && grep -q "map_page ok" "$SERIAL_LOG" \
+  && grep -q "heap init ok" "$SERIAL_LOG" \
+  && grep -q "heap_small=0x" "$SERIAL_LOG" \
+  && grep -q "heap_large=0x" "$SERIAL_LOG" \
+  && grep -q "heap_cross_page_value=0xFEDCBA9876543210" "$SERIAL_LOG" \
+  && grep -q "heap alloc ok" "$SERIAL_LOG"; then
+  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap serial test passed"
   cat "$SERIAL_LOG"
   exit 0
 fi
 
-echo "stage1->stage2->protected-mode->long-mode->kernel->allocator->paging serial test failed" >&2
+echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap serial test failed" >&2
 cat "$SERIAL_LOG" >&2
 exit 1
