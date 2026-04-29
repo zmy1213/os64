@@ -2,6 +2,7 @@
 #include <stdint.h>
 
 #include "boot/boot_info.hpp"
+#include "console/console.hpp"
 #include "interrupts/interrupts.hpp"
 #include "interrupts/keyboard.hpp"
 #include "interrupts/pic.hpp"
@@ -36,6 +37,8 @@ constexpr uint64_t kTimerSleepTestMs = 50;                             // 第二
 constexpr uint64_t kTimerSleepMinTicks = 5;                            // 50ms 在 100Hz 下至少应该跨过 5 个 tick。
 constexpr uint8_t kKeyboardIrqLine = 1;                                // 传统 PC 键盘走主 PIC 的 IRQ1。
 constexpr uint64_t kKeyboardTestTimeoutTicks = 20;                     // 键盘测试每轮最多等 20 个 tick，避免异常时无限卡住。
+constexpr uint16_t kConsoleTestStartRow = 16;                          // 把控制台测试区域放到更下面，避免覆盖前面的状态行。
+constexpr size_t kConsoleLineBufferCapacity = 32;                      // 这一轮测试只读短行，32 字节足够验证流程。
 constexpr uint8_t kKeyboardTestScancodes[] = {
     0x1E,  // A 按下 -> 'a'
     0x9E,  // A 松开 -> 这一轮应忽略，不进入字符缓冲区
@@ -53,6 +56,17 @@ constexpr char kKeyboardExpectedChars[] = {
     '\n',
     '\b',
 };
+constexpr uint8_t kConsoleInputTestScancodes[] = {
+    0x18,  // O -> 'o'
+    0x1F,  // S -> 's'
+    0x39,  // Space -> ' '
+    0x07,  // 6 -> '6'
+    0x06,  // 5 -> '5'
+    0x0E,  // Backspace -> 删除刚才的 '5'
+    0x05,  // 4 -> '4'
+    0x1C,  // Enter -> 结束这一行
+};
+constexpr char kConsoleExpectedLine[] = "os 64";                       // 这就是退格修正后的最终结果。
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
 constexpr uint64_t kInvalidOpcodeMarker = 0x55443231494E5641ULL;       // 只是为了日志里有个好认的常量。
 #endif
@@ -143,6 +157,35 @@ bool is_aligned(uint64_t value, uint64_t alignment) {
   }
 
   return (value & (alignment - 1)) == 0;
+}
+
+size_t string_length(const char* text) {
+  if (text == nullptr) {
+    return 0;
+  }
+
+  size_t length = 0;
+  while (text[length] != '\0') {
+    ++length;
+  }
+
+  return length;
+}
+
+bool strings_equal(const char* left, const char* right) {
+  if (left == nullptr || right == nullptr) {
+    return left == right;
+  }
+
+  for (size_t i = 0;; ++i) {
+    if (left[i] != right[i]) {
+      return false;
+    }
+
+    if (left[i] == '\0') {
+      return true;
+    }
+  }
 }
 
 // 直接往 VGA 文本缓冲区写一整行，让你在 QEMU 图形窗口里也能看到结果。
@@ -585,6 +628,67 @@ bool run_keyboard_smoke_test() {
          dropped_char_count == 0;
 }
 
+bool run_console_input_smoke_test() {
+  if (keyboard_buffered_char_count() != 0) {
+    return false;  // 先确认上一轮字符测试已经把缓冲区消费干净。
+  }
+
+  initialize_console(kConsoleTestStartRow, kTextColor);
+  console_write_string("input> ");  // 这一轮先给最小控制台写一个提示符，模拟将来的命令行入口。
+
+  const uint64_t before_irq_count = keyboard_irq_count();
+  const uint64_t expected_irq_count =
+      before_irq_count +
+      (sizeof(kConsoleInputTestScancodes) /
+       sizeof(kConsoleInputTestScancodes[0]));
+
+  enable_interrupts();
+
+  for (uint64_t i = 0; i < (sizeof(kConsoleInputTestScancodes) /
+                            sizeof(kConsoleInputTestScancodes[0]));
+       ++i) {
+    serial_write_string("console_inject[");
+    serial_write_u64(i);
+    serial_write_string("]=0x");
+    serial_write_hex64(kConsoleInputTestScancodes[i]);
+    serial_write_crlf();
+
+    if (!keyboard_inject_test_scancode(kConsoleInputTestScancodes[i])) {
+      disable_interrupts();
+      return false;
+    }
+
+    if (!wait_for_keyboard_irq_count(before_irq_count + i + 1,
+                                     kKeyboardTestTimeoutTicks)) {
+      disable_interrupts();
+      return false;
+    }
+  }
+
+  char line_buffer[kConsoleLineBufferCapacity];
+  const size_t line_length =
+      console_read_line(line_buffer, sizeof(line_buffer));
+
+  disable_interrupts();
+
+  serial_write_string("console_line_length=");
+  serial_write_u64(line_length);
+  serial_write_crlf();
+
+  serial_write_string("console_line=");
+  serial_write_string(line_buffer);
+  serial_write_crlf();
+
+  serial_write_string("console_buffer_remaining=");
+  serial_write_u64(keyboard_buffered_char_count());
+  serial_write_crlf();
+
+  return keyboard_irq_count() == expected_irq_count &&
+         line_length == string_length(kConsoleExpectedLine) &&
+         strings_equal(line_buffer, kConsoleExpectedLine) &&
+         keyboard_buffered_char_count() == 0;
+}
+
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
 void run_invalid_opcode_smoke_test() {
   serial_write_string("invalid_opcode_marker=0x");
@@ -678,13 +782,20 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 
   write_status_line(13, "keyboard ok");
 
+  if (!run_console_input_smoke_test()) {
+    write_status_line(14, "console input bad");
+    return;
+  }
+
+  write_status_line(14, "console input ok");
+
 #if defined(OS64_ENABLE_PAGE_FAULT_SMOKE)
-  write_status_line(14, "page fault smoke");
+  write_status_line(15, "page fault smoke");
   run_page_fault_smoke_test();
 #endif
 
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
-  write_status_line(14, "invalid opcode smoke");
+  write_status_line(15, "invalid opcode smoke");
   run_invalid_opcode_smoke_test();
 #endif
 }

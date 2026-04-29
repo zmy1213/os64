@@ -32,6 +32,8 @@
    再继续往前，把“只会按时间醒来”的内核扩成“能响应外部输入事件”的内核。
 14. [从键盘 IRQ 到最小字符输入](./KERNEL_KEYBOARD_CHAR_INPUT_GUIDE.md)
    再继续往前，把“只会记扫描码”的内核扩成“能真正读出字符”的最小输入系统。
+15. [从最小字符输入到控制台行输入](./KERNEL_CONSOLE_INPUT_GUIDE.md)
+   再继续往前，把“能读字符”的内核扩成“能回显并读完整一行”的最小控制台。
 
 一句话记忆这个顺序：
 
@@ -50,4 +52,5 @@ stage1
 -> tick 驱动的最小 wait / sleep
 -> keyboard IRQ
 -> keyboard char input
+-> console line input
 ```

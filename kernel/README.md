@@ -8,6 +8,9 @@ kernel/
 │   ├── boot_info.hpp
 │   ├── entry64.asm
 │   └── linker.ld
+├── console/
+│   ├── console.hpp
+│   └── console.cpp
 ├── core/
 │   └── kernel_main.cpp
 ├── interrupts/
@@ -68,6 +71,7 @@ kernel/
 - 定时器中断测试
 - 基于 tick 的最小等待 / sleep 测试
 - 键盘 IRQ + 字符缓冲区测试
+- 控制台回显 + 最小行输入测试
 - 异常测试入口
 
 一句话理解：
@@ -76,7 +80,20 @@ kernel/
 
 ---
 
-## 3. `interrupts/`
+## 3. `console/`
+
+这里放最小控制台模块：
+
+- `console.cpp/.hpp`
+  负责 VGA 控制台字符输出、退格、换行，以及第一版行输入接口。
+
+一句话理解：
+
+> `console/` 管“字符怎么显示出来、怎么被拼成一整行输入”。
+
+---
+
+## 4. `interrupts/`
 
 这里放和异常/中断入口有关的代码：
 
@@ -97,7 +114,7 @@ kernel/
 
 ---
 
-## 4. `memory/`
+## 5. `memory/`
 
 这里放和内存管理直接有关的模块：
 
@@ -114,7 +131,7 @@ kernel/
 
 ---
 
-## 5. `runtime/`
+## 6. `runtime/`
 
 这里放 freestanding 内核里最小的运行时工具：
 
@@ -139,7 +156,7 @@ kernel/
 
 ---
 
-## 6. 为什么现在这样分
+## 7. 为什么现在这样分
 
 因为如果所有文件都继续平铺在 `kernel/` 根目录，
 后面一多起来你会很快分不清：

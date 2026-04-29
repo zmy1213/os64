@@ -10,6 +10,7 @@ KERNEL_INCLUDE_DIR="$ROOT_DIR/kernel"
 KERNEL_ENTRY_SRC="$ROOT_DIR/kernel/boot/entry64.asm"
 KERNEL_INTERRUPT_STUBS_SRC="$ROOT_DIR/kernel/interrupts/interrupt_stubs.asm"
 KERNEL_MAIN_SRC="$ROOT_DIR/kernel/core/kernel_main.cpp"
+KERNEL_CONSOLE_SRC="$ROOT_DIR/kernel/console/console.cpp"
 KERNEL_PAGE_ALLOCATOR_SRC="$ROOT_DIR/kernel/memory/page_allocator.cpp"
 KERNEL_PAGING_SRC="$ROOT_DIR/kernel/memory/paging.cpp"
 KERNEL_RUNTIME_SRC="$ROOT_DIR/kernel/runtime/runtime.cpp"
@@ -24,6 +25,7 @@ STAGE2_BIN="$BUILD_DIR/stage2.bin"
 KERNEL_ENTRY_OBJ="$BUILD_DIR/entry64.o"
 KERNEL_INTERRUPT_STUBS_OBJ="$BUILD_DIR/interrupt_stubs.o"
 KERNEL_MAIN_OBJ="$BUILD_DIR/kernel_main.o"
+KERNEL_CONSOLE_OBJ="$BUILD_DIR/console.o"
 KERNEL_PAGE_ALLOCATOR_OBJ="$BUILD_DIR/page_allocator.o"
 KERNEL_PAGING_OBJ="$BUILD_DIR/paging.o"
 KERNEL_RUNTIME_OBJ="$BUILD_DIR/runtime.o"
@@ -49,7 +51,7 @@ KERNEL_EXTRA_CXXFLAGS="${KERNEL_EXTRA_CXXFLAGS:-}"
 mkdir -p "$BUILD_DIR"
 
 # Stage1 must remain a single 512-byte BIOS boot sector.
-echo "[1/19] assembling stage1"
+echo "[1/20] assembling stage1"
 nasm -f bin "$STAGE1_SRC" -o "$STAGE1_BIN"
 
 size="$(wc -c < "$STAGE1_BIN" | tr -d ' ')"
@@ -60,14 +62,14 @@ fi
 
 # 现在内核不再只是一份入口汇编和一份 C++ 文件，
 # 但整体仍然保持“没有宿主 libc、没有第三方运行时”的最小 freestanding 形态。
-echo "[2/19] assembling kernel entry"
+echo "[2/20] assembling kernel entry"
 nasm -f elf64 "$KERNEL_ENTRY_SRC" -o "$KERNEL_ENTRY_OBJ"
 
-echo "[3/19] assembling interrupt_stubs.asm"
+echo "[3/20] assembling interrupt_stubs.asm"
 nasm -f elf64 "$KERNEL_INTERRUPT_STUBS_SRC" -o "$KERNEL_INTERRUPT_STUBS_OBJ"
 
 # Compile the kernel with a freestanding x86_64-elf target so the host OS ABI does not leak in.
-echo "[4/19] compiling kernel_main.cpp"
+echo "[4/20] compiling kernel_main.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -85,7 +87,25 @@ echo "[4/19] compiling kernel_main.cpp"
   -c "$KERNEL_MAIN_SRC" \
   -o "$KERNEL_MAIN_OBJ"
 
-echo "[5/19] compiling page_allocator.cpp"
+echo "[5/20] compiling console.cpp"
+"$CLANGXX_BIN" \
+  --target=x86_64-elf \
+  -I "$KERNEL_INCLUDE_DIR" \
+  -ffreestanding \
+  -fno-exceptions \
+  -fno-rtti \
+  -fno-stack-protector \
+  -fno-pic \
+  -mno-red-zone \
+  -mcmodel=kernel \
+  -O0 \
+  -Wall \
+  -Wextra \
+  $KERNEL_EXTRA_CXXFLAGS \
+  -c "$KERNEL_CONSOLE_SRC" \
+  -o "$KERNEL_CONSOLE_OBJ"
+
+echo "[6/20] compiling page_allocator.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -103,7 +123,7 @@ echo "[5/19] compiling page_allocator.cpp"
   -c "$KERNEL_PAGE_ALLOCATOR_SRC" \
   -o "$KERNEL_PAGE_ALLOCATOR_OBJ"
 
-echo "[6/19] compiling paging.cpp"
+echo "[7/20] compiling paging.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -121,7 +141,7 @@ echo "[6/19] compiling paging.cpp"
   -c "$KERNEL_PAGING_SRC" \
   -o "$KERNEL_PAGING_OBJ"
 
-echo "[7/19] compiling runtime.cpp"
+echo "[8/20] compiling runtime.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -139,7 +159,7 @@ echo "[7/19] compiling runtime.cpp"
   -c "$KERNEL_RUNTIME_SRC" \
   -o "$KERNEL_RUNTIME_OBJ"
 
-echo "[8/19] compiling interrupts.cpp"
+echo "[9/20] compiling interrupts.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -157,7 +177,7 @@ echo "[8/19] compiling interrupts.cpp"
   -c "$KERNEL_INTERRUPTS_SRC" \
   -o "$KERNEL_INTERRUPTS_OBJ"
 
-echo "[9/19] compiling pic.cpp"
+echo "[10/20] compiling pic.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -175,7 +195,7 @@ echo "[9/19] compiling pic.cpp"
   -c "$KERNEL_PIC_SRC" \
   -o "$KERNEL_PIC_OBJ"
 
-echo "[10/19] compiling pit.cpp"
+echo "[11/20] compiling pit.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -193,7 +213,7 @@ echo "[10/19] compiling pit.cpp"
   -c "$KERNEL_PIT_SRC" \
   -o "$KERNEL_PIT_OBJ"
 
-echo "[11/19] compiling keyboard.cpp"
+echo "[12/20] compiling keyboard.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -211,7 +231,7 @@ echo "[11/19] compiling keyboard.cpp"
   -c "$KERNEL_KEYBOARD_SRC" \
   -o "$KERNEL_KEYBOARD_OBJ"
 
-echo "[12/19] compiling heap.cpp"
+echo "[13/20] compiling heap.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -231,7 +251,7 @@ echo "[12/19] compiling heap.cpp"
 
 # Link the kernel to a fixed address. For this learning round we intentionally keep it low
 # so stage2 can keep using the simplest BIOS CHS read path.
-echo "[13/19] linking kernel.elf"
+echo "[14/20] linking kernel.elf"
 "$LD_BIN" \
   -m elf_x86_64 \
   -T "$KERNEL_LINKER_SCRIPT" \
@@ -239,6 +259,7 @@ echo "[13/19] linking kernel.elf"
   "$KERNEL_ENTRY_OBJ" \
   "$KERNEL_INTERRUPT_STUBS_OBJ" \
   "$KERNEL_MAIN_OBJ" \
+  "$KERNEL_CONSOLE_OBJ" \
   "$KERNEL_PAGE_ALLOCATOR_OBJ" \
   "$KERNEL_PAGING_OBJ" \
   "$KERNEL_RUNTIME_OBJ" \
@@ -249,7 +270,7 @@ echo "[13/19] linking kernel.elf"
   "$KERNEL_HEAP_OBJ"
 
 # Stage2 wants a raw blob on disk, so we strip the ELF container and keep only the loadable bytes.
-echo "[14/19] generating kernel.bin"
+echo "[15/20] generating kernel.bin"
 "$OBJCOPY_BIN" -O binary "$KERNEL_ELF" "$KERNEL_BIN"
 
 kernel_size="$(wc -c < "$KERNEL_BIN" | tr -d ' ')"
@@ -261,7 +282,7 @@ if [ "$kernel_sectors" -le 0 ] || [ "$kernel_sectors" -gt 127 ]; then
 fi
 
 # Stage2 needs to know how many sectors to read and what fixed address the kernel expects.
-echo "[15/19] generating kernel metadata for stage2"
+echo "[16/20] generating kernel metadata for stage2"
 cat > "$KERNEL_META_INC" <<EOF
 %define KERNEL_LOAD_ADDR 0x00010000
 %define KERNEL_LOAD_SEGMENT 0x1000
@@ -271,7 +292,7 @@ cat > "$KERNEL_META_INC" <<EOF
 EOF
 
 # Stage2 now spans eight sectors because it also sets up A20/E820/GDT/page tables/long mode.
-echo "[16/19] assembling stage2"
+echo "[17/20] assembling stage2"
 nasm -f bin -i "$BUILD_DIR/" "$STAGE2_SRC" -o "$STAGE2_BIN"
 
 size="$(wc -c < "$STAGE2_BIN" | tr -d ' ')"
@@ -281,14 +302,14 @@ if [ "$size" -ne "$STAGE2_EXPECTED_SIZE" ]; then
 fi
 
 # Create a raw floppy-sized image and place stage1/stage2/kernel in the first sectors.
-echo "[17/19] creating raw disk image"
+echo "[18/20] creating raw disk image"
 truncate -s "$IMAGE_SIZE" "$DISK_IMG"
 dd if="$STAGE1_BIN" of="$DISK_IMG" bs=512 count=1 conv=notrunc status=none
 dd if="$STAGE2_BIN" of="$DISK_IMG" bs=512 seek=1 count=8 conv=notrunc status=none
 dd if="$KERNEL_BIN" of="$DISK_IMG" bs=512 seek=9 conv=notrunc status=none
 
 # BIOS boot sectors must end with the 0x55aa signature.
-echo "[18/19] verifying boot signature"
+echo "[19/20] verifying boot signature"
 signature="$(hexdump -n 2 -s 510 -e '2/1 "%02x"' "$STAGE1_BIN")"
 if [ "$signature" != "55aa" ]; then
   echo "boot signature mismatch: expected 55aa, got $signature" >&2
@@ -296,7 +317,7 @@ if [ "$signature" != "55aa" ]; then
 fi
 
 # Emit the key output paths so manual runs can inspect the artifacts directly.
-echo "[19/19] build complete"
+echo "[20/20] build complete"
 echo "stage1.bin: $STAGE1_BIN"
 echo "stage2.bin: $STAGE2_BIN"
 echo "kernel.elf: $KERNEL_ELF"

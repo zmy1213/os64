@@ -90,12 +90,16 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "keyboard_char_5=0x0000000000000008" "$SERIAL_LOG" \
   && grep -q "keyboard_buffer_remaining=0" "$SERIAL_LOG" \
   && grep -q "keyboard_dropped_chars=0" "$SERIAL_LOG" \
-  && grep -q "keyboard ok" "$SERIAL_LOG"; then
-  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep->keyboard->char-input serial test passed"
+  && grep -q "keyboard ok" "$SERIAL_LOG" \
+  && grep -q "console_line_length=5" "$SERIAL_LOG" \
+  && grep -q "console_line=os 64" "$SERIAL_LOG" \
+  && grep -q "console_buffer_remaining=0" "$SERIAL_LOG" \
+  && grep -q "console input ok" "$SERIAL_LOG"; then
+  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep->keyboard->char-input->console-line serial test passed"
   cat "$SERIAL_LOG"
   exit 0
 fi
 
-echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep->keyboard->char-input serial test failed" >&2
+echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep->keyboard->char-input->console-line serial test failed" >&2
 cat "$SERIAL_LOG" >&2
 exit 1
