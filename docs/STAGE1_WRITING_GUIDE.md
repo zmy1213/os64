@@ -578,3 +578,34 @@ make test-stage1
 
 - `boot/stage1.asm`
 - `scripts/build-stage1-image.sh`
+
+---
+
+## 11. 现在这一步之后的下一步是什么
+
+当 `stage1 ok` 已经稳定后，下一步不要马上上 long mode。
+
+下一步应该是：
+
+> 让 `stage1` 真正把 `stage2` 从磁盘读进来，然后跳到 `stage2`
+
+### 为什么先做这个
+
+因为这一步会证明：
+
+- 你的 boot sector 不只是“能执行”
+- 它已经开始承担加载器职责
+- 你的磁盘布局设计是活的
+
+### 这一轮的完成标准
+
+串口日志里同时看到：
+
+- `stage1 ok`
+- `stage2 ok`
+
+只要这两句都出来，就说明：
+
+`BIOS -> stage1 -> disk read -> stage2`
+
+这条链打通了。
