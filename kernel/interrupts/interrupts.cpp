@@ -1,5 +1,7 @@
 #include "interrupts/interrupts.hpp"
 
+#include "interrupts/pic.hpp"
+#include "interrupts/pit.hpp"
 #include "runtime/runtime.hpp"
 
 namespace {
@@ -58,6 +60,7 @@ struct IdtPointer {
 } __attribute__((packed));
 
 extern "C" uintptr_t isr_stub_table[kCpuExceptionCount];
+extern "C" uintptr_t irq_stub_table[kHardwareIrqCount];
 
 IdtEntry g_idt[kIdtEntryCount];        // 把整张 IDT 先放在内核自己的静态内存里。
 
@@ -86,8 +89,15 @@ void load_idt(const IdtPointer* idt_pointer) {
 bool initialize_idt() {
   memory_set(g_idt, 0, sizeof(g_idt));    // 先把所有槽位清零，避免脏数据进入 CPU。
 
+  // 前 32 项先接 CPU 异常。
   for (uint8_t vector = 0; vector < kCpuExceptionCount; ++vector) {
     set_idt_gate(vector, reinterpret_cast<void (*)()>(isr_stub_table[vector]));
+  }
+
+  // 再把 PIC 的 16 路硬件 IRQ 接到 32~47。
+  for (uint8_t irq = 0; irq < kHardwareIrqCount; ++irq) {
+    set_idt_gate(static_cast<uint8_t>(kPicMasterVectorBase + irq),
+                 reinterpret_cast<void (*)()>(irq_stub_table[irq]));
   }
 
   IdtPointer idt_pointer{};
@@ -104,4 +114,30 @@ const char* exception_name(uint64_t vector) {
   }
 
   return "unknown exception";
+}
+
+void enable_interrupts() {
+  asm volatile("sti");   // Set Interrupt Flag：从这一刻开始，CPU 才会接可屏蔽外部中断。
+}
+
+void disable_interrupts() {
+  asm volatile("cli");   // Clear Interrupt Flag：后续即使 PIC 再发 IRQ，CPU 也先不接了。
+}
+
+void wait_for_interrupt() {
+  asm volatile("hlt");   // Halt：让 CPU 休眠，等下一次中断再把它唤醒。
+}
+
+extern "C" void kernel_handle_irq(const InterruptFrame* frame) {
+  if (frame == nullptr) {
+    return;
+  }
+
+  // 这一轮只打开了 IRQ0，所以这里先只识别“时钟中断”这一类 IRQ。
+  if (frame->vector == kPicMasterVectorBase) {
+    handle_timer_irq();
+  }
+
+  // IRQ 收到以后，不管具体是哪一路，最后都要记得 EOI。
+  send_pic_eoi(static_cast<uint8_t>(frame->vector));
 }

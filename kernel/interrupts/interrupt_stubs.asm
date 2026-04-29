@@ -3,8 +3,10 @@ bits 64
 section .text
 
 global isr_stub_table
+global irq_stub_table
 
 extern kernel_handle_exception
+extern kernel_handle_irq
 
 %macro ISR_NO_ERROR 1
 isr_stub_%1:
@@ -89,6 +91,84 @@ isr_stub_table:
     dq isr_stub_29
     dq isr_stub_30
     dq isr_stub_31
+
+align 8
+
+%macro IRQ_STUB 2
+irq_stub_%1:
+    push 0                          ; 硬件 IRQ 没有 CPU 自动压入的 error code，这里补一个 0。
+    push %2                         ; 再补上已经重映射后的向量号，比如 IRQ0 -> 32。
+    push rax                        ; 从这里开始把通用寄存器现场全部保存下来。
+    push rcx
+    push rdx
+    push rbx
+    push rbp
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
+    lea rdi, [rsp + 15 * 8]         ; 跳过 15 个通用寄存器后，刚好指到 vector/error/rip...
+    cld
+    call kernel_handle_irq
+    pop r15                         ; C++ 处理完后，把刚才保存的寄存器按相反顺序恢复。
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rbp
+    pop rbx
+    pop rdx
+    pop rcx
+    pop rax
+    add rsp, 16                     ; 丢掉我们手工补的 error_code 和 vector。
+    iretq                           ; 返回到被中断前的那条指令继续执行。
+%endmacro
+
+IRQ_STUB 0, 32
+IRQ_STUB 1, 33
+IRQ_STUB 2, 34
+IRQ_STUB 3, 35
+IRQ_STUB 4, 36
+IRQ_STUB 5, 37
+IRQ_STUB 6, 38
+IRQ_STUB 7, 39
+IRQ_STUB 8, 40
+IRQ_STUB 9, 41
+IRQ_STUB 10, 42
+IRQ_STUB 11, 43
+IRQ_STUB 12, 44
+IRQ_STUB 13, 45
+IRQ_STUB 14, 46
+IRQ_STUB 15, 47
+
+irq_stub_table:
+    dq irq_stub_0
+    dq irq_stub_1
+    dq irq_stub_2
+    dq irq_stub_3
+    dq irq_stub_4
+    dq irq_stub_5
+    dq irq_stub_6
+    dq irq_stub_7
+    dq irq_stub_8
+    dq irq_stub_9
+    dq irq_stub_10
+    dq irq_stub_11
+    dq irq_stub_12
+    dq irq_stub_13
+    dq irq_stub_14
+    dq irq_stub_15
 
 section .text
 

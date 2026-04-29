@@ -13,7 +13,11 @@ kernel/
 ├── interrupts/
 │   ├── interrupts.hpp
 │   ├── interrupts.cpp
-│   └── interrupt_stubs.asm
+│   ├── interrupt_stubs.asm
+│   ├── pic.hpp
+│   ├── pic.cpp
+│   ├── pit.hpp
+│   └── pit.cpp
 ├── memory/
 │   ├── page_allocator.hpp
 │   ├── page_allocator.cpp
@@ -59,6 +63,7 @@ kernel/
 - 页分配器初始化
 - 页表测试
 - 堆测试
+- 定时器中断测试
 - 异常测试入口
 
 一句话理解：
@@ -74,11 +79,15 @@ kernel/
 - `interrupt_stubs.asm`
   真正离 CPU 最近的汇编入口。
 - `interrupts.cpp/.hpp`
-  IDT、异常名字表、通用 trap 接入逻辑。
+  IDT、异常名字表、开关中断、通用 trap/IRQ 接入逻辑。
+- `pic.cpp/.hpp`
+  初始化 8259A PIC，把硬件 IRQ 重映射到 32~47，并在 IRQ 结束后发 EOI。
+- `pit.cpp/.hpp`
+  初始化 8253/8254 PIT，让 IRQ0 周期性地产生时钟 tick。
 
 一句话理解：
 
-> `interrupts/` 管“CPU 一出异常，先怎么接住它”。
+> `interrupts/` 管“CPU 一出异常、硬件一来中断，先怎么接住它”。
 
 ---
 

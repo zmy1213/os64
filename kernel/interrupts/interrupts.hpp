@@ -5,6 +5,9 @@
 #include <stdint.h>
 
 constexpr uint8_t kCpuExceptionCount = 32;   // CPU 保留给异常/陷阱的前 32 个向量号。
+constexpr uint8_t kHardwareIrqCount = 16;    // 传统 PIC 一共管理 16 路硬件 IRQ。
+constexpr uint8_t kPicMasterVectorBase = 32; // PIC 重映射后，主片 IRQ0~7 从 32 开始。
+constexpr uint8_t kPicSlaveVectorBase = 40;  // 从片 IRQ8~15 从 40 开始。
 
 // 这是我们约定给 C++ 异常处理函数看的最小中断栈帧。
 // 现在先只关心：
@@ -21,6 +24,18 @@ struct InterruptFrame {
 
 bool initialize_idt();
 const char* exception_name(uint64_t vector);
+
+// `sti`：打开可屏蔽中断。
+// 只有 IDT、PIC、PIT 都准备好之后才应该开。
+void enable_interrupts();
+
+// `cli`：关闭可屏蔽中断。
+// 这一轮测试跑完后先关掉，避免后面日志阶段继续被时钟打断。
+void disable_interrupts();
+
+// `hlt`：让 CPU 睡眠，直到下一次中断到来再醒。
+// 这是最小内核里等待 tick 的最好办法之一，因为它不会忙等空转。
+void wait_for_interrupt();
 
 static_assert(sizeof(InterruptFrame) == 40,
               "InterruptFrame layout must stay stable");

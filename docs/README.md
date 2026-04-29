@@ -24,6 +24,8 @@
    再往前一步，把“映射页”提升成“能抓异常、能分配堆内存”的真正内核基础设施。
 10. [从最小 IDT 到通用 Trap + 可释放堆](./KERNEL_TRAP_HEAP_UPGRADE_GUIDE.md)
    再往前一步，把“最小异常处理 + bump 堆”升级成“通用 trap 框架 + 能 free 的正式堆”。
+11. [从通用 Trap 到 PIC + PIT + 定时器中断](./KERNEL_TIMER_IRQ_GUIDE.md)
+   再继续往前，把 CPU 异常体系扩成真正能接外部硬件时钟的第一版 IRQ 框架。
 
 一句话记忆这个顺序：
 
@@ -38,4 +40,5 @@ stage1
 -> 页表管理器
 -> IDT + page fault + 第一版内核堆
 -> 通用 trap 框架 + 可释放堆
+-> PIC + PIT + timer tick
 ```

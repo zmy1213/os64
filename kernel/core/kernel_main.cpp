@@ -3,6 +3,8 @@
 
 #include "boot/boot_info.hpp"
 #include "interrupts/interrupts.hpp"
+#include "interrupts/pic.hpp"
+#include "interrupts/pit.hpp"
 #include "memory/heap.hpp"
 #include "memory/page_allocator.hpp"
 #include "memory/paging.hpp"
@@ -25,6 +27,9 @@ constexpr size_t kHeapReuseSize = 32;                                  // 释放
 constexpr size_t kHeapMergeBlockASize = 512;                           // 合并测试里的第一个相邻块。
 constexpr size_t kHeapMergeBlockBSize = 768;                           // 合并测试里的第二个相邻块。
 constexpr size_t kHeapMergedRequestSize = 1024;                        // 如果 A/B 真合并了，这个请求应该能从 A 位置拿到。
+constexpr uint32_t kPitFrequencyHz = 100;                              // 先把时钟中断频率设成 100Hz，够平滑也够好测。
+constexpr uint64_t kTimerFirstLogTick = 10;                            // 先在第 10 个 tick 打一次点。
+constexpr uint64_t kTimerSecondLogTick = 20;                           // 第 20 个 tick 再打一次点，证明中断在持续发生。
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
 constexpr uint64_t kInvalidOpcodeMarker = 0x55443231494E5641ULL;       // 只是为了日志里有个好认的常量。
 #endif
@@ -345,6 +350,54 @@ bool run_heap_smoke_test(KernelHeap* heap) {
          reused_small == small_block && merged_block == merge_block_a;
 }
 
+bool run_timer_smoke_test() {
+  // 先初始化 PIC，让外部硬件中断有地方可去，并避开 CPU 异常向量区。
+  if (!initialize_pic()) {
+    return false;
+  }
+
+  serial_write_string("pic ok");
+  serial_write_crlf();
+
+  // 再初始化 PIT，让 IRQ0 真的开始按固定频率发生。
+  if (!initialize_pit(kPitFrequencyHz)) {
+    return false;
+  }
+
+  serial_write_string("pit ok");
+  serial_write_crlf();
+
+  enable_interrupts();   // 到这里才真正允许外部硬件中断进来。
+
+  bool logged_first_tick = false;
+  bool logged_second_tick = false;
+
+  while (!logged_second_tick) {
+    // 不断看“全局 tick 计数器”现在走到了几。
+    const uint64_t ticks = timer_tick_count();
+
+    if (!logged_first_tick && ticks >= kTimerFirstLogTick) {
+      serial_write_string("timer_tick=");
+      serial_write_u64(ticks);
+      serial_write_crlf();
+      logged_first_tick = true;
+    }
+
+    if (ticks >= kTimerSecondLogTick) {
+      serial_write_string("timer_tick=");
+      serial_write_u64(ticks);
+      serial_write_crlf();
+      logged_second_tick = true;
+      break;                        // 看到第 20 个 tick 就够证明这条 IRQ 链已经持续工作。
+    }
+
+    wait_for_interrupt();  // 没有到目标 tick 之前，就先让 CPU 睡到下一次中断再醒。
+  }
+
+  disable_interrupts();             // 测试结束先关掉中断，避免后面异常测试被时钟持续打断。
+  return true;
+}
+
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
 void run_invalid_opcode_smoke_test() {
   serial_write_string("invalid_opcode_marker=0x");
@@ -424,13 +477,20 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 
   write_status_line(11, "heap alloc ok");
 
+  if (!run_timer_smoke_test()) {
+    write_status_line(12, "timer bad");
+    return;
+  }
+
+  write_status_line(12, "timer ok");
+
 #if defined(OS64_ENABLE_PAGE_FAULT_SMOKE)
-  write_status_line(12, "page fault smoke");
+  write_status_line(13, "page fault smoke");
   run_page_fault_smoke_test();
 #endif
 
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
-  write_status_line(12, "invalid opcode smoke");
+  write_status_line(13, "invalid opcode smoke");
   run_invalid_opcode_smoke_test();
 #endif
 }
