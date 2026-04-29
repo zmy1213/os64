@@ -408,3 +408,7 @@ make test-page-fault
 一句话总结这一轮：
 
 > 现在内核不只是会被“时间”唤醒，也第一次会被“用户输入事件”真正打断并处理了。
+
+这一条后续已经继续推进了，对应下一份文档看：
+
+- [从键盘 IRQ 到最小字符输入](./KERNEL_KEYBOARD_CHAR_INPUT_GUIDE.md)

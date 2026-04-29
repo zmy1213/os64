@@ -35,8 +35,24 @@ constexpr uint64_t kTimerWaitTestTicks = 3;                            // 第一
 constexpr uint64_t kTimerSleepTestMs = 50;                             // 第二段再按毫秒等 50ms，在 100Hz 下约等于 5 个 tick。
 constexpr uint64_t kTimerSleepMinTicks = 5;                            // 50ms 在 100Hz 下至少应该跨过 5 个 tick。
 constexpr uint8_t kKeyboardIrqLine = 1;                                // 传统 PC 键盘走主 PIC 的 IRQ1。
-constexpr uint8_t kKeyboardTestScancode = 0x1E;                        // Set 1 扫描码里的 'A' make code。
-constexpr uint64_t kKeyboardTestTimeoutTicks = 20;                     // 键盘测试最多等 20 个 tick，避免异常时无限卡住。
+constexpr uint64_t kKeyboardTestTimeoutTicks = 20;                     // 键盘测试每轮最多等 20 个 tick，避免异常时无限卡住。
+constexpr uint8_t kKeyboardTestScancodes[] = {
+    0x1E,  // A 按下 -> 'a'
+    0x9E,  // A 松开 -> 这一轮应忽略，不进入字符缓冲区
+    0x30,  // B 按下 -> 'b'
+    0x02,  // 1 按下 -> '1'
+    0x39,  // Space 按下 -> ' '
+    0x1C,  // Enter 按下 -> '\n'
+    0x0E,  // Backspace 按下 -> '\b'
+};
+constexpr char kKeyboardExpectedChars[] = {
+    'a',
+    'b',
+    '1',
+    ' ',
+    '\n',
+    '\b',
+};
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
 constexpr uint64_t kInvalidOpcodeMarker = 0x55443231494E5641ULL;       // 只是为了日志里有个好认的常量。
 #endif
@@ -442,6 +458,21 @@ bool run_timer_smoke_test() {
          sleep_elapsed_ticks >= kTimerSleepMinTicks;
 }
 
+bool wait_for_keyboard_irq_count(uint64_t target_count,
+                                 uint64_t timeout_ticks) {
+  const uint64_t start_tick = timer_tick_count();
+
+  while (keyboard_irq_count() < target_count) {
+    if ((timer_tick_count() - start_tick) >= timeout_ticks) {
+      return false;
+    }
+
+    wait_for_interrupt();
+  }
+
+  return true;
+}
+
 bool run_keyboard_smoke_test() {
   if (!initialize_keyboard()) {
     return false;
@@ -459,28 +490,44 @@ bool run_keyboard_smoke_test() {
   serial_write_crlf();
 
   const uint64_t before_irq_count = keyboard_irq_count();
-
-  serial_write_string("keyboard_test_scancode=0x");
-  serial_write_hex64(kKeyboardTestScancode);
-  serial_write_crlf();
+  const uint64_t expected_irq_count =
+      before_irq_count +
+      (sizeof(kKeyboardTestScancodes) / sizeof(kKeyboardTestScancodes[0]));
 
   enable_interrupts();
 
-  if (!keyboard_inject_test_scancode(kKeyboardTestScancode)) {
-    disable_interrupts();
-    return false;
-  }
+  // 这一轮不再只测“来过一次 IRQ”，
+  // 而是连续注入一串扫描码，验证：
+  // 1. IRQ 顺序没有乱
+  // 2. break code 会被忽略
+  // 3. make code 会被翻译成字符并进入 FIFO 缓冲区
+  for (uint64_t i = 0; i < (sizeof(kKeyboardTestScancodes) /
+                            sizeof(kKeyboardTestScancodes[0]));
+       ++i) {
+    serial_write_string("keyboard_inject[");
+    serial_write_u64(i);
+    serial_write_string("]=0x");
+    serial_write_hex64(kKeyboardTestScancodes[i]);
+    serial_write_crlf();
 
-  const uint64_t start_tick = timer_tick_count();
-  while (keyboard_irq_count() == before_irq_count &&
-         (timer_tick_count() - start_tick) < kKeyboardTestTimeoutTicks) {
-    wait_for_interrupt();  // 键盘没来就继续睡，期间 timer IRQ 会把 CPU 周期性唤醒。
+    if (!keyboard_inject_test_scancode(kKeyboardTestScancodes[i])) {
+      disable_interrupts();
+      return false;
+    }
+
+    if (!wait_for_keyboard_irq_count(before_irq_count + i + 1,
+                                     kKeyboardTestTimeoutTicks)) {
+      disable_interrupts();
+      return false;
+    }
   }
 
   disable_interrupts();
 
   const uint64_t after_irq_count = keyboard_irq_count();
   const uint8_t last_scancode = keyboard_last_scancode();
+  const uint16_t buffered_char_count = keyboard_buffered_char_count();
+  const uint64_t dropped_char_count = keyboard_dropped_char_count();
 
   serial_write_string("keyboard_irq_count=");
   serial_write_u64(after_irq_count);
@@ -490,8 +537,52 @@ bool run_keyboard_smoke_test() {
   serial_write_hex64(last_scancode);
   serial_write_crlf();
 
-  return after_irq_count == before_irq_count + 1 &&
-         last_scancode == kKeyboardTestScancode;
+  serial_write_string("keyboard_char_count=");
+  serial_write_u64(buffered_char_count);
+  serial_write_crlf();
+
+  bool chars_match = true;
+  for (uint64_t i = 0; i < (sizeof(kKeyboardExpectedChars) /
+                            sizeof(kKeyboardExpectedChars[0]));
+       ++i) {
+    char character = '\0';
+    if (!keyboard_try_read_char(&character)) {
+      chars_match = false;
+      break;
+    }
+
+    serial_write_string("keyboard_char_");
+    serial_write_u64(i);
+    serial_write_string("=0x");
+    serial_write_hex64(static_cast<uint8_t>(character));
+    serial_write_crlf();
+
+    if (character != kKeyboardExpectedChars[i]) {
+      chars_match = false;
+    }
+  }
+
+  char extra_character = '\0';
+  const bool has_extra_char = keyboard_try_read_char(&extra_character);
+  const uint16_t remaining_chars = keyboard_buffered_char_count();
+
+  serial_write_string("keyboard_buffer_remaining=");
+  serial_write_u64(remaining_chars);
+  serial_write_crlf();
+
+  serial_write_string("keyboard_dropped_chars=");
+  serial_write_u64(dropped_char_count);
+  serial_write_crlf();
+
+  return after_irq_count == expected_irq_count &&
+         last_scancode ==
+             kKeyboardTestScancodes[(sizeof(kKeyboardTestScancodes) /
+                                     sizeof(kKeyboardTestScancodes[0])) -
+                                    1] &&
+         buffered_char_count ==
+             (sizeof(kKeyboardExpectedChars) / sizeof(kKeyboardExpectedChars[0])) &&
+         chars_match && !has_extra_char && remaining_chars == 0 &&
+         dropped_char_count == 0;
 }
 
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)

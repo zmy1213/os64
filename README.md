@@ -215,6 +215,8 @@
     再继续看内核怎么把“只会计数”的 tick 变成真正可用的时间等待能力。
 13. [从最小 wait / sleep 到键盘 IRQ](./docs/KERNEL_KEYBOARD_IRQ_GUIDE.md)
     再继续看内核怎么第一次接收外部输入设备发来的中断和扫描码。
+14. [从键盘 IRQ 到最小字符输入](./docs/KERNEL_KEYBOARD_CHAR_INPUT_GUIDE.md)
+    再继续看内核怎么把扫描码翻译成字符，并放进真正可读的输入缓冲区。
 
 如果你想直接在 `docs/` 目录里按顺序读，也可以先看：
 

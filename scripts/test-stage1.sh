@@ -79,15 +79,23 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "timer ok" "$SERIAL_LOG" \
   && grep -q "keyboard init ok" "$SERIAL_LOG" \
   && grep -q "keyboard irq1 enabled" "$SERIAL_LOG" \
-  && grep -q "keyboard_test_scancode=0x000000000000001E" "$SERIAL_LOG" \
-  && grep -q "keyboard_irq_count=1" "$SERIAL_LOG" \
-  && grep -q "keyboard_last_scancode=0x000000000000001E" "$SERIAL_LOG" \
+  && grep -q "keyboard_irq_count=7" "$SERIAL_LOG" \
+  && grep -q "keyboard_last_scancode=0x000000000000000E" "$SERIAL_LOG" \
+  && grep -q "keyboard_char_count=6" "$SERIAL_LOG" \
+  && grep -q "keyboard_char_0=0x0000000000000061" "$SERIAL_LOG" \
+  && grep -q "keyboard_char_1=0x0000000000000062" "$SERIAL_LOG" \
+  && grep -q "keyboard_char_2=0x0000000000000031" "$SERIAL_LOG" \
+  && grep -q "keyboard_char_3=0x0000000000000020" "$SERIAL_LOG" \
+  && grep -q "keyboard_char_4=0x000000000000000A" "$SERIAL_LOG" \
+  && grep -q "keyboard_char_5=0x0000000000000008" "$SERIAL_LOG" \
+  && grep -q "keyboard_buffer_remaining=0" "$SERIAL_LOG" \
+  && grep -q "keyboard_dropped_chars=0" "$SERIAL_LOG" \
   && grep -q "keyboard ok" "$SERIAL_LOG"; then
-  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep->keyboard serial test passed"
+  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep->keyboard->char-input serial test passed"
   cat "$SERIAL_LOG"
   exit 0
 fi
 
-echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep->keyboard serial test failed" >&2
+echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep->keyboard->char-input serial test failed" >&2
 cat "$SERIAL_LOG" >&2
 exit 1

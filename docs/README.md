@@ -30,6 +30,8 @@
    再继续往前，把“会计数的 tick”变成“内核真的能等一段时间再继续”的最小时间接口。
 13. [从最小 wait / sleep 到键盘 IRQ](./KERNEL_KEYBOARD_IRQ_GUIDE.md)
    再继续往前，把“只会按时间醒来”的内核扩成“能响应外部输入事件”的内核。
+14. [从键盘 IRQ 到最小字符输入](./KERNEL_KEYBOARD_CHAR_INPUT_GUIDE.md)
+   再继续往前，把“只会记扫描码”的内核扩成“能真正读出字符”的最小输入系统。
 
 一句话记忆这个顺序：
 
@@ -47,4 +49,5 @@ stage1
 -> PIC + PIT + timer tick
 -> tick 驱动的最小 wait / sleep
 -> keyboard IRQ
+-> keyboard char input
 ```
