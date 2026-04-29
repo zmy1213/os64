@@ -16,6 +16,8 @@
    当你已经懂了保护模式，再继续看为什么还要有页表、PAE、LME 和 long mode。
 6. [从 Long Mode 到 C++ 内核](./KERNEL_ENTRY_GUIDE.md)
    最后再看 bootloader 怎么把控制权交给真正的 64 位 C++ 内核。
+7. [从 E820 到第一版页分配器](./E820_PAGE_ALLOCATOR_GUIDE.md)
+   最后再看内核怎样把 BIOS 给的内存地图变成真正可分配的 4 KiB 页。
 
 一句话记忆这个顺序：
 
@@ -26,4 +28,5 @@ stage1
 -> 深挖 E820
 -> 页表和 long mode
 -> 进入 C++ 内核
+-> 第一版页分配器
 ```

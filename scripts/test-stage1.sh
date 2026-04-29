@@ -46,12 +46,17 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "paging ok" "$SERIAL_LOG" \
   && grep -q "long mode ok" "$SERIAL_LOG" \
   && grep -q "hello from os64 kernel" "$SERIAL_LOG" \
-  && grep -q "boot info ok" "$SERIAL_LOG"; then
-  echo "stage1->stage2->protected-mode->long-mode->kernel serial test passed"
+  && grep -q "boot info ok" "$SERIAL_LOG" \
+  && grep -q "e820 parse ok" "$SERIAL_LOG" \
+  && grep -q "page allocator ok" "$SERIAL_LOG" \
+  && grep -q "alloc_page_0=0x" "$SERIAL_LOG" \
+  && grep -q "alloc_page_1=0x" "$SERIAL_LOG" \
+  && grep -q "alloc_page_2=0x" "$SERIAL_LOG"; then
+  echo "stage1->stage2->protected-mode->long-mode->kernel->allocator serial test passed"
   cat "$SERIAL_LOG"
   exit 0
 fi
 
-echo "stage1->stage2->protected-mode->long-mode->kernel serial test failed" >&2
+echo "stage1->stage2->protected-mode->long-mode->kernel->allocator serial test failed" >&2
 cat "$SERIAL_LOG" >&2
 exit 1

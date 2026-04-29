@@ -201,6 +201,8 @@
    看完保护模式后，再理解为什么还要做页表、PAE、LME 和 long mode。
 6. [从 Long Mode 到 C++ 内核](./docs/KERNEL_ENTRY_GUIDE.md)
    最后再看 bootloader 怎么把控制权真正交给 `kernel_main.cpp`。
+7. [从 E820 到第一版页分配器](./docs/E820_PAGE_ALLOCATOR_GUIDE.md)
+   当内核已经能启动后，再继续理解它怎么真正开始管理“哪些物理内存能用”。
 
 如果你想直接在 `docs/` 目录里按顺序读，也可以先看：
 
