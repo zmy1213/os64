@@ -79,6 +79,21 @@ constexpr uint8_t kShellMemScancodes[] = {
 constexpr uint8_t kShellTicksScancodes[] = {
     0x14, 0x17, 0x2E, 0x25, 0x1F, 0x1C,  // ticks + Enter
 };
+constexpr uint8_t kShellHeapScancodes[] = {
+    0x23, 0x12, 0x1E, 0x19, 0x1C,  // heap + Enter
+};
+constexpr uint8_t kShellIrqScancodes[] = {
+    0x17, 0x13, 0x10, 0x1C,        // irq + Enter
+};
+constexpr uint8_t kShellEchoScancodes[] = {
+    0x12, 0x2E, 0x23, 0x18, 0x39, 0x23, 0x17, 0x05, 0x03, 0x1C,  // echo hi42 + Enter
+};
+constexpr uint8_t kShellUptimeScancodes[] = {
+    0x16, 0x19, 0x14, 0x17, 0x32, 0x12, 0x1C,  // uptime + Enter
+};
+constexpr uint8_t kShellClearScancodes[] = {
+    0x2E, 0x26, 0x12, 0x1E, 0x13, 0x1C,  // clear + Enter
+};
 constexpr uint8_t kShellBadScancodes[] = {
     0x30, 0x1E, 0x20, 0x1C,        // bad + Enter
 };
@@ -141,6 +156,15 @@ void shell_output_char(char ch) {
 
   serial_write_char(ch);
 }
+
+void shell_clear_output() {
+  console_clear();
+}
+
+const ShellOutput kShellOutput = {
+    shell_output_char,
+    shell_clear_output,
+};
 
 // 打印 1 个十六进制字符，比如 10 -> 'A'。
 void serial_write_hex_nibble(uint8_t value) {
@@ -735,6 +759,21 @@ constexpr ShellSmokeCommand kShellSmokeCommands[] = {
     {"ticks", kShellTicksScancodes,
      sizeof(kShellTicksScancodes) / sizeof(kShellTicksScancodes[0]),
      kShellCommandExecuted},
+    {"heap", kShellHeapScancodes,
+     sizeof(kShellHeapScancodes) / sizeof(kShellHeapScancodes[0]),
+     kShellCommandExecuted},
+    {"irq", kShellIrqScancodes,
+     sizeof(kShellIrqScancodes) / sizeof(kShellIrqScancodes[0]),
+     kShellCommandExecuted},
+    {"echo hi42", kShellEchoScancodes,
+     sizeof(kShellEchoScancodes) / sizeof(kShellEchoScancodes[0]),
+     kShellCommandExecuted},
+    {"uptime", kShellUptimeScancodes,
+     sizeof(kShellUptimeScancodes) / sizeof(kShellUptimeScancodes[0]),
+     kShellCommandExecuted},
+    {"clear", kShellClearScancodes,
+     sizeof(kShellClearScancodes) / sizeof(kShellClearScancodes[0]),
+     kShellCommandExecuted},
     {"bad", kShellBadScancodes,
      sizeof(kShellBadScancodes) / sizeof(kShellBadScancodes[0]),
      kShellCommandUnknown},
@@ -774,9 +813,8 @@ bool inject_scancode_sequence(const char* log_prefix,
 bool run_shell_smoke_test() {
   initialize_console(kShellTestStartRow, kTextColor);
 
-  ShellOutput shell_output{};
-  shell_output.write_char = shell_output_char;
-  if (!initialize_shell(&g_shell, &g_page_allocator, &shell_output)) {
+  if (!initialize_shell(&g_shell, &g_page_allocator, &g_kernel_heap,
+                        &kShellOutput)) {
     return false;
   }
 

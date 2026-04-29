@@ -136,6 +136,15 @@ void console_write_string(const char* text) {
   }
 }
 
+void console_clear() {
+  for (uint16_t row = g_console_start_row; row < kVgaRows; ++row) {
+    clear_row(row);
+  }
+
+  g_console_row = g_console_start_row;
+  g_console_column = 0;
+}
+
 size_t console_read_line(char* buffer, size_t capacity) {
   if (buffer == nullptr || capacity < 2) {
     return 0;

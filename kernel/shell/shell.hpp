@@ -4,16 +4,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "memory/heap.hpp"
 #include "memory/page_allocator.hpp"
 
 // shell 只要求外界提供一个“输出 1 个字符”的最小能力。
 // 这样它就不用关心自己是在写 VGA、串口，还是两边一起写。
 struct ShellOutput {
   void (*write_char)(char ch);
+  void (*clear)();               // `clear` 命令用这个回调去清空控制台区域。
 };
 
 struct ShellState {
   const PageAllocator* allocator;  // `mem` 命令会从这里拿当前页分配器状态。
+  const KernelHeap* heap;          // `heap` 命令会从这里拿当前堆状态。
   ShellOutput output;              // 所有 shell 输出最终都走这个回调。
 };
 
@@ -25,16 +28,22 @@ enum ShellCommandResult : uint8_t {
 
 bool initialize_shell(ShellState* shell,
                       const PageAllocator* allocator,
+                      const KernelHeap* heap,
                       const ShellOutput* output);
 
 // 打印最小提示符，让用户知道 shell 已经在等输入了。
 void shell_print_prompt(const ShellState* shell);
 
 // 执行一整行命令。
-// 这一轮先只做最小内建命令：
+// 现在这版 shell 先支持这些最小内建命令：
 // - help
 // - mem
 // - ticks
+// - heap
+// - irq
+// - uptime
+// - echo <text>
+// - clear
 ShellCommandResult shell_execute_line(const ShellState* shell,
                                       const char* line);
 

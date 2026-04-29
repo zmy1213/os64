@@ -36,6 +36,8 @@
    再继续往前，把“能读字符”的内核扩成“能回显并读完整一行”的最小控制台。
 16. [从控制台行输入到最小 Shell](./KERNEL_SHELL_GUIDE.md)
    再继续往前，把“能读整行”的内核扩成“能执行内建命令”的最小交互系统。
+17. [从最小 Shell 到可观察命令 + 带参数命令](./KERNEL_SHELL_EXPANSION_GUIDE.md)
+   再继续往前，把“只会认固定单词”的 shell 扩成“能查更多内核状态、还能处理参数”的第一版命令行。
 
 一句话记忆这个顺序：
 
@@ -56,4 +58,5 @@ stage1
 -> keyboard char input
 -> console line input
 -> minimal shell
+-> observable shell + command arguments
 ```

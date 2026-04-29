@@ -19,6 +19,10 @@ void console_write_char(char ch);
 // 连续写一个 0 结尾字符串。
 void console_write_string(const char* text);
 
+// 清空控制台自己的显示区域，并把光标重置回起始位置。
+// 这一轮主要给 `clear` 命令使用。
+void console_clear();
+
 // 阻塞读取一整行字符，并直接在 VGA 上回显用户输入。
 // 读取规则：
 // - 普通字符：加入缓冲区并回显

@@ -101,11 +101,33 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "help  - list commands" "$SERIAL_LOG" \
   && grep -q "mem   - show free physical pages" "$SERIAL_LOG" \
   && grep -q "ticks - show timer tick count" "$SERIAL_LOG" \
+  && grep -q "heap  - show kernel heap stats" "$SERIAL_LOG" \
+  && grep -q "irq   - show timer/keyboard irq stats" "$SERIAL_LOG" \
+  && grep -q "uptime - show tick-based uptime" "$SERIAL_LOG" \
+  && grep -q "echo  - print text back" "$SERIAL_LOG" \
+  && grep -q "clear - clear console area" "$SERIAL_LOG" \
   && grep -q "shell_line=mem" "$SERIAL_LOG" \
   && grep -q "mem_free_pages=" "$SERIAL_LOG" \
   && grep -q "mem_free_bytes=" "$SERIAL_LOG" \
   && grep -q "shell_line=ticks" "$SERIAL_LOG" \
   && grep -q "ticks_current=" "$SERIAL_LOG" \
+  && grep -q "shell_line=heap" "$SERIAL_LOG" \
+  && grep -q "heap_used_bytes=" "$SERIAL_LOG" \
+  && grep -q "heap_mapped_bytes=" "$SERIAL_LOG" \
+  && grep -q "heap_free_bytes=" "$SERIAL_LOG" \
+  && grep -q "shell_line=irq" "$SERIAL_LOG" \
+  && grep -q "irq_timer_ticks=" "$SERIAL_LOG" \
+  && grep -q "irq_timer_frequency_hz=100" "$SERIAL_LOG" \
+  && grep -q "irq_keyboard_count=" "$SERIAL_LOG" \
+  && grep -q "irq_keyboard_buffered_chars=0" "$SERIAL_LOG" \
+  && grep -q "irq_keyboard_dropped_chars=0" "$SERIAL_LOG" \
+  && grep -q "shell_line=echo hi42" "$SERIAL_LOG" \
+  && grep -q $'^hi42\r$' "$SERIAL_LOG" \
+  && grep -q "shell_line=uptime" "$SERIAL_LOG" \
+  && grep -q "uptime_ticks=" "$SERIAL_LOG" \
+  && grep -q "uptime_frequency_hz=100" "$SERIAL_LOG" \
+  && grep -q "uptime_ms=" "$SERIAL_LOG" \
+  && grep -q "shell_line=clear" "$SERIAL_LOG" \
   && grep -q "shell_line=bad" "$SERIAL_LOG" \
   && grep -q "shell_result=unknown" "$SERIAL_LOG" \
   && grep -q "unknown command: bad" "$SERIAL_LOG" \

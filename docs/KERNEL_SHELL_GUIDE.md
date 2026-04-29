@@ -1,5 +1,8 @@
 # 从控制台行输入到最小 Shell
 
+> 这份文档记录的是 shell 的第一版形态：`help / mem / ticks`。
+> 当前仓库已经继续扩到 `heap / irq / clear / uptime / echo`，建议接着看 [KERNEL_SHELL_EXPANSION_GUIDE.md](./KERNEL_SHELL_EXPANSION_GUIDE.md)。
+
 这份文档讲的是这一轮为什么继续做：
 
 - `shell/` 模块
