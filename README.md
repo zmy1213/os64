@@ -187,14 +187,24 @@
 - `clang++` 或 `gcc` 存在
 - `ld.lld` 或 `x86_64-elf-ld` 存在
 
-环境通过后，下一步具体写什么、为什么这么写，可以继续看：
+环境通过后，文档建议按下面这个顺序看，这样最符合你现在这条启动链的实现顺序：
 
-- [Stage1 写入说明](./docs/STAGE1_WRITING_GUIDE.md)
-- [Stage2 保护模式说明](./docs/STAGE2_PROTECTED_MODE_GUIDE.md)
-- [Boot 寄存器小白说明](./docs/BOOT_REGISTERS_BEGINNER.md)
-- [E820 逐行讲解版](./docs/E820_LINE_BY_LINE_GUIDE.md)
-- [页表 + Long Mode 小白说明](./docs/LONG_MODE_GUIDE.md)
-- [从 Long Mode 到 C++ 内核](./docs/KERNEL_ENTRY_GUIDE.md)
+1. [Stage1 写入说明](./docs/STAGE1_WRITING_GUIDE.md)
+   先理解 BIOS 为什么先执行它、它只负责什么、为什么不能把复杂逻辑塞进 512 字节。
+2. [Boot 寄存器小白说明](./docs/BOOT_REGISTERS_BEGINNER.md)
+   这是辅助文档，先把 `AX`、`BX`、`SP`、`CR0` 这些名字看熟，后面读汇编不会太痛苦。
+3. [Stage2 保护模式说明](./docs/STAGE2_PROTECTED_MODE_GUIDE.md)
+   开始进入真正的第二阶段：A20、E820、GDT、保护模式。
+4. [E820 逐行讲解版](./docs/E820_LINE_BY_LINE_GUIDE.md)
+   这是 Stage2 里最容易卡住的一小段，单独拆出来细看最合适。
+5. [页表 + Long Mode 小白说明](./docs/LONG_MODE_GUIDE.md)
+   看完保护模式后，再理解为什么还要做页表、PAE、LME 和 long mode。
+6. [从 Long Mode 到 C++ 内核](./docs/KERNEL_ENTRY_GUIDE.md)
+   最后再看 bootloader 怎么把控制权真正交给 `kernel_main.cpp`。
+
+如果你想直接在 `docs/` 目录里按顺序读，也可以先看：
+
+- [文档阅读顺序](./docs/README.md)
 
 ---
 
