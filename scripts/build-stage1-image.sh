@@ -10,7 +10,7 @@ STAGE1_BIN="$BUILD_DIR/stage1.bin"
 STAGE2_BIN="$BUILD_DIR/stage2.bin"
 DISK_IMG="$BUILD_DIR/disk.img"
 IMAGE_SIZE=1474560
-STAGE2_EXPECTED_SIZE=2048
+STAGE2_EXPECTED_SIZE=4096
 
 # Build outputs live under build/ so the repo stays clean.
 mkdir -p "$BUILD_DIR"
@@ -25,7 +25,7 @@ if [ "$size" -ne 512 ]; then
   exit 1
 fi
 
-# Stage2 now spans four sectors because it also sets up A20/E820/GDT/PM.
+# Stage2 now spans eight sectors because it also sets up A20/E820/GDT/page tables/long mode.
 echo "[2/5] assembling stage2"
 nasm -f bin "$STAGE2_SRC" -o "$STAGE2_BIN"
 
@@ -39,7 +39,7 @@ fi
 echo "[3/5] creating raw disk image"
 truncate -s "$IMAGE_SIZE" "$DISK_IMG"
 dd if="$STAGE1_BIN" of="$DISK_IMG" bs=512 count=1 conv=notrunc status=none
-dd if="$STAGE2_BIN" of="$DISK_IMG" bs=512 seek=1 count=4 conv=notrunc status=none
+dd if="$STAGE2_BIN" of="$DISK_IMG" bs=512 seek=1 count=8 conv=notrunc status=none
 
 # BIOS boot sectors must end with the 0x55aa signature.
 echo "[4/5] verifying boot signature"

@@ -192,6 +192,8 @@
 - [Stage1 写入说明](./docs/STAGE1_WRITING_GUIDE.md)
 - [Stage2 保护模式说明](./docs/STAGE2_PROTECTED_MODE_GUIDE.md)
 - [Boot 寄存器小白说明](./docs/BOOT_REGISTERS_BEGINNER.md)
+- [E820 逐行讲解版](./docs/E820_LINE_BY_LINE_GUIDE.md)
+- [页表 + Long Mode 小白说明](./docs/LONG_MODE_GUIDE.md)
 
 ---
 

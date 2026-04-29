@@ -36,17 +36,19 @@ if ! [ -f "$SERIAL_LOG" ]; then
   exit 1
 fi
 
-# Success requires evidence that the new stage2 milestones all completed.
+# Success requires evidence that stage2 crossed both protected mode and long mode.
 if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "stage2 ok" "$SERIAL_LOG" \
   && grep -q "a20 ok" "$SERIAL_LOG" \
   && grep -q "e820 ok" "$SERIAL_LOG" \
-  && grep -q "protected mode ok" "$SERIAL_LOG"; then
-  echo "stage1->stage2->protected-mode serial test passed"
+  && grep -q "protected mode ok" "$SERIAL_LOG" \
+  && grep -q "paging ok" "$SERIAL_LOG" \
+  && grep -q "long mode ok" "$SERIAL_LOG"; then
+  echo "stage1->stage2->protected-mode->long-mode serial test passed"
   cat "$SERIAL_LOG"
   exit 0
 fi
 
-echo "stage1->stage2->protected-mode serial test failed" >&2
+echo "stage1->stage2->protected-mode->long-mode serial test failed" >&2
 cat "$SERIAL_LOG" >&2
 exit 1
