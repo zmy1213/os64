@@ -10,6 +10,7 @@
 #include "memory/heap.hpp"
 #include "memory/page_allocator.hpp"
 #include "memory/paging.hpp"
+#include "shell/shell.hpp"
 
 namespace {
 
@@ -39,6 +40,8 @@ constexpr uint8_t kKeyboardIrqLine = 1;                                // 传统
 constexpr uint64_t kKeyboardTestTimeoutTicks = 20;                     // 键盘测试每轮最多等 20 个 tick，避免异常时无限卡住。
 constexpr uint16_t kConsoleTestStartRow = 16;                          // 把控制台测试区域放到更下面，避免覆盖前面的状态行。
 constexpr size_t kConsoleLineBufferCapacity = 32;                      // 这一轮测试只读短行，32 字节足够验证流程。
+constexpr uint16_t kShellTestStartRow = 16;                            // shell 也复用下半屏区域，避免和状态行互相覆盖。
+constexpr size_t kShellLineBufferCapacity = 32;                        // `help`/`ticks` 这种命令很短，32 字节够第一版 shell 用。
 constexpr uint8_t kKeyboardTestScancodes[] = {
     0x1E,  // A 按下 -> 'a'
     0x9E,  // A 松开 -> 这一轮应忽略，不进入字符缓冲区
@@ -67,6 +70,18 @@ constexpr uint8_t kConsoleInputTestScancodes[] = {
     0x1C,  // Enter -> 结束这一行
 };
 constexpr char kConsoleExpectedLine[] = "os 64";                       // 这就是退格修正后的最终结果。
+constexpr uint8_t kShellHelpScancodes[] = {
+    0x23, 0x12, 0x26, 0x19, 0x1C,  // help + Enter
+};
+constexpr uint8_t kShellMemScancodes[] = {
+    0x32, 0x12, 0x32, 0x1C,        // mem + Enter
+};
+constexpr uint8_t kShellTicksScancodes[] = {
+    0x14, 0x17, 0x2E, 0x25, 0x1F, 0x1C,  // ticks + Enter
+};
+constexpr uint8_t kShellBadScancodes[] = {
+    0x30, 0x1E, 0x20, 0x1C,        // bad + Enter
+};
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
 constexpr uint64_t kInvalidOpcodeMarker = 0x55443231494E5641ULL;       // 只是为了日志里有个好认的常量。
 #endif
@@ -77,6 +92,7 @@ constexpr uint64_t kPageFaultSmokePattern = 0x0BADF00DCAFED00DULL;     // 页错
 
 PageAllocator g_page_allocator;               // 第一版物理页分配器状态先放在一个全局对象里。
 KernelHeap g_kernel_heap;                     // 第一版内核堆状态也先放成全局对象，方便后面各模块共享。
+ShellState g_shell;                           // 最小 shell 的状态也先放在全局对象里，后面交互循环会一直复用。
 
 // 往 I/O 端口写一个字节。内核里没有现成库函数，所以这里自己直接发机器指令。
 inline void out8(uint16_t port, uint8_t value) {
@@ -111,6 +127,19 @@ void serial_write_crlf() {
   // 这样这一层的行为更直接，也更容易排查最早期串口日志问题。
   serial_write_char('\r');
   serial_write_char('\n');
+}
+
+// shell 的输出需要同时进 VGA 控制台和串口日志。
+// 这样你手工运行时能看见提示符，自动测试时也能抓到命令结果。
+void shell_output_char(char ch) {
+  console_write_char(ch);
+
+  if (ch == '\n') {
+    serial_write_crlf();
+    return;
+  }
+
+  serial_write_char(ch);
 }
 
 // 打印 1 个十六进制字符，比如 10 -> 'A'。
@@ -689,6 +718,117 @@ bool run_console_input_smoke_test() {
          keyboard_buffered_char_count() == 0;
 }
 
+struct ShellSmokeCommand {
+  const char* expected_line;              // 这一条命令读取出来后，应该得到哪一行文本。
+  const uint8_t* scancodes;               // 用哪些扫描码把这条命令注入进键盘路径。
+  size_t scancode_count;                  // 这条命令一共注入多少个扫描码。
+  ShellCommandResult expected_result;     // 这条命令执行后，应该得到什么分类结果。
+};
+
+constexpr ShellSmokeCommand kShellSmokeCommands[] = {
+    {"help", kShellHelpScancodes,
+     sizeof(kShellHelpScancodes) / sizeof(kShellHelpScancodes[0]),
+     kShellCommandExecuted},
+    {"mem", kShellMemScancodes,
+     sizeof(kShellMemScancodes) / sizeof(kShellMemScancodes[0]),
+     kShellCommandExecuted},
+    {"ticks", kShellTicksScancodes,
+     sizeof(kShellTicksScancodes) / sizeof(kShellTicksScancodes[0]),
+     kShellCommandExecuted},
+    {"bad", kShellBadScancodes,
+     sizeof(kShellBadScancodes) / sizeof(kShellBadScancodes[0]),
+     kShellCommandUnknown},
+};
+
+bool inject_scancode_sequence(const char* log_prefix,
+                              const uint8_t* scancodes,
+                              size_t scancode_count,
+                              uint64_t* next_expected_irq_count) {
+  if (log_prefix == nullptr || scancodes == nullptr ||
+      next_expected_irq_count == nullptr) {
+    return false;
+  }
+
+  for (size_t i = 0; i < scancode_count; ++i) {
+    serial_write_string(log_prefix);
+    serial_write_char('[');
+    serial_write_u64(i);
+    serial_write_string("]=0x");
+    serial_write_hex64(scancodes[i]);
+    serial_write_crlf();
+
+    if (!keyboard_inject_test_scancode(scancodes[i])) {
+      return false;
+    }
+
+    ++(*next_expected_irq_count);
+    if (!wait_for_keyboard_irq_count(*next_expected_irq_count,
+                                     kKeyboardTestTimeoutTicks)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool run_shell_smoke_test() {
+  initialize_console(kShellTestStartRow, kTextColor);
+
+  ShellOutput shell_output{};
+  shell_output.write_char = shell_output_char;
+  if (!initialize_shell(&g_shell, &g_page_allocator, &shell_output)) {
+    return false;
+  }
+
+  uint64_t expected_irq_count = keyboard_irq_count();
+  enable_interrupts();
+
+  for (size_t command_index = 0;
+       command_index < (sizeof(kShellSmokeCommands) / sizeof(kShellSmokeCommands[0]));
+       ++command_index) {
+    const ShellSmokeCommand& command = kShellSmokeCommands[command_index];
+
+    shell_print_prompt(&g_shell);
+    if (!inject_scancode_sequence("shell_inject",
+                                  command.scancodes,
+                                  command.scancode_count,
+                                  &expected_irq_count)) {
+      disable_interrupts();
+      return false;
+    }
+
+    char line_buffer[kShellLineBufferCapacity];
+    const size_t line_length =
+        console_read_line(line_buffer, sizeof(line_buffer));
+
+    serial_write_string("shell_line=");
+    serial_write_string(line_buffer);
+    serial_write_crlf();
+
+    serial_write_string("shell_line_length=");
+    serial_write_u64(line_length);
+    serial_write_crlf();
+
+    const ShellCommandResult result =
+        shell_execute_line(&g_shell, line_buffer);
+
+    serial_write_string("shell_result=");
+    serial_write_string(shell_command_result_name(result));
+    serial_write_crlf();
+
+    if (!strings_equal(line_buffer, command.expected_line) ||
+        line_length != string_length(command.expected_line) ||
+        result != command.expected_result) {
+      disable_interrupts();
+      return false;
+    }
+  }
+
+  disable_interrupts();
+  return keyboard_irq_count() == expected_irq_count &&
+         keyboard_buffered_char_count() == 0;
+}
+
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
 void run_invalid_opcode_smoke_test() {
   serial_write_string("invalid_opcode_marker=0x");
@@ -789,14 +929,27 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 
   write_status_line(14, "console input ok");
 
+  if (!run_shell_smoke_test()) {
+    write_status_line(15, "shell bad");
+    return;
+  }
+
+  write_status_line(15, "shell ok");
+
 #if defined(OS64_ENABLE_PAGE_FAULT_SMOKE)
-  write_status_line(15, "page fault smoke");
+  write_status_line(16, "page fault smoke");
   run_page_fault_smoke_test();
 #endif
 
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
-  write_status_line(15, "invalid opcode smoke");
+  write_status_line(16, "invalid opcode smoke");
   run_invalid_opcode_smoke_test();
+#endif
+
+#if !defined(OS64_ENABLE_PAGE_FAULT_SMOKE) && !defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
+  enable_interrupts();  // 真正进入交互 shell 前重新开中断，不然 `hlt` 等键盘时不会再醒。
+  char shell_line_buffer[kShellLineBufferCapacity];
+  shell_run_forever(&g_shell, shell_line_buffer, sizeof(shell_line_buffer));
 #endif
 }
 

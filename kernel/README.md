@@ -1,6 +1,6 @@
 # kernel 目录说明
 
-现在 `kernel/` 已经按职责拆成 5 类：
+现在 `kernel/` 已经按职责拆成 6 类：
 
 ```text
 kernel/
@@ -30,6 +30,9 @@ kernel/
 │   ├── paging.cpp
 │   ├── heap.hpp
 │   └── heap.cpp
+├── shell/
+│   ├── shell.hpp
+│   └── shell.cpp
 └── runtime/
     ├── runtime.hpp
     └── runtime.cpp
@@ -72,6 +75,8 @@ kernel/
 - 基于 tick 的最小等待 / sleep 测试
 - 键盘 IRQ + 字符缓冲区测试
 - 控制台回显 + 最小行输入测试
+- 最小 shell 命令测试
+- 正常启动后的最小交互 shell 循环
 - 异常测试入口
 
 一句话理解：
@@ -131,7 +136,20 @@ kernel/
 
 ---
 
-## 6. `runtime/`
+## 6. `shell/`
+
+这里放最小 shell 模块：
+
+- `shell.cpp/.hpp`
+  负责提示符、命令解析、内建命令执行，以及第一版交互循环。
+
+一句话理解：
+
+> `shell/` 管“读到一整行之后，系统到底要怎么解释并执行它”。
+
+---
+
+## 7. `runtime/`
 
 这里放 freestanding 内核里最小的运行时工具：
 
@@ -156,7 +174,7 @@ kernel/
 
 ---
 
-## 7. 为什么现在这样分
+## 8. 为什么现在这样分
 
 因为如果所有文件都继续平铺在 `kernel/` 根目录，
 后面一多起来你会很快分不清：

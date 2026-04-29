@@ -39,6 +39,7 @@ fi
 if grep -q "heap alloc ok" "$SERIAL_LOG" \
   && grep -q "keyboard ok" "$SERIAL_LOG" \
   && grep -q "console input ok" "$SERIAL_LOG" \
+  && grep -q "shell ok" "$SERIAL_LOG" \
   && grep -q "invalid opcode smoke" "$SERIAL_LOG" \
   && grep -q "invalid_opcode_marker=0x55443231494E5641" "$SERIAL_LOG" \
   && grep -q "exception=invalid opcode" "$SERIAL_LOG" \

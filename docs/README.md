@@ -34,6 +34,8 @@
    再继续往前，把“只会记扫描码”的内核扩成“能真正读出字符”的最小输入系统。
 15. [从最小字符输入到控制台行输入](./KERNEL_CONSOLE_INPUT_GUIDE.md)
    再继续往前，把“能读字符”的内核扩成“能回显并读完整一行”的最小控制台。
+16. [从控制台行输入到最小 Shell](./KERNEL_SHELL_GUIDE.md)
+   再继续往前，把“能读整行”的内核扩成“能执行内建命令”的最小交互系统。
 
 一句话记忆这个顺序：
 
@@ -53,4 +55,5 @@ stage1
 -> keyboard IRQ
 -> keyboard char input
 -> console line input
+-> minimal shell
 ```

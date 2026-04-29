@@ -94,12 +94,27 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "console_line_length=5" "$SERIAL_LOG" \
   && grep -q "console_line=os 64" "$SERIAL_LOG" \
   && grep -q "console_buffer_remaining=0" "$SERIAL_LOG" \
-  && grep -q "console input ok" "$SERIAL_LOG"; then
-  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep->keyboard->char-input->console-line serial test passed"
+  && grep -q "console input ok" "$SERIAL_LOG" \
+  && grep -q "shell_line=help" "$SERIAL_LOG" \
+  && grep -q "shell_result=executed" "$SERIAL_LOG" \
+  && grep -q "commands:" "$SERIAL_LOG" \
+  && grep -q "help  - list commands" "$SERIAL_LOG" \
+  && grep -q "mem   - show free physical pages" "$SERIAL_LOG" \
+  && grep -q "ticks - show timer tick count" "$SERIAL_LOG" \
+  && grep -q "shell_line=mem" "$SERIAL_LOG" \
+  && grep -q "mem_free_pages=" "$SERIAL_LOG" \
+  && grep -q "mem_free_bytes=" "$SERIAL_LOG" \
+  && grep -q "shell_line=ticks" "$SERIAL_LOG" \
+  && grep -q "ticks_current=" "$SERIAL_LOG" \
+  && grep -q "shell_line=bad" "$SERIAL_LOG" \
+  && grep -q "shell_result=unknown" "$SERIAL_LOG" \
+  && grep -q "unknown command: bad" "$SERIAL_LOG" \
+  && grep -q "shell ok" "$SERIAL_LOG"; then
+  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep->keyboard->char-input->console-line->shell serial test passed"
   cat "$SERIAL_LOG"
   exit 0
 fi
 
-echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep->keyboard->char-input->console-line serial test failed" >&2
+echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->pic->pit->timer->sleep->keyboard->char-input->console-line->shell serial test failed" >&2
 cat "$SERIAL_LOG" >&2
 exit 1
