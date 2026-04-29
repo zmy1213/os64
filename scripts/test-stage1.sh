@@ -105,6 +105,7 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "irq   - show timer/keyboard irq stats" "$SERIAL_LOG" \
   && grep -q "uptime - show tick-based uptime" "$SERIAL_LOG" \
   && grep -q "echo  - print text back" "$SERIAL_LOG" \
+  && grep -q "history - show recent commands" "$SERIAL_LOG" \
   && grep -q "clear - clear console area" "$SERIAL_LOG" \
   && grep -q "shell_line=mem" "$SERIAL_LOG" \
   && grep -q "mem_free_pages=" "$SERIAL_LOG" \
@@ -127,6 +128,17 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "uptime_ticks=" "$SERIAL_LOG" \
   && grep -q "uptime_frequency_hz=100" "$SERIAL_LOG" \
   && grep -q "uptime_ms=" "$SERIAL_LOG" \
+  && grep -q "shell_line=history" "$SERIAL_LOG" \
+  && grep -q "history_buffered=8" "$SERIAL_LOG" \
+  && grep -q "history_total=8" "$SERIAL_LOG" \
+  && grep -Fq "history[1]=help" "$SERIAL_LOG" \
+  && grep -Fq "history[2]=mem" "$SERIAL_LOG" \
+  && grep -Fq "history[3]=ticks" "$SERIAL_LOG" \
+  && grep -Fq "history[4]=heap" "$SERIAL_LOG" \
+  && grep -Fq "history[5]=irq" "$SERIAL_LOG" \
+  && grep -Fq "history[6]=echo hi42" "$SERIAL_LOG" \
+  && grep -Fq "history[7]=uptime" "$SERIAL_LOG" \
+  && grep -Fq "history[8]=history" "$SERIAL_LOG" \
   && grep -q "shell_line=clear" "$SERIAL_LOG" \
   && grep -q "shell_line=bad" "$SERIAL_LOG" \
   && grep -q "shell_result=unknown" "$SERIAL_LOG" \

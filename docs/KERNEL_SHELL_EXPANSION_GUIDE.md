@@ -1,5 +1,8 @@
 # 从最小 Shell 到可观察命令 + 带参数命令
 
+> 这份文档记录的是 shell 扩到 `heap / irq / clear / uptime / echo` 的这一版。
+> 当前仓库已经继续扩到 `history`，建议接着看 [KERNEL_SHELL_HISTORY_GUIDE.md](./KERNEL_SHELL_HISTORY_GUIDE.md)。
+
 这份文档讲的是：
 
 - 为什么最小 shell 做完以后，下一步还是继续扩 shell，而不是立刻跳去文件系统

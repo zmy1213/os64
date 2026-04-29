@@ -3,6 +3,7 @@
 #include "console/console.hpp"
 #include "interrupts/keyboard.hpp"
 #include "interrupts/pit.hpp"
+#include "runtime/runtime.hpp"
 
 namespace {
 
@@ -76,6 +77,69 @@ bool is_empty_after_trim(const char* text) {
   return trimmed == nullptr || trimmed[0] == '\0';
 }
 
+size_t string_length(const char* text) {
+  if (text == nullptr) {
+    return 0;
+  }
+
+  size_t length = 0;
+  while (text[length] != '\0') {
+    ++length;
+  }
+
+  return length;
+}
+
+const char* trim_trailing_spaces(const char* begin, const char* end) {
+  while (end > begin && is_space_char(end[-1])) {
+    --end;
+  }
+
+  return end;
+}
+
+void record_history_line(ShellState* shell, const char* line) {
+  if (shell == nullptr || line == nullptr) {
+    return;
+  }
+
+  const char* trimmed_begin = skip_spaces(line);
+  if (trimmed_begin == nullptr || trimmed_begin[0] == '\0') {
+    return;
+  }
+
+  const char* trimmed_end = trimmed_begin + string_length(trimmed_begin);
+  trimmed_end = trim_trailing_spaces(trimmed_begin, trimmed_end);
+  if (trimmed_end <= trimmed_begin) {
+    return;
+  }
+
+  const size_t slot = shell->history_next_slot;
+  const size_t line_length =
+      static_cast<size_t>(trimmed_end - trimmed_begin);
+  const size_t copy_length =
+      (line_length < (kShellHistoryEntryCapacity - 1))
+          ? line_length
+          : (kShellHistoryEntryCapacity - 1);
+
+  // 历史记录先直接写进固定槽位。
+  // 这一轮不走堆分配，而是故意用固定容量 ring buffer 保持行为可预测。
+  for (size_t i = 0; i < copy_length; ++i) {
+    shell->history_entries[slot][i] = trimmed_begin[i];
+  }
+  shell->history_entries[slot][copy_length] = '\0';
+
+  shell->history_sequence_numbers[slot] = shell->history_total_count + 1;
+  ++shell->history_total_count;
+
+  if (shell->history_count < kShellHistoryCapacity) {
+    ++shell->history_count;
+  }
+
+  shell->history_next_slot =
+      static_cast<uint16_t>((slot + 1) % kShellHistoryCapacity);
+}
+
 // 这就是这一轮最关键的小升级：
 // 以前 shell 只能看“整行是不是刚好等于 help/mem/ticks”；
 // 现在它先识别命令名，再把后面的剩余部分当成参数区。
@@ -131,6 +195,8 @@ void handle_help_command(const ShellState* shell) {
   write_string(shell, "uptime - show tick-based uptime");
   write_newline(shell);
   write_string(shell, "echo  - print text back");
+  write_newline(shell);
+  write_string(shell, "history - show recent commands");
   write_newline(shell);
   write_string(shell, "clear - clear console area");
   write_newline(shell);
@@ -235,6 +301,43 @@ void handle_echo_command(const ShellState* shell, const char* arguments) {
   write_newline(shell);
 }
 
+void handle_history_command(const ShellState* shell) {
+  if (shell == nullptr) {
+    return;
+  }
+
+  write_string(shell, "history_buffered=");
+  write_u64(shell, shell->history_count);
+  write_newline(shell);
+
+  write_string(shell, "history_total=");
+  write_u64(shell, shell->history_total_count);
+  write_newline(shell);
+
+  if (shell->history_count == 0) {
+    write_string(shell, "history empty");
+    write_newline(shell);
+    return;
+  }
+
+  size_t slot = 0;
+  if (shell->history_count == kShellHistoryCapacity) {
+    // 写满以后，`history_next_slot` 指向“下一次要覆盖谁”，
+    // 也就等于“当前最旧的一条命令在哪个槽位”。
+    slot = shell->history_next_slot;
+  }
+
+  for (size_t i = 0; i < shell->history_count; ++i) {
+    write_string(shell, "history[");
+    write_u64(shell, shell->history_sequence_numbers[slot]);
+    write_string(shell, "]=");
+    write_string(shell, shell->history_entries[slot]);
+    write_newline(shell);
+
+    slot = (slot + 1) % kShellHistoryCapacity;
+  }
+}
+
 }  // namespace
 
 bool initialize_shell(ShellState* shell,
@@ -248,6 +351,12 @@ bool initialize_shell(ShellState* shell,
   shell->allocator = allocator;
   shell->heap = heap;
   shell->output = *output;
+  shell->history_count = 0;
+  shell->history_next_slot = 0;
+  shell->history_total_count = 0;
+  memory_set(shell->history_sequence_numbers, 0,
+             sizeof(shell->history_sequence_numbers));
+  memory_set(shell->history_entries, 0, sizeof(shell->history_entries));
   return true;
 }
 
@@ -255,12 +364,16 @@ void shell_print_prompt(const ShellState* shell) {
   write_string(shell, "os64> ");
 }
 
-ShellCommandResult shell_execute_line(const ShellState* shell,
+ShellCommandResult shell_execute_line(ShellState* shell,
                                       const char* line) {
   const char* trimmed_line = skip_spaces(line);
   if (trimmed_line == nullptr || trimmed_line[0] == '\0') {
     return kShellCommandEmpty;
   }
+
+  // 先记历史，再执行命令。
+  // 这样 `history` 自己也会出现在当前历史列表里，更符合直觉。
+  record_history_line(shell, trimmed_line);
 
   const char* arguments = nullptr;
 
@@ -305,6 +418,12 @@ ShellCommandResult shell_execute_line(const ShellState* shell,
     return kShellCommandExecuted;
   }
 
+  if (command_matches(trimmed_line, "history", &arguments) &&
+      is_empty_after_trim(arguments)) {
+    handle_history_command(shell);
+    return kShellCommandExecuted;
+  }
+
   if (command_matches(trimmed_line, "clear", &arguments) &&
       is_empty_after_trim(arguments)) {
     clear_output(shell);
@@ -330,7 +449,7 @@ const char* shell_command_result_name(ShellCommandResult result) {
   }
 }
 
-void shell_run_forever(const ShellState* shell,
+void shell_run_forever(ShellState* shell,
                        char* line_buffer,
                        size_t capacity) {
   if (shell == nullptr || line_buffer == nullptr || capacity < 2) {

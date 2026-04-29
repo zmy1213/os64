@@ -91,6 +91,9 @@ constexpr uint8_t kShellEchoScancodes[] = {
 constexpr uint8_t kShellUptimeScancodes[] = {
     0x16, 0x19, 0x14, 0x17, 0x32, 0x12, 0x1C,  // uptime + Enter
 };
+constexpr uint8_t kShellHistoryScancodes[] = {
+    0x23, 0x17, 0x1F, 0x14, 0x18, 0x13, 0x15, 0x1C,  // history + Enter
+};
 constexpr uint8_t kShellClearScancodes[] = {
     0x2E, 0x26, 0x12, 0x1E, 0x13, 0x1C,  // clear + Enter
 };
@@ -770,6 +773,9 @@ constexpr ShellSmokeCommand kShellSmokeCommands[] = {
      kShellCommandExecuted},
     {"uptime", kShellUptimeScancodes,
      sizeof(kShellUptimeScancodes) / sizeof(kShellUptimeScancodes[0]),
+     kShellCommandExecuted},
+    {"history", kShellHistoryScancodes,
+     sizeof(kShellHistoryScancodes) / sizeof(kShellHistoryScancodes[0]),
      kShellCommandExecuted},
     {"clear", kShellClearScancodes,
      sizeof(kShellClearScancodes) / sizeof(kShellClearScancodes[0]),
