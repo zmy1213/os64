@@ -2,7 +2,7 @@
 # without extra PATH setup.
 QEMU ?= /opt/homebrew/bin/qemu-system-x86_64
 
-.PHONY: all stage1 run-stage1 run-stage1-gui test-stage1 test-page-fault clean
+.PHONY: all stage1 run-stage1 run-stage1-gui test-stage1 test-page-fault test-invalid-opcode clean
 
 # The default target only builds the current boot image.
 all: stage1
@@ -37,6 +37,9 @@ test-stage1: stage1
 
 test-page-fault:
 	bash scripts/test-page-fault.sh
+
+test-invalid-opcode:
+	bash scripts/test-invalid-opcode.sh
 
 # Remove build outputs so the next run starts from a clean image.
 clean:

@@ -21,6 +21,13 @@ constexpr uint64_t kHeapTestLargePattern0 = 0x0123456789ABCDEFULL;     // 大块
 constexpr uint64_t kHeapTestLargePattern1 = 0xFEDCBA9876543210ULL;     // 大块堆分配跨页位置的模式值。
 constexpr size_t kHeapTestSmallSize = 64;                              // 第一块堆内存，故意做得很小。
 constexpr size_t kHeapTestLargeSize = 6000;                            // 第二块堆内存，故意让它跨过一个 4 KiB 页边界。
+constexpr size_t kHeapReuseSize = 32;                                  // 释放小块后，再申请一个更小块，测试是否复用。
+constexpr size_t kHeapMergeBlockASize = 512;                           // 合并测试里的第一个相邻块。
+constexpr size_t kHeapMergeBlockBSize = 768;                           // 合并测试里的第二个相邻块。
+constexpr size_t kHeapMergedRequestSize = 1024;                        // 如果 A/B 真合并了，这个请求应该能从 A 位置拿到。
+#if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
+constexpr uint64_t kInvalidOpcodeMarker = 0x55443231494E5641ULL;       // 只是为了日志里有个好认的常量。
+#endif
 #if defined(OS64_ENABLE_PAGE_FAULT_SMOKE)
 constexpr uint64_t kPageFaultSmokeAddress = 0x0000000000900000ULL;     // 9 MiB，这一轮没有映射它，专门拿来触发页错误。
 constexpr uint64_t kPageFaultSmokePattern = 0x0BADF00DCAFED00DULL;     // 页错误测试里尝试写入的值。
@@ -97,6 +104,14 @@ void serial_write_u64(uint64_t value) {
   while (count > 0) {
     serial_write_char(digits[--count]);
   }
+}
+
+bool is_aligned(uint64_t value, uint64_t alignment) {
+  if (alignment == 0) {
+    return false;
+  }
+
+  return (value & (alignment - 1)) == 0;
 }
 
 // 直接往 VGA 文本缓冲区写一整行，让你在 QEMU 图形窗口里也能看到结果。
@@ -253,6 +268,13 @@ bool run_heap_smoke_test(KernelHeap* heap) {
   serial_write_hex64(reinterpret_cast<uint64_t>(large_block));
   serial_write_crlf();
 
+  serial_write_string("heap_large_page_aligned=");
+  serial_write_u64(is_aligned(reinterpret_cast<uint64_t>(large_block),
+                              kPagingPageSize)
+                       ? 1
+                       : 0);
+  serial_write_crlf();
+
   auto* const large_first_word =
       reinterpret_cast<uint64_t*>(large_block);
   auto* const large_cross_page_word =
@@ -269,6 +291,42 @@ bool run_heap_smoke_test(KernelHeap* heap) {
   serial_write_hex64(cross_page_read_back);
   serial_write_crlf();
 
+  if (!heap_free(heap, small_block)) {
+    return false;
+  }
+
+  auto* const reused_small =
+      static_cast<uint64_t*>(heap_alloc(heap, kHeapReuseSize, 16));
+  if (reused_small == nullptr) {
+    return false;
+  }
+
+  serial_write_string("heap_reuse=0x");
+  serial_write_hex64(reinterpret_cast<uint64_t>(reused_small));
+  serial_write_crlf();
+
+  auto* const merge_block_a =
+      static_cast<uint8_t*>(heap_alloc(heap, kHeapMergeBlockASize, 16));
+  auto* const merge_block_b =
+      static_cast<uint8_t*>(heap_alloc(heap, kHeapMergeBlockBSize, 16));
+  if (merge_block_a == nullptr || merge_block_b == nullptr) {
+    return false;
+  }
+
+  if (!heap_free(heap, merge_block_a) || !heap_free(heap, merge_block_b)) {
+    return false;
+  }
+
+  auto* const merged_block =
+      static_cast<uint8_t*>(heap_alloc(heap, kHeapMergedRequestSize, 16));
+  if (merged_block == nullptr) {
+    return false;
+  }
+
+  serial_write_string("heap_coalesced=0x");
+  serial_write_hex64(reinterpret_cast<uint64_t>(merged_block));
+  serial_write_crlf();
+
   serial_write_string("heap_used_bytes=");
   serial_write_u64(heap_used_bytes(heap));
   serial_write_crlf();
@@ -277,26 +335,25 @@ bool run_heap_smoke_test(KernelHeap* heap) {
   serial_write_u64(heap_mapped_bytes(heap));
   serial_write_crlf();
 
+  serial_write_string("heap_free_bytes=");
+  serial_write_u64(heap_free_bytes(heap));
+  serial_write_crlf();
+
   return small_read_back == kHeapTestSmallPattern &&
-         cross_page_read_back == kHeapTestLargePattern1;
+         cross_page_read_back == kHeapTestLargePattern1 &&
+         is_aligned(reinterpret_cast<uint64_t>(large_block), kPagingPageSize) &&
+         reused_small == small_block && merged_block == merge_block_a;
 }
 
-const char* exception_name(uint64_t vector) {
-  switch (vector) {
-    case 0:
-      return "divide error";
-    case 6:
-      return "invalid opcode";
-    case 8:
-      return "double fault";
-    case 13:
-      return "general protection fault";
-    case 14:
-      return "page fault";
-    default:
-      return "unknown exception";
-  }
+#if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
+void run_invalid_opcode_smoke_test() {
+  serial_write_string("invalid_opcode_marker=0x");
+  serial_write_hex64(kInvalidOpcodeMarker);
+  serial_write_crlf();
+
+  asm volatile("ud2");   // `ud2` 是 x86 专门留给“故意触发非法指令异常”的指令。
 }
+#endif
 
 #if defined(OS64_ENABLE_PAGE_FAULT_SMOKE)
 void run_page_fault_smoke_test() {
@@ -370,6 +427,11 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 #if defined(OS64_ENABLE_PAGE_FAULT_SMOKE)
   write_status_line(12, "page fault smoke");
   run_page_fault_smoke_test();
+#endif
+
+#if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
+  write_status_line(12, "invalid opcode smoke");
+  run_invalid_opcode_smoke_test();
 #endif
 }
 

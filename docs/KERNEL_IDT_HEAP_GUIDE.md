@@ -298,11 +298,15 @@ make test-page-fault
 
 这一步之后，最自然的下一步通常是：
 
-1. 做更正式的内核堆接口
-2. 接管并扩展 bootloader 留下的临时页表
-3. 开始做 IDT 的更多异常项和通用 trap 打印
+1. 把最小 IDT 扩成前 32 个 CPU 异常的通用 trap 框架
+2. 把 bump allocator 升级成能 `free`、能复用、能合并的正式堆
+3. 接管并扩展 bootloader 留下的临时页表
 4. 然后再进入 PIC/APIC、时钟中断、调度器骨架
 
 一句话总结这一轮：
 
 > 现在内核不只是“能映射内存”，而是开始具备“出错能看见、要内存能自己长”的能力。
+
+下一份接着看的文档就是：
+
+- [从最小 IDT 到通用 Trap + 可释放堆](./KERNEL_TRAP_HEAP_UPGRADE_GUIDE.md)

@@ -62,7 +62,11 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "heap init ok" "$SERIAL_LOG" \
   && grep -q "heap_small=0x" "$SERIAL_LOG" \
   && grep -q "heap_large=0x" "$SERIAL_LOG" \
+  && grep -q "heap_large_page_aligned=1" "$SERIAL_LOG" \
   && grep -q "heap_cross_page_value=0xFEDCBA9876543210" "$SERIAL_LOG" \
+  && grep -q "heap_reuse=0x" "$SERIAL_LOG" \
+  && grep -q "heap_coalesced=0x" "$SERIAL_LOG" \
+  && grep -q "heap_free_bytes=" "$SERIAL_LOG" \
   && grep -q "heap alloc ok" "$SERIAL_LOG"; then
   echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap serial test passed"
   cat "$SERIAL_LOG"

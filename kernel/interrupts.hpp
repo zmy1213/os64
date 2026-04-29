@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+constexpr uint8_t kCpuExceptionCount = 32;   // CPU 保留给异常/陷阱的前 32 个向量号。
+
 // 这是我们约定给 C++ 异常处理函数看的最小中断栈帧。
 // 现在先只关心：
 // 1. 是哪一个异常向量触发了
@@ -18,6 +20,7 @@ struct InterruptFrame {
 };
 
 bool initialize_idt();
+const char* exception_name(uint64_t vector);
 
 static_assert(sizeof(InterruptFrame) == 40,
               "InterruptFrame layout must stay stable");

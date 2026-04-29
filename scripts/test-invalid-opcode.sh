@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+BUILD_DIR="$ROOT_DIR/build"
+DISK_IMG="$BUILD_DIR/disk.img"
+SERIAL_LOG="$BUILD_DIR/invalid-opcode.serial.log"
+QEMU_BIN="${QEMU_BIN:-/opt/homebrew/bin/qemu-system-x86_64}"
+
+# 这一轮用 `ud2` 验证“通用 trap 框架”不是只会处理 page fault，
+# 而是另一种完全不同的 CPU 异常也能从同一套 IDT/stub/handler 流进来。
+KERNEL_EXTRA_CXXFLAGS="-DOS64_ENABLE_INVALID_OPCODE_SMOKE=1" \
+  bash "$ROOT_DIR/scripts/build-stage1-image.sh"
+
+rm -f "$SERIAL_LOG"
+
+"$QEMU_BIN" \
+  -drive format=raw,file="$DISK_IMG",if=floppy,index=0 \
+  -display none \
+  -monitor none \
+  -serial "file:$SERIAL_LOG" \
+  -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+  -no-reboot \
+  -no-shutdown &
+
+qemu_pid="$!"
+trap 'kill "$qemu_pid" 2>/dev/null || true; wait "$qemu_pid" 2>/dev/null || true' EXIT
+
+sleep 2
+
+kill "$qemu_pid" 2>/dev/null || true
+wait "$qemu_pid" 2>/dev/null || true
+
+if ! [ -f "$SERIAL_LOG" ]; then
+  echo "missing serial log: $SERIAL_LOG" >&2
+  exit 1
+fi
+
+if grep -q "heap alloc ok" "$SERIAL_LOG" \
+  && grep -q "invalid opcode smoke" "$SERIAL_LOG" \
+  && grep -q "invalid_opcode_marker=0x55443231494E5641" "$SERIAL_LOG" \
+  && grep -q "exception=invalid opcode" "$SERIAL_LOG" \
+  && grep -q "vector=0x0000000000000006" "$SERIAL_LOG" \
+  && grep -q "error_code=0x0000000000000000" "$SERIAL_LOG" \
+  && grep -q "fault_rip=0x" "$SERIAL_LOG"; then
+  echo "invalid-opcode smoke test passed"
+  cat "$SERIAL_LOG"
+  exit 0
+fi
+
+echo "invalid-opcode smoke test failed" >&2
+cat "$SERIAL_LOG" >&2
+exit 1

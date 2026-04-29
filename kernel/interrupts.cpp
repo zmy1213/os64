@@ -7,6 +7,40 @@ namespace {
 constexpr uint16_t kIdtEntryCount = 256;       // x86_64 IDT 固定有 256 个向量槽位。
 constexpr uint16_t kKernelCodeSelector = 0x18; // 这个值对应 stage2 里 GDT 的 64 位代码段。
 constexpr uint8_t kInterruptGateType = 0x8E;   // P=1, DPL=0, Type=1110，表示内核态中断门。
+constexpr const char* kExceptionNames[kCpuExceptionCount] = {
+    "divide error",                    // 0
+    "debug",                           // 1
+    "non-maskable interrupt",          // 2
+    "breakpoint",                      // 3
+    "overflow",                        // 4
+    "bound range exceeded",            // 5
+    "invalid opcode",                  // 6
+    "device not available",            // 7
+    "double fault",                    // 8
+    "coprocessor segment overrun",     // 9
+    "invalid tss",                     // 10
+    "segment not present",             // 11
+    "stack segment fault",             // 12
+    "general protection fault",        // 13
+    "page fault",                      // 14
+    "reserved",                        // 15
+    "x87 floating-point exception",    // 16
+    "alignment check",                 // 17
+    "machine check",                   // 18
+    "simd floating-point exception",   // 19
+    "virtualization exception",        // 20
+    "control protection exception",    // 21
+    "reserved",                        // 22
+    "reserved",                        // 23
+    "reserved",                        // 24
+    "reserved",                        // 25
+    "reserved",                        // 26
+    "reserved",                        // 27
+    "hypervisor injection exception",  // 28
+    "vmm communication exception",     // 29
+    "security exception",              // 30
+    "reserved",                        // 31
+};
 
 struct IdtEntry {
   uint16_t offset_low;     // 处理函数地址的低 16 位。
@@ -23,11 +57,7 @@ struct IdtPointer {
   uint64_t base;           // IDT 在内存里的起始地址。
 } __attribute__((packed));
 
-extern "C" void isr_divide_error_stub();
-extern "C" void isr_invalid_opcode_stub();
-extern "C" void isr_double_fault_stub();
-extern "C" void isr_general_protection_stub();
-extern "C" void isr_page_fault_stub();
+extern "C" uintptr_t isr_stub_table[kCpuExceptionCount];
 
 IdtEntry g_idt[kIdtEntryCount];        // 把整张 IDT 先放在内核自己的静态内存里。
 
@@ -56,11 +86,9 @@ void load_idt(const IdtPointer* idt_pointer) {
 bool initialize_idt() {
   memory_set(g_idt, 0, sizeof(g_idt));    // 先把所有槽位清零，避免脏数据进入 CPU。
 
-  set_idt_gate(0, isr_divide_error_stub);           // 0 号：除零异常。
-  set_idt_gate(6, isr_invalid_opcode_stub);         // 6 号：非法指令。
-  set_idt_gate(8, isr_double_fault_stub);           // 8 号：双重故障。
-  set_idt_gate(13, isr_general_protection_stub);    // 13 号：通用保护异常。
-  set_idt_gate(14, isr_page_fault_stub);            // 14 号：页错误。
+  for (uint8_t vector = 0; vector < kCpuExceptionCount; ++vector) {
+    set_idt_gate(vector, reinterpret_cast<void (*)()>(isr_stub_table[vector]));
+  }
 
   IdtPointer idt_pointer{};
   idt_pointer.limit = static_cast<uint16_t>(sizeof(g_idt) - 1);
@@ -68,4 +96,12 @@ bool initialize_idt() {
 
   load_idt(&idt_pointer);                           // 真正把 IDT 地址告诉 CPU。
   return true;
+}
+
+const char* exception_name(uint64_t vector) {
+  if (vector < kCpuExceptionCount) {
+    return kExceptionNames[vector];
+  }
+
+  return "unknown exception";
 }
