@@ -14,6 +14,204 @@
 
 ---
 
+## 0. 怎么启动
+
+如果你现在只是想把这个项目先跑起来，
+最短路径直接按下面做。
+
+### 第一步：检查环境
+
+运行：
+
+```bash
+./scripts/check-env.sh
+```
+
+这一步会检查这个项目当前真正要用到的工具：
+
+- `nasm`
+- `qemu-system-x86_64`
+- `clang++` 或 `g++`
+- `ld.lld` 或 `x86_64-elf-ld`
+- `dd` / `truncate` / `hexdump`
+
+如果这里没过，
+后面的构建和启动基本都会失败。
+
+### 第二步：先构建镜像
+
+运行：
+
+```bash
+make stage1
+```
+
+这一步会做的事情是：
+
+1. 汇编 `stage1.asm`
+2. 汇编 `stage2.asm`
+3. 编译并链接 64 位内核
+4. 生成 `build/disk.img`
+
+你可以把它理解成：
+
+> 把“bootloader + kernel”真正打包成一张 QEMU 能启动的原始磁盘镜像。
+
+### 第三步：图形界面启动
+
+如果你想看到 BIOS / VGA 文本界面，
+运行：
+
+```bash
+make run-stage1-gui
+```
+
+这会打开一个 QEMU 窗口，
+你能直接看到屏幕上的启动过程和 shell 提示符。
+
+### 第四步：终端里启动
+
+如果你更关心串口日志，
+想直接在终端里看输出，
+运行：
+
+```bash
+make run-stage1
+```
+
+这个模式不会弹图形窗口，
+会把串口输出直接打印到当前终端。
+
+### 第五步：自动测试
+
+正常启动链测试：
+
+```bash
+make test-stage1
+```
+
+非法指令异常测试：
+
+```bash
+make test-invalid-opcode
+```
+
+页错误异常测试：
+
+```bash
+make test-page-fault
+```
+
+这几个测试都会自动构建镜像、启动 QEMU、抓串口日志，再检查关键输出。
+
+### 第六步：清理构建产物
+
+如果你想删掉 `build/` 重新来，
+运行：
+
+```bash
+make clean
+```
+
+### 启动后你会看到什么
+
+如果一切正常，
+启动日志里会看到类似：
+
+- `stage1 ok`
+- `stage2 ok`
+- `protected mode ok`
+- `paging ok`
+- `long mode ok`
+- `hello from os64 kernel`
+- `shell ok`
+
+最后会进入最小交互 shell，
+提示符是：
+
+```text
+os64>
+```
+
+当前已经支持这些命令：
+
+- `help`
+- `mem`
+- `ticks`
+- `heap`
+- `irq`
+- `bootinfo`
+- `e820`
+- `cpu`
+- `uptime`
+- `echo <text>`
+- `history`
+- `clear`
+
+当前输入行也已经支持这些编辑动作：
+
+- `Left` / `Right`
+- `Home` / `End`
+- `Backspace`
+- `Delete`
+- `Up` / `Down` 浏览历史
+
+当前 shell 的屏幕配色也做过一轮收敛：
+
+- 普通正文是更柔和的浅灰色
+- 提示符 `os64>` 单独用更轻的青色强调
+
+这样做的原因不是“好看优先”，
+而是为了让长时间调试时屏幕不那么刺眼，同时又能一眼找到交互入口。
+
+### 一个很重要的提醒
+
+不要并发跑多个 `make test-*`。
+
+原因不是“脚本写得挑剔”，
+而是这些测试都会抢同一个：
+
+```text
+build/disk.img
+```
+
+并发时很容易出现：
+
+- QEMU 镜像写锁冲突
+- 串口日志互相覆盖
+- 一个测试读到另一个测试的结果
+
+所以正确做法是：
+
+> 一个一个串行跑。
+
+### 如果你的 QEMU 不在默认位置
+
+这个仓库的 `Makefile` 默认用了：
+
+```text
+/opt/homebrew/bin/qemu-system-x86_64
+```
+
+如果你机器上的 QEMU 不在这里，
+可以这样指定：
+
+```bash
+make QEMU=/你的/qemu-system-x86_64 run-stage1-gui
+```
+
+或者：
+
+```bash
+make QEMU=/你的/qemu-system-x86_64 run-stage1
+```
+
+一句话总结：
+
+> 先 `./scripts/check-env.sh`，再 `make run-stage1-gui` 或 `make run-stage1`，要验证就跑 `make test-stage1`。
+
+---
+
 ## 1. 先定路线
 
 如果不用 `Limine`，你必须自己解决“谁把内核拉起来”这个问题。

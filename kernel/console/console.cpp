@@ -8,11 +8,17 @@ namespace {
 constexpr uint16_t kVgaColumns = 80;    // VGA 文本模式固定每行 80 列。
 constexpr uint16_t kVgaRows = 25;       // VGA 文本模式固定 25 行。
 constexpr uintptr_t kVgaBase = 0xB8000; // VGA 文本缓冲区物理地址。
+constexpr size_t kConsoleEditorDraftCapacity = 128;  // 当前 shell/console 的行缓冲都很小，这个固定草稿槽位已经够用。
 
 uint16_t g_console_start_row = 0;       // 控制台自己的显示区域从哪一行开始。
 uint16_t g_console_row = 0;             // 当前光标所在行。
 uint16_t g_console_column = 0;          // 当前光标所在列。
-uint8_t g_console_color = 0x0F;         // 当前字符颜色，默认白字黑底。
+uint8_t g_console_color = 0x07;         // 当前字符颜色，默认改成浅灰字黑底，比纯白更柔和。
+
+struct ConsoleCursor {
+  uint16_t row;
+  uint16_t column;
+};
 
 volatile uint16_t* vga_buffer() {
   return reinterpret_cast<volatile uint16_t*>(kVgaBase);
@@ -91,6 +97,79 @@ bool is_printable_ascii(char ch) {
   return ch >= 0x20 && ch <= 0x7E;
 }
 
+ConsoleCursor current_cursor() {
+  ConsoleCursor cursor;
+  cursor.row = g_console_row;
+  cursor.column = g_console_column;
+  return cursor;
+}
+
+void set_cursor(const ConsoleCursor& cursor) {
+  g_console_row = cursor.row;
+  g_console_column = cursor.column;
+}
+
+void set_cursor_to_line_offset(const ConsoleCursor& line_start,
+                               size_t offset) {
+  // 这一轮编辑器先明确只覆盖“不会换行的一行输入”。
+  // 当前项目里 shell/console 的读行缓冲都很短，所以这条假设现在成立。
+  g_console_row = line_start.row;
+  g_console_column =
+      static_cast<uint16_t>(line_start.column + offset);
+}
+
+void redraw_input_line(const ConsoleCursor& line_start,
+                       const char* buffer,
+                       size_t length,
+                       size_t cursor,
+                       size_t* rendered_length) {
+  if (rendered_length == nullptr) {
+    return;
+  }
+
+  size_t total_cells = length;
+  if (*rendered_length > total_cells) {
+    total_cells = *rendered_length;
+  }
+
+  set_cursor(line_start);
+  for (size_t i = 0; i < total_cells; ++i) {
+    const char ch = (i < length) ? buffer[i] : ' ';
+    put_visible_char(ch);
+  }
+
+  set_cursor_to_line_offset(line_start, cursor);
+  *rendered_length = length;
+}
+
+void copy_line_text(char* destination,
+                    size_t capacity,
+                    size_t* out_length,
+                    const char* source) {
+  if (destination == nullptr || capacity < 2 || out_length == nullptr) {
+    return;
+  }
+
+  size_t length = 0;
+  if (source != nullptr) {
+    while (source[length] != '\0' && (length + 1) < capacity) {
+      destination[length] = source[length];
+      ++length;
+    }
+  }
+
+  destination[length] = '\0';
+  *out_length = length;
+}
+
+size_t history_entry_count(const ConsoleHistoryProvider* history) {
+  if (history == nullptr || history->entry_count == nullptr) {
+    return 0;
+  }
+
+  return history->entry_count(history->context);
+}
+
 }  // namespace
 
 void initialize_console(uint16_t start_row, uint8_t color) {
@@ -136,6 +215,10 @@ void console_write_string(const char* text) {
   }
 }
 
+void console_set_color(uint8_t color) {
+  g_console_color = color;
+}
+
 void console_clear() {
   for (uint16_t row = g_console_start_row; row < kVgaRows; ++row) {
     clear_row(row);
@@ -146,25 +229,139 @@ void console_clear() {
 }
 
 size_t console_read_line(char* buffer, size_t capacity) {
+  return console_read_line_with_history(buffer, capacity, nullptr);
+}
+
+size_t console_read_line_with_history(char* buffer,
+                                      size_t capacity,
+                                      const ConsoleHistoryProvider* history) {
   if (buffer == nullptr || capacity < 2) {
     return 0;
   }
 
   size_t length = 0;
+  size_t cursor = 0;
+  size_t rendered_length = 0;
+  const ConsoleCursor line_start = current_cursor();
+  const size_t available_history_count = history_entry_count(history);
+  size_t history_cursor = available_history_count;  // 指向“当前正在看哪条历史”；等于 count 时表示还在新输入草稿上。
+  char draft_buffer[kConsoleEditorDraftCapacity];
+  size_t draft_length = 0;
+
+  buffer[0] = '\0';
+  draft_buffer[0] = '\0';
 
   for (;;) {
-    char ch = '\0';
+    KeyboardInputEvent event;
+    event.kind = kKeyboardInputCharacter;
+    event.character = '\0';
 
-    while (!keyboard_try_read_char(&ch)) {
+    while (!keyboard_try_read_input_event(&event)) {
       // 这一轮先用最直接的阻塞方式：
       // 没有字符就 `hlt` 睡眠，等下一次中断把 CPU 唤醒后再试。
       wait_for_interrupt();
     }
 
-    if (ch == '\b') {
-      if (length > 0) {
+    if (event.kind == kKeyboardInputArrowLeft) {
+      if (cursor > 0) {
+        --cursor;
+        set_cursor_to_line_offset(line_start, cursor);
+      }
+      continue;
+    }
+
+    if (event.kind == kKeyboardInputArrowRight) {
+      if (cursor < length) {
+        ++cursor;
+        set_cursor_to_line_offset(line_start, cursor);
+      }
+      continue;
+    }
+
+    if (event.kind == kKeyboardInputHome) {
+      cursor = 0;
+      set_cursor_to_line_offset(line_start, cursor);
+      continue;
+    }
+
+    if (event.kind == kKeyboardInputEnd) {
+      cursor = length;
+      set_cursor_to_line_offset(line_start, cursor);
+      continue;
+    }
+
+    if (event.kind == kKeyboardInputDelete) {
+      if (cursor < length) {
+        for (size_t i = cursor; i < length; ++i) {
+          buffer[i] = buffer[i + 1];
+        }
         --length;
-        console_write_char('\b');
+        redraw_input_line(line_start, buffer, length, cursor,
+                          &rendered_length);
+      }
+      continue;
+    }
+
+    if (event.kind == kKeyboardInputArrowUp) {
+      if (available_history_count == 0 ||
+          history == nullptr ||
+          history->entry_text == nullptr) {
+        continue;
+      }
+
+      if (history_cursor == available_history_count) {
+        copy_line_text(draft_buffer, sizeof(draft_buffer), &draft_length,
+                       buffer);
+      }
+
+      if (history_cursor == 0) {
+        continue;
+      }
+
+      --history_cursor;
+      copy_line_text(buffer, capacity, &length,
+                     history->entry_text(history->context, history_cursor));
+      cursor = length;
+      redraw_input_line(line_start, buffer, length, cursor, &rendered_length);
+      continue;
+    }
+
+    if (event.kind == kKeyboardInputArrowDown) {
+      if (available_history_count == 0 ||
+          history == nullptr ||
+          history->entry_text == nullptr ||
+          history_cursor >= available_history_count) {
+        continue;
+      }
+
+      ++history_cursor;
+      if (history_cursor == available_history_count) {
+        copy_line_text(buffer, capacity, &length, draft_buffer);
+      } else {
+        copy_line_text(buffer, capacity, &length,
+                       history->entry_text(history->context, history_cursor));
+      }
+
+      cursor = length;
+      redraw_input_line(line_start, buffer, length, cursor, &rendered_length);
+      continue;
+    }
+
+    if (event.kind != kKeyboardInputCharacter) {
+      continue;
+    }
+
+    const char ch = event.character;
+
+    if (ch == '\b') {
+      if (cursor > 0) {
+        for (size_t i = cursor - 1; i < length; ++i) {
+          buffer[i] = buffer[i + 1];
+        }
+        --cursor;
+        --length;
+        redraw_input_line(line_start, buffer, length, cursor,
+                          &rendered_length);
       }
       continue;
     }
@@ -183,7 +380,13 @@ size_t console_read_line(char* buffer, size_t capacity) {
       continue;  // 缓冲区满了就先忽略后续字符，保证结尾 '\0' 还有位置可写。
     }
 
-    buffer[length++] = ch;
-    console_write_char(ch);
+    for (size_t i = length; i > cursor; --i) {
+      buffer[i] = buffer[i - 1];
+    }
+    buffer[cursor] = ch;
+    ++length;
+    ++cursor;
+    buffer[length] = '\0';
+    redraw_input_line(line_start, buffer, length, cursor, &rendered_length);
   }
 }

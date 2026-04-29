@@ -17,7 +17,10 @@ namespace {
 constexpr uint16_t kVgaColumns = 80;          // VGA 文本模式一行 80 列。
 constexpr uintptr_t kVgaBase = 0xB8000;       // VGA 文本缓冲区从这个物理地址开始。
 constexpr uint16_t kCom1Base = 0x3F8;         // COM1 串口的标准 I/O 端口基址。
-constexpr uint8_t kTextColor = 0x0F;          // 白字黑底，和前面的 stage2 风格保持一致。
+constexpr uint8_t kStatusTextColor = 0x07;    // 浅灰字黑底，比纯白更轻，不会显得那么“顶眼”。
+constexpr uint8_t kShellTextColor = 0x07;     // shell 正文也统一用浅灰色，减轻整屏发白的感觉。
+constexpr uint8_t kShellPromptColor = 0x03;   // 提示符改成柔一点的青色，让交互入口更清楚但不刺眼。
+constexpr uint8_t kExceptionTextColor = 0x0C; // 异常标题保留醒目的浅红色，方便一眼看出是错误路径。
 constexpr uint16_t kMaxDecimalDigits = 20;    // 打印 64 位十进制时最多不会超过 20 位。
 constexpr uint64_t kPagingTestVirtualAddress = 0x0000000000200000ULL;  // 2 MiB，正好落在当前临时映射之外。
 constexpr uint64_t kPagingTestPattern = 0x1122334455667788ULL;         // 用一个好认的模式值验证读写。
@@ -85,14 +88,38 @@ constexpr uint8_t kShellHeapScancodes[] = {
 constexpr uint8_t kShellIrqScancodes[] = {
     0x17, 0x13, 0x10, 0x1C,        // irq + Enter
 };
-constexpr uint8_t kShellEchoScancodes[] = {
-    0x12, 0x2E, 0x23, 0x18, 0x39, 0x23, 0x17, 0x05, 0x03, 0x1C,  // echo hi42 + Enter
+constexpr uint8_t kShellBootInfoScancodes[] = {
+    0x30, 0x18, 0x18, 0x14, 0x17, 0x31, 0x21, 0x18, 0x1C,  // bootinfo + Enter
+};
+constexpr uint8_t kShellE820Scancodes[] = {
+    0x12, 0x09, 0x03, 0x0B, 0x1C,  // e820 + Enter
+};
+constexpr uint8_t kShellCpuScancodes[] = {
+    0x2E, 0x19, 0x16, 0x1C,        // cpu + Enter
+};
+constexpr uint8_t kShellEditedEchoScancodes[] = {
+    0x2D, 0x12, 0x2E, 0x23, 0x18, 0x39, 0x23, 0x17, 0x05, 0x03, 0x2C,
+    0xE0, 0x47,                    // Home
+    0xE0, 0x4D,                    // Right
+    0xE0, 0x4B,                    // Left
+    0xE0, 0x53,                    // Delete
+    0xE0, 0x4F,                    // End
+    0xE0, 0x4B,                    // Left
+    0xE0, 0x4D,                    // Right
+    0x0E,                          // Backspace
+    0x1C,                          // Enter
 };
 constexpr uint8_t kShellUptimeScancodes[] = {
     0x16, 0x19, 0x14, 0x17, 0x32, 0x12, 0x1C,  // uptime + Enter
 };
 constexpr uint8_t kShellHistoryScancodes[] = {
     0x23, 0x17, 0x1F, 0x14, 0x18, 0x13, 0x15, 0x1C,  // history + Enter
+};
+constexpr uint8_t kShellHistoryBrowseScancodes[] = {
+    0xE0, 0x48,                    // Up
+    0xE0, 0x48,                    // Up
+    0xE0, 0x50,                    // Down
+    0x1C,                          // Enter
 };
 constexpr uint8_t kShellClearScancodes[] = {
     0x2E, 0x26, 0x12, 0x1E, 0x13, 0x1C,  // clear + Enter
@@ -164,9 +191,25 @@ void shell_clear_output() {
   console_clear();
 }
 
+void shell_set_output_color(uint8_t color) {
+  console_set_color(color);
+}
+
+size_t shell_history_provider_count(const void* context) {
+  return shell_history_entry_count(static_cast<const ShellState*>(context));
+}
+
+const char* shell_history_provider_text(const void* context, size_t index) {
+  return shell_history_entry_text(static_cast<const ShellState*>(context),
+                                  index);
+}
+
 const ShellOutput kShellOutput = {
     shell_output_char,
     shell_clear_output,
+    shell_set_output_color,
+    kShellTextColor,
+    kShellPromptColor,
 };
 
 // 打印 1 个十六进制字符，比如 10 -> 'A'。
@@ -262,7 +305,7 @@ void vga_write_line(uint16_t row, const char* text, uint8_t color) {
 
 // 既写屏幕也写串口，这样手工看和自动测都能兼顾。
 void write_status_line(uint16_t row, const char* text) {
-  vga_write_line(row, text, kTextColor);
+  vga_write_line(row, text, kStatusTextColor);
   serial_write_string(text);
   serial_write_crlf();
 }
@@ -689,7 +732,7 @@ bool run_console_input_smoke_test() {
     return false;  // 先确认上一轮字符测试已经把缓冲区消费干净。
   }
 
-  initialize_console(kConsoleTestStartRow, kTextColor);
+  initialize_console(kConsoleTestStartRow, kShellTextColor);
   console_write_string("input> ");  // 这一轮先给最小控制台写一个提示符，模拟将来的命令行入口。
 
   const uint64_t before_irq_count = keyboard_irq_count();
@@ -768,14 +811,26 @@ constexpr ShellSmokeCommand kShellSmokeCommands[] = {
     {"irq", kShellIrqScancodes,
      sizeof(kShellIrqScancodes) / sizeof(kShellIrqScancodes[0]),
      kShellCommandExecuted},
-    {"echo hi42", kShellEchoScancodes,
-     sizeof(kShellEchoScancodes) / sizeof(kShellEchoScancodes[0]),
+    {"bootinfo", kShellBootInfoScancodes,
+     sizeof(kShellBootInfoScancodes) / sizeof(kShellBootInfoScancodes[0]),
+     kShellCommandExecuted},
+    {"e820", kShellE820Scancodes,
+     sizeof(kShellE820Scancodes) / sizeof(kShellE820Scancodes[0]),
+     kShellCommandExecuted},
+    {"cpu", kShellCpuScancodes,
+     sizeof(kShellCpuScancodes) / sizeof(kShellCpuScancodes[0]),
+     kShellCommandExecuted},
+    {"echo hi42", kShellEditedEchoScancodes,
+     sizeof(kShellEditedEchoScancodes) / sizeof(kShellEditedEchoScancodes[0]),
      kShellCommandExecuted},
     {"uptime", kShellUptimeScancodes,
      sizeof(kShellUptimeScancodes) / sizeof(kShellUptimeScancodes[0]),
      kShellCommandExecuted},
     {"history", kShellHistoryScancodes,
      sizeof(kShellHistoryScancodes) / sizeof(kShellHistoryScancodes[0]),
+     kShellCommandExecuted},
+    {"history", kShellHistoryBrowseScancodes,
+     sizeof(kShellHistoryBrowseScancodes) / sizeof(kShellHistoryBrowseScancodes[0]),
      kShellCommandExecuted},
     {"clear", kShellClearScancodes,
      sizeof(kShellClearScancodes) / sizeof(kShellClearScancodes[0]),
@@ -816,13 +871,18 @@ bool inject_scancode_sequence(const char* log_prefix,
   return true;
 }
 
-bool run_shell_smoke_test() {
-  initialize_console(kShellTestStartRow, kTextColor);
+bool run_shell_smoke_test(const BootInfo* boot_info) {
+  initialize_console(kShellTestStartRow, kShellTextColor);
 
-  if (!initialize_shell(&g_shell, &g_page_allocator, &g_kernel_heap,
+  if (!initialize_shell(&g_shell, boot_info, &g_page_allocator, &g_kernel_heap,
                         &kShellOutput)) {
     return false;
   }
+
+  ConsoleHistoryProvider history_provider;
+  history_provider.entry_count = shell_history_provider_count;
+  history_provider.entry_text = shell_history_provider_text;
+  history_provider.context = &g_shell;
 
   uint64_t expected_irq_count = keyboard_irq_count();
   enable_interrupts();
@@ -843,7 +903,8 @@ bool run_shell_smoke_test() {
 
     char line_buffer[kShellLineBufferCapacity];
     const size_t line_length =
-        console_read_line(line_buffer, sizeof(line_buffer));
+        console_read_line_with_history(line_buffer, sizeof(line_buffer),
+                                       &history_provider);
 
     serial_write_string("shell_line=");
     serial_write_string(line_buffer);
@@ -973,7 +1034,7 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 
   write_status_line(14, "console input ok");
 
-  if (!run_shell_smoke_test()) {
+  if (!run_shell_smoke_test(boot_info)) {
     write_status_line(15, "shell bad");
     return;
   }
@@ -999,7 +1060,7 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 
 extern "C" void kernel_handle_exception(const InterruptFrame* frame,
                                          uint64_t fault_address) {
-  vga_write_line(12, "kernel exception", kTextColor);
+  vga_write_line(12, "kernel exception", kExceptionTextColor);
 
   serial_write_string("exception=");
   serial_write_string(exception_name(frame->vector));

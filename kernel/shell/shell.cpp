@@ -7,6 +7,13 @@
 
 namespace {
 
+struct CpuidResult {
+  uint32_t eax;
+  uint32_t ebx;
+  uint32_t ecx;
+  uint32_t edx;
+};
+
 void write_char(const ShellState* shell, char ch) {
   if (shell == nullptr || shell->output.write_char == nullptr) {
     return;
@@ -37,6 +44,14 @@ void clear_output(const ShellState* shell) {
   shell->output.clear();
 }
 
+void set_output_color(const ShellState* shell, uint8_t color) {
+  if (shell == nullptr || shell->output.set_color == nullptr) {
+    return;
+  }
+
+  shell->output.set_color(color);
+}
+
 void write_u64(const ShellState* shell, uint64_t value) {
   char digits[20];
   size_t count = 0;
@@ -53,6 +68,22 @@ void write_u64(const ShellState* shell, uint64_t value) {
 
   while (count > 0) {
     write_char(shell, digits[--count]);
+  }
+}
+
+void write_hex_nibble(const ShellState* shell, uint8_t value) {
+  if (value < 10) {
+    write_char(shell, static_cast<char>('0' + value));
+    return;
+  }
+
+  write_char(shell, static_cast<char>('A' + (value - 10)));
+}
+
+void write_hex64(const ShellState* shell, uint64_t value) {
+  for (int shift = 60; shift >= 0; shift -= 4) {
+    const uint8_t nibble = static_cast<uint8_t>((value >> shift) & 0x0F);
+    write_hex_nibble(shell, nibble);
   }
 }
 
@@ -96,6 +127,60 @@ const char* trim_trailing_spaces(const char* begin, const char* end) {
   }
 
   return end;
+}
+
+bool is_boot_info_valid(const BootInfo* boot_info) {
+  return boot_info != nullptr &&
+         boot_info->magic == kBootInfoMagic &&
+         boot_info->memory_map_ptr != 0 &&
+         boot_info->memory_map_entry_size == sizeof(E820Entry);
+}
+
+const char* memory_kind_name(uint32_t type) {
+  if (type == kE820TypeUsable) {
+    return "usable";
+  }
+
+  return "reserved";
+}
+
+CpuidResult read_cpuid(uint32_t leaf, uint32_t subleaf) {
+  CpuidResult result;
+  result.eax = 0;
+  result.ebx = 0;
+  result.ecx = 0;
+  result.edx = 0;
+  asm volatile("cpuid"
+               : "=a"(result.eax), "=b"(result.ebx),
+                 "=c"(result.ecx), "=d"(result.edx)
+               : "a"(leaf), "c"(subleaf));
+  return result;
+}
+
+size_t history_slot_index(const ShellState* shell, size_t history_index) {
+  if (shell == nullptr || history_index >= shell->history_count) {
+    return 0;
+  }
+
+  if (shell->history_count < kShellHistoryCapacity) {
+    return history_index;
+  }
+
+  return (shell->history_next_slot + history_index) % kShellHistoryCapacity;
+}
+
+size_t history_provider_entry_count(const void* context) {
+  const auto* shell = static_cast<const ShellState*>(context);
+  return (shell != nullptr) ? shell->history_count : 0;
+}
+
+const char* history_provider_entry_text(const void* context, size_t index) {
+  const auto* shell = static_cast<const ShellState*>(context);
+  if (shell == nullptr || index >= shell->history_count) {
+    return nullptr;
+  }
+
+  return shell->history_entries[history_slot_index(shell, index)];
 }
 
 void record_history_line(ShellState* shell, const char* line) {
@@ -192,6 +277,12 @@ void handle_help_command(const ShellState* shell) {
   write_newline(shell);
   write_string(shell, "irq   - show timer/keyboard irq stats");
   write_newline(shell);
+  write_string(shell, "bootinfo - show boot handoff info");
+  write_newline(shell);
+  write_string(shell, "e820  - show boot memory map");
+  write_newline(shell);
+  write_string(shell, "cpu   - show cpuid summary");
+  write_newline(shell);
   write_string(shell, "uptime - show tick-based uptime");
   write_newline(shell);
   write_string(shell, "echo  - print text back");
@@ -269,6 +360,103 @@ void handle_irq_command(const ShellState* shell) {
   write_newline(shell);
 }
 
+void handle_bootinfo_command(const ShellState* shell) {
+  if (!is_boot_info_valid(shell != nullptr ? shell->boot_info : nullptr)) {
+    write_string(shell, "bootinfo unavailable");
+    write_newline(shell);
+    return;
+  }
+
+  write_string(shell, "bootinfo_magic=0x");
+  write_hex64(shell, shell->boot_info->magic);
+  write_newline(shell);
+
+  write_string(shell, "bootinfo_memory_map_count=");
+  write_u64(shell, shell->boot_info->memory_map_count);
+  write_newline(shell);
+
+  write_string(shell, "bootinfo_memory_map_entry_size=");
+  write_u64(shell, shell->boot_info->memory_map_entry_size);
+  write_newline(shell);
+
+  write_string(shell, "bootinfo_memory_map_ptr=0x");
+  write_hex64(shell, shell->boot_info->memory_map_ptr);
+  write_newline(shell);
+}
+
+void handle_e820_command(const ShellState* shell) {
+  if (!is_boot_info_valid(shell != nullptr ? shell->boot_info : nullptr)) {
+    write_string(shell, "e820 unavailable");
+    write_newline(shell);
+    return;
+  }
+
+  const auto* entries = reinterpret_cast<const E820Entry*>(
+      static_cast<uintptr_t>(shell->boot_info->memory_map_ptr));
+
+  write_string(shell, "e820_count=");
+  write_u64(shell, shell->boot_info->memory_map_count);
+  write_newline(shell);
+
+  for (uint16_t i = 0; i < shell->boot_info->memory_map_count; ++i) {
+    const E820Entry& entry = entries[i];
+
+    write_string(shell, "e820_shell[");
+    write_u64(shell, i);
+    write_string(shell, "] base=0x");
+    write_hex64(shell, entry.base);
+    write_string(shell, " length=0x");
+    write_hex64(shell, entry.length);
+    write_string(shell, " raw_type=0x");
+    write_hex64(shell, entry.type);
+    write_string(shell, " kind=");
+    write_string(shell, memory_kind_name(entry.type));
+    write_newline(shell);
+  }
+}
+
+void handle_cpu_command(const ShellState* shell) {
+  const CpuidResult leaf0 = read_cpuid(0, 0);
+  const CpuidResult extended_leaf = read_cpuid(0x80000000u, 0);
+
+  char vendor[13];
+  vendor[0] = static_cast<char>(leaf0.ebx & 0xFF);
+  vendor[1] = static_cast<char>((leaf0.ebx >> 8) & 0xFF);
+  vendor[2] = static_cast<char>((leaf0.ebx >> 16) & 0xFF);
+  vendor[3] = static_cast<char>((leaf0.ebx >> 24) & 0xFF);
+  vendor[4] = static_cast<char>(leaf0.edx & 0xFF);
+  vendor[5] = static_cast<char>((leaf0.edx >> 8) & 0xFF);
+  vendor[6] = static_cast<char>((leaf0.edx >> 16) & 0xFF);
+  vendor[7] = static_cast<char>((leaf0.edx >> 24) & 0xFF);
+  vendor[8] = static_cast<char>(leaf0.ecx & 0xFF);
+  vendor[9] = static_cast<char>((leaf0.ecx >> 8) & 0xFF);
+  vendor[10] = static_cast<char>((leaf0.ecx >> 16) & 0xFF);
+  vendor[11] = static_cast<char>((leaf0.ecx >> 24) & 0xFF);
+  vendor[12] = '\0';
+
+  write_string(shell, "cpu_vendor=");
+  write_string(shell, vendor);
+  write_newline(shell);
+
+  write_string(shell, "cpu_max_basic_leaf=0x");
+  write_hex64(shell, leaf0.eax);
+  write_newline(shell);
+
+  write_string(shell, "cpu_max_extended_leaf=0x");
+  write_hex64(shell, extended_leaf.eax);
+  write_newline(shell);
+
+  uint64_t long_mode = 0;
+  if (extended_leaf.eax >= 0x80000001u) {
+    const CpuidResult features = read_cpuid(0x80000001u, 0);
+    long_mode = ((features.edx >> 29) & 0x1u);
+  }
+
+  write_string(shell, "cpu_long_mode=");
+  write_u64(shell, long_mode);
+  write_newline(shell);
+}
+
 void handle_uptime_command(const ShellState* shell) {
   const uint64_t ticks = timer_tick_count();
   const uint64_t frequency_hz = timer_frequency_hz();
@@ -320,27 +508,20 @@ void handle_history_command(const ShellState* shell) {
     return;
   }
 
-  size_t slot = 0;
-  if (shell->history_count == kShellHistoryCapacity) {
-    // 写满以后，`history_next_slot` 指向“下一次要覆盖谁”，
-    // 也就等于“当前最旧的一条命令在哪个槽位”。
-    slot = shell->history_next_slot;
-  }
-
   for (size_t i = 0; i < shell->history_count; ++i) {
+    const size_t slot = history_slot_index(shell, i);
     write_string(shell, "history[");
     write_u64(shell, shell->history_sequence_numbers[slot]);
     write_string(shell, "]=");
     write_string(shell, shell->history_entries[slot]);
     write_newline(shell);
-
-    slot = (slot + 1) % kShellHistoryCapacity;
   }
 }
 
 }  // namespace
 
 bool initialize_shell(ShellState* shell,
+                      const BootInfo* boot_info,
                       const PageAllocator* allocator,
                       const KernelHeap* heap,
                       const ShellOutput* output) {
@@ -348,6 +529,7 @@ bool initialize_shell(ShellState* shell,
     return false;
   }
 
+  shell->boot_info = boot_info;
   shell->allocator = allocator;
   shell->heap = heap;
   shell->output = *output;
@@ -361,7 +543,27 @@ bool initialize_shell(ShellState* shell,
 }
 
 void shell_print_prompt(const ShellState* shell) {
+  // 提示符单独换成更轻的强调色，让界面不再整屏都是同一块高亮白字。
+  set_output_color(shell, shell->output.prompt_color);
   write_string(shell, "os64> ");
+  set_output_color(shell, shell->output.text_color);
+}
+
+size_t shell_history_entry_count(const ShellState* shell) {
+  if (shell == nullptr) {
+    return 0;
+  }
+
+  return shell->history_count;
+}
+
+const char* shell_history_entry_text(const ShellState* shell, size_t index) {
+  if (shell == nullptr || index >= shell->history_count) {
+    return nullptr;
+  }
+
+  const size_t slot = history_slot_index(shell, index);
+  return shell->history_entries[slot];
 }
 
 ShellCommandResult shell_execute_line(ShellState* shell,
@@ -404,6 +606,24 @@ ShellCommandResult shell_execute_line(ShellState* shell,
   if (command_matches(trimmed_line, "irq", &arguments) &&
       is_empty_after_trim(arguments)) {
     handle_irq_command(shell);
+    return kShellCommandExecuted;
+  }
+
+  if (command_matches(trimmed_line, "bootinfo", &arguments) &&
+      is_empty_after_trim(arguments)) {
+    handle_bootinfo_command(shell);
+    return kShellCommandExecuted;
+  }
+
+  if (command_matches(trimmed_line, "e820", &arguments) &&
+      is_empty_after_trim(arguments)) {
+    handle_e820_command(shell);
+    return kShellCommandExecuted;
+  }
+
+  if (command_matches(trimmed_line, "cpu", &arguments) &&
+      is_empty_after_trim(arguments)) {
+    handle_cpu_command(shell);
     return kShellCommandExecuted;
   }
 
@@ -456,9 +676,15 @@ void shell_run_forever(ShellState* shell,
     return;
   }
 
+  ConsoleHistoryProvider history_provider;
+  history_provider.entry_count = history_provider_entry_count;
+  history_provider.entry_text = history_provider_entry_text;
+  history_provider.context = shell;
+
   for (;;) {
     shell_print_prompt(shell);
-    (void)console_read_line(line_buffer, capacity);
+    (void)console_read_line_with_history(line_buffer, capacity,
+                                         &history_provider);
     (void)shell_execute_line(shell, line_buffer);
   }
 }

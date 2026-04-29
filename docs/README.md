@@ -40,6 +40,8 @@
    再继续往前，把“只会认固定单词”的 shell 扩成“能查更多内核状态、还能处理参数”的第一版命令行。
 18. [从带参数命令到命令历史](./KERNEL_SHELL_HISTORY_GUIDE.md)
    再继续往前，把“执行完就忘”的 shell 扩成“能保存最近命令历史”的第一版交互系统。
+19. [从命令历史到行编辑 + 历史浏览 + 内核观察命令](./KERNEL_SHELL_EDITOR_INSPECT_GUIDE.md)
+   再继续往前，把“只会记历史”的 shell 扩成“能编辑、能回看、还能观察启动链状态”的真正调试终端骨架。
 
 一句话记忆这个顺序：
 
@@ -62,4 +64,5 @@ stage1
 -> minimal shell
 -> observable shell + command arguments
 -> shell command history
+-> shell line editor + history browse + inspect commands
 ```

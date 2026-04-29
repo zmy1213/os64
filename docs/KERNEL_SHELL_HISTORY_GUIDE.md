@@ -1,5 +1,8 @@
 # 从带参数命令到命令历史
 
+> 这份文档记录的是 shell 扩到 `history` 的这一版。
+> 当前仓库已经继续扩到“行编辑 + 上下方向键历史浏览 + `bootinfo/e820/cpu` 观察命令”，建议接着看 [KERNEL_SHELL_EDITOR_INSPECT_GUIDE.md](./KERNEL_SHELL_EDITOR_INSPECT_GUIDE.md)。
+
 这份文档讲的是：
 
 - 为什么 `echo` / `uptime` 之后，下一步最自然的是 `history`

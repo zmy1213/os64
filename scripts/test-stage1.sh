@@ -103,6 +103,9 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "ticks - show timer tick count" "$SERIAL_LOG" \
   && grep -q "heap  - show kernel heap stats" "$SERIAL_LOG" \
   && grep -q "irq   - show timer/keyboard irq stats" "$SERIAL_LOG" \
+  && grep -q "bootinfo - show boot handoff info" "$SERIAL_LOG" \
+  && grep -q "e820  - show boot memory map" "$SERIAL_LOG" \
+  && grep -q "cpu   - show cpuid summary" "$SERIAL_LOG" \
   && grep -q "uptime - show tick-based uptime" "$SERIAL_LOG" \
   && grep -q "echo  - print text back" "$SERIAL_LOG" \
   && grep -q "history - show recent commands" "$SERIAL_LOG" \
@@ -122,6 +125,19 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "irq_keyboard_count=" "$SERIAL_LOG" \
   && grep -q "irq_keyboard_buffered_chars=0" "$SERIAL_LOG" \
   && grep -q "irq_keyboard_dropped_chars=0" "$SERIAL_LOG" \
+  && grep -q "shell_line=bootinfo" "$SERIAL_LOG" \
+  && grep -q "bootinfo_magic=0x" "$SERIAL_LOG" \
+  && grep -q "bootinfo_memory_map_count=" "$SERIAL_LOG" \
+  && grep -q "bootinfo_memory_map_entry_size=24" "$SERIAL_LOG" \
+  && grep -q "bootinfo_memory_map_ptr=0x" "$SERIAL_LOG" \
+  && grep -q "shell_line=e820" "$SERIAL_LOG" \
+  && grep -q "e820_count=" "$SERIAL_LOG" \
+  && grep -Fq "e820_shell[0] base=0x" "$SERIAL_LOG" \
+  && grep -q "shell_line=cpu" "$SERIAL_LOG" \
+  && grep -q "cpu_vendor=" "$SERIAL_LOG" \
+  && grep -q "cpu_max_basic_leaf=0x" "$SERIAL_LOG" \
+  && grep -q "cpu_max_extended_leaf=0x" "$SERIAL_LOG" \
+  && grep -q "cpu_long_mode=1" "$SERIAL_LOG" \
   && grep -q "shell_line=echo hi42" "$SERIAL_LOG" \
   && grep -q $'^hi42\r$' "$SERIAL_LOG" \
   && grep -q "shell_line=uptime" "$SERIAL_LOG" \
@@ -129,16 +145,22 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "uptime_frequency_hz=100" "$SERIAL_LOG" \
   && grep -q "uptime_ms=" "$SERIAL_LOG" \
   && grep -q "shell_line=history" "$SERIAL_LOG" \
-  && grep -q "history_buffered=8" "$SERIAL_LOG" \
-  && grep -q "history_total=8" "$SERIAL_LOG" \
+  && grep -q "history_buffered=11" "$SERIAL_LOG" \
+  && grep -q "history_total=11" "$SERIAL_LOG" \
   && grep -Fq "history[1]=help" "$SERIAL_LOG" \
   && grep -Fq "history[2]=mem" "$SERIAL_LOG" \
   && grep -Fq "history[3]=ticks" "$SERIAL_LOG" \
   && grep -Fq "history[4]=heap" "$SERIAL_LOG" \
   && grep -Fq "history[5]=irq" "$SERIAL_LOG" \
-  && grep -Fq "history[6]=echo hi42" "$SERIAL_LOG" \
-  && grep -Fq "history[7]=uptime" "$SERIAL_LOG" \
-  && grep -Fq "history[8]=history" "$SERIAL_LOG" \
+  && grep -Fq "history[6]=bootinfo" "$SERIAL_LOG" \
+  && grep -Fq "history[7]=e820" "$SERIAL_LOG" \
+  && grep -Fq "history[8]=cpu" "$SERIAL_LOG" \
+  && grep -Fq "history[9]=echo hi42" "$SERIAL_LOG" \
+  && grep -Fq "history[10]=uptime" "$SERIAL_LOG" \
+  && grep -Fq "history[11]=history" "$SERIAL_LOG" \
+  && grep -q "history_buffered=12" "$SERIAL_LOG" \
+  && grep -q "history_total=12" "$SERIAL_LOG" \
+  && grep -Fq "history[12]=history" "$SERIAL_LOG" \
   && grep -q "shell_line=clear" "$SERIAL_LOG" \
   && grep -q "shell_line=bad" "$SERIAL_LOG" \
   && grep -q "shell_result=unknown" "$SERIAL_LOG" \
