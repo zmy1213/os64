@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "page_allocator.hpp"
+#include "memory/page_allocator.hpp"
 
 constexpr uint64_t kKernelHeapStart = 0x0000000000400000ULL;  // 第一版把堆虚拟地址放在 4 MiB。
 constexpr uint64_t kKernelHeapLimit = 0x0000000000800000ULL;  // 先给它预留到 8 MiB，便于调试。

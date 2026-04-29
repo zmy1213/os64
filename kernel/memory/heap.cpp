@@ -1,7 +1,7 @@
-#include "heap.hpp"
+#include "memory/heap.hpp"
 
-#include "paging.hpp"
-#include "runtime.hpp"
+#include "memory/paging.hpp"
+#include "runtime/runtime.hpp"
 
 struct alignas(16) KernelHeapFreeRegion {
   uint64_t region_bytes;             // 这段空闲区总共有多少字节，包含这个头本身。

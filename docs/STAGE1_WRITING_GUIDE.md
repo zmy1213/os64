@@ -36,7 +36,7 @@
 - 没有它，`stage2` 没机会被加载
 - 没有它，内核根本轮不到出场
 
-这就是为什么我们不先写 `kernel/main.cpp`。
+这就是为什么我们不先写 `kernel/core/kernel_main.cpp`。
 
 不是内核不重要，而是：
 
@@ -69,8 +69,8 @@ os64/
 所以第一轮不要创建：
 
 - `stage2.asm`
-- `kernel/main.cpp`
-- `linker.ld`
+- `kernel/core/kernel_main.cpp`
+- `kernel/boot/linker.ld`
 - `memory.cpp`
 - `sched.cpp`
 

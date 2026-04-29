@@ -1,6 +1,6 @@
-#include "paging.hpp"
+#include "memory/paging.hpp"
 
-#include "runtime.hpp"
+#include "runtime/runtime.hpp"
 
 namespace {
 

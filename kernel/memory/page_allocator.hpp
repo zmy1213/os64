@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#include "boot_info.hpp"
+#include "boot/boot_info.hpp"
 
 constexpr uint64_t kPageSize = 4096;              // 先固定 4 KiB 页，这是 x86_64 最基础的页大小。
 constexpr uint64_t kAllocatorMinAddress = 0x100000;  // 第一版先只从 1 MiB 以上挑页，避开低地址杂项区。

@@ -860,22 +860,24 @@ second stage 是整个“从零启动”最关键的一段。
 os64/
 ├── README.md
 ├── Makefile
-├── linker.ld
 ├── scripts/
 ├── boot/
 │   ├── stage1.asm
-│   ├── stage2.asm
-│   └── disk_layout.md
+│   └── stage2.asm
 ├── kernel/
-│   ├── main.cpp
-│   ├── console.cpp
-│   ├── idt.cpp
-│   ├── memory.cpp
-│   └── sched.cpp
-└── include/
+│   ├── README.md
+│   ├── boot/
+│   ├── core/
+│   ├── interrupts/
+│   ├── memory/
+│   └── runtime/
+└── build/
 ```
 
-这样最够用。
+现在这个项目已经按这套思路往前落地了，只是 `kernel/` 里面进一步按职责细分了。
+如果你想直接看当前真实布局，可以打开：
+
+- [kernel/README.md](./kernel/README.md)
 
 ---
 

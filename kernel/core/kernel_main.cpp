@@ -1,11 +1,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "boot_info.hpp"
-#include "heap.hpp"
-#include "interrupts.hpp"
-#include "page_allocator.hpp"
-#include "paging.hpp"
+#include "boot/boot_info.hpp"
+#include "interrupts/interrupts.hpp"
+#include "memory/heap.hpp"
+#include "memory/page_allocator.hpp"
+#include "memory/paging.hpp"
 
 namespace {
 

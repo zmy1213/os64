@@ -6,15 +6,16 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/build"
 STAGE1_SRC="$ROOT_DIR/boot/stage1.asm"
 STAGE2_SRC="$ROOT_DIR/boot/stage2.asm"
-KERNEL_ENTRY_SRC="$ROOT_DIR/kernel/entry64.asm"
-KERNEL_INTERRUPT_STUBS_SRC="$ROOT_DIR/kernel/interrupt_stubs.asm"
-KERNEL_MAIN_SRC="$ROOT_DIR/kernel/kernel_main.cpp"
-KERNEL_PAGE_ALLOCATOR_SRC="$ROOT_DIR/kernel/page_allocator.cpp"
-KERNEL_PAGING_SRC="$ROOT_DIR/kernel/paging.cpp"
-KERNEL_RUNTIME_SRC="$ROOT_DIR/kernel/runtime.cpp"
-KERNEL_INTERRUPTS_SRC="$ROOT_DIR/kernel/interrupts.cpp"
-KERNEL_HEAP_SRC="$ROOT_DIR/kernel/heap.cpp"
-KERNEL_LINKER_SCRIPT="$ROOT_DIR/kernel/linker.ld"
+KERNEL_INCLUDE_DIR="$ROOT_DIR/kernel"
+KERNEL_ENTRY_SRC="$ROOT_DIR/kernel/boot/entry64.asm"
+KERNEL_INTERRUPT_STUBS_SRC="$ROOT_DIR/kernel/interrupts/interrupt_stubs.asm"
+KERNEL_MAIN_SRC="$ROOT_DIR/kernel/core/kernel_main.cpp"
+KERNEL_PAGE_ALLOCATOR_SRC="$ROOT_DIR/kernel/memory/page_allocator.cpp"
+KERNEL_PAGING_SRC="$ROOT_DIR/kernel/memory/paging.cpp"
+KERNEL_RUNTIME_SRC="$ROOT_DIR/kernel/runtime/runtime.cpp"
+KERNEL_INTERRUPTS_SRC="$ROOT_DIR/kernel/interrupts/interrupts.cpp"
+KERNEL_HEAP_SRC="$ROOT_DIR/kernel/memory/heap.cpp"
+KERNEL_LINKER_SCRIPT="$ROOT_DIR/kernel/boot/linker.ld"
 STAGE1_BIN="$BUILD_DIR/stage1.bin"
 STAGE2_BIN="$BUILD_DIR/stage2.bin"
 KERNEL_ENTRY_OBJ="$BUILD_DIR/entry64.o"
@@ -63,6 +64,7 @@ nasm -f elf64 "$KERNEL_INTERRUPT_STUBS_SRC" -o "$KERNEL_INTERRUPT_STUBS_OBJ"
 echo "[4/16] compiling kernel_main.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
+  -I "$KERNEL_INCLUDE_DIR" \
   -ffreestanding \
   -fno-exceptions \
   -fno-rtti \
@@ -80,6 +82,7 @@ echo "[4/16] compiling kernel_main.cpp"
 echo "[5/16] compiling page_allocator.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
+  -I "$KERNEL_INCLUDE_DIR" \
   -ffreestanding \
   -fno-exceptions \
   -fno-rtti \
@@ -97,6 +100,7 @@ echo "[5/16] compiling page_allocator.cpp"
 echo "[6/16] compiling paging.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
+  -I "$KERNEL_INCLUDE_DIR" \
   -ffreestanding \
   -fno-exceptions \
   -fno-rtti \
@@ -114,6 +118,7 @@ echo "[6/16] compiling paging.cpp"
 echo "[7/16] compiling runtime.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
+  -I "$KERNEL_INCLUDE_DIR" \
   -ffreestanding \
   -fno-exceptions \
   -fno-rtti \
@@ -131,6 +136,7 @@ echo "[7/16] compiling runtime.cpp"
 echo "[8/16] compiling interrupts.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
+  -I "$KERNEL_INCLUDE_DIR" \
   -ffreestanding \
   -fno-exceptions \
   -fno-rtti \
@@ -148,6 +154,7 @@ echo "[8/16] compiling interrupts.cpp"
 echo "[9/16] compiling heap.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
+  -I "$KERNEL_INCLUDE_DIR" \
   -ffreestanding \
   -fno-exceptions \
   -fno-rtti \

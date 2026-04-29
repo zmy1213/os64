@@ -1,6 +1,6 @@
-#include "interrupts.hpp"
+#include "interrupts/interrupts.hpp"
 
-#include "runtime.hpp"
+#include "runtime/runtime.hpp"
 
 namespace {
 
