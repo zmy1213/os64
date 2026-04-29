@@ -190,6 +190,8 @@
 环境通过后，下一步具体写什么、为什么这么写，可以继续看：
 
 - [Stage1 写入说明](./docs/STAGE1_WRITING_GUIDE.md)
+- [Stage2 保护模式说明](./docs/STAGE2_PROTECTED_MODE_GUIDE.md)
+- [Boot 寄存器小白说明](./docs/BOOT_REGISTERS_BEGINNER.md)
 
 ---
 

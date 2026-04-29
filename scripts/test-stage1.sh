@@ -36,13 +36,17 @@ if ! [ -f "$SERIAL_LOG" ]; then
   exit 1
 fi
 
-# Success requires evidence that both boot stages actually ran.
-if grep -q "stage1 ok" "$SERIAL_LOG" && grep -q "stage2 ok" "$SERIAL_LOG"; then
-  echo "stage1->stage2 serial test passed"
+# Success requires evidence that the new stage2 milestones all completed.
+if grep -q "stage1 ok" "$SERIAL_LOG" \
+  && grep -q "stage2 ok" "$SERIAL_LOG" \
+  && grep -q "a20 ok" "$SERIAL_LOG" \
+  && grep -q "e820 ok" "$SERIAL_LOG" \
+  && grep -q "protected mode ok" "$SERIAL_LOG"; then
+  echo "stage1->stage2->protected-mode serial test passed"
   cat "$SERIAL_LOG"
   exit 0
 fi
 
-echo "stage1->stage2 serial test failed" >&2
+echo "stage1->stage2->protected-mode serial test failed" >&2
 cat "$SERIAL_LOG" >&2
 exit 1
