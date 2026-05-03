@@ -11,6 +11,8 @@ KERNEL_ENTRY_SRC="$ROOT_DIR/kernel/boot/entry64.asm"
 KERNEL_INTERRUPT_STUBS_SRC="$ROOT_DIR/kernel/interrupts/interrupt_stubs.asm"
 KERNEL_TASK_CONTEXT_SRC="$ROOT_DIR/kernel/task/context_switch.asm"
 USER_HELLO_SRC="$ROOT_DIR/user/hello.asm"
+USER_HELLO_ELF_SRC="$ROOT_DIR/user/hello_elf.asm"
+USER_HELLO_ELF_LINKER_SCRIPT="$ROOT_DIR/user/hello_elf.ld"
 KERNEL_MAIN_SRC="$ROOT_DIR/kernel/core/kernel_main.cpp"
 KERNEL_CONSOLE_SRC="$ROOT_DIR/kernel/console/console.cpp"
 KERNEL_SHELL_SRC="$ROOT_DIR/kernel/shell/shell.cpp"
@@ -32,6 +34,7 @@ KERNEL_DIRECTORY_SRC="$ROOT_DIR/kernel/fs/directory.cpp"
 KERNEL_VFS_SRC="$ROOT_DIR/kernel/fs/vfs.cpp"
 KERNEL_FD_SRC="$ROOT_DIR/kernel/fs/fd.cpp"
 KERNEL_SYSCALL_SRC="$ROOT_DIR/kernel/syscall/syscall.cpp"
+KERNEL_ELF_LOADER_SRC="$ROOT_DIR/kernel/task/elf_loader.cpp"
 KERNEL_SCHEDULER_SRC="$ROOT_DIR/kernel/task/scheduler.cpp"
 KERNEL_LINKER_SCRIPT="$ROOT_DIR/kernel/boot/linker.ld"
 STAGE1_BIN="$BUILD_DIR/stage1.bin"
@@ -40,6 +43,9 @@ KERNEL_ENTRY_OBJ="$BUILD_DIR/entry64.o"
 KERNEL_INTERRUPT_STUBS_OBJ="$BUILD_DIR/interrupt_stubs.o"
 KERNEL_TASK_CONTEXT_OBJ="$BUILD_DIR/context_switch.o"
 USER_HELLO_BIN="$BUILD_DIR/hello.bin"
+USER_HELLO_ELF_OBJ="$BUILD_DIR/hello_elf.o"
+USER_HELLO_ELF_UNSTRIPPED="$BUILD_DIR/hello.unstripped.elf"
+USER_HELLO_ELF_BIN="$BUILD_DIR/hello.elf"
 KERNEL_MAIN_OBJ="$BUILD_DIR/kernel_main.o"
 KERNEL_CONSOLE_OBJ="$BUILD_DIR/console.o"
 KERNEL_SHELL_OBJ="$BUILD_DIR/shell.o"
@@ -61,6 +67,7 @@ KERNEL_DIRECTORY_OBJ="$BUILD_DIR/directory.o"
 KERNEL_VFS_OBJ="$BUILD_DIR/vfs.o"
 KERNEL_FD_OBJ="$BUILD_DIR/fd.o"
 KERNEL_SYSCALL_OBJ="$BUILD_DIR/syscall.o"
+KERNEL_ELF_LOADER_OBJ="$BUILD_DIR/elf_loader.o"
 KERNEL_SCHEDULER_OBJ="$BUILD_DIR/scheduler.o"
 KERNEL_ELF="$BUILD_DIR/kernel.elf"
 KERNEL_BIN="$BUILD_DIR/kernel.bin"
@@ -70,7 +77,7 @@ DISK_IMG="$BUILD_DIR/disk.img"
 IMAGE_SIZE=1474560
 STAGE2_EXPECTED_SIZE=4096
 KERNEL_START_SECTOR=10
-BOOT_VOLUME_SECTORS=4
+BOOT_VOLUME_SECTORS=128
 # Keep the preloaded boot volume away from the kernel image plus .bss.
 # It still stays below 2 MiB, so the early identity mapping can access it.
 BOOT_VOLUME_LOAD_ADDR=0x00080000
@@ -78,15 +85,23 @@ BOOT_VOLUME_LOAD_SEGMENT=0x8000
 BOOT_VOLUME_LOAD_OFFSET=0x0000
 BOOT_VOLUME_BYTES=$((BOOT_VOLUME_SECTORS * 512))
 OS64FS_VOLUME_NAME="os64-root"
-OS64FS_SIGNATURE="OS64FSV1"
-OS64FS_INODE_COUNT=7
-OS64FS_INODE_SIZE=32
-OS64FS_INODE_TABLE_START_SECTOR=1
-OS64FS_DATA_START_SECTOR=2
-OS64FS_DATA_SECTOR_COUNT=2
-OS64FS_DATA_BLOCK_SIZE=128
+OS64FS_SIGNATURE="OS64FSV3"
+OS64FS_INODE_COUNT=32
+OS64FS_INODE_SIZE=64
+OS64FS_INODE_BITMAP_START_SECTOR=1
+OS64FS_INODE_BITMAP_SECTOR_COUNT=1
+OS64FS_DATA_BITMAP_START_SECTOR=2
+OS64FS_DATA_BITMAP_SECTOR_COUNT=1
+OS64FS_INODE_TABLE_START_SECTOR=3
+OS64FS_INODE_TABLE_SECTOR_COUNT=4
+OS64FS_DATA_START_SECTOR=7
+OS64FS_DATA_SECTOR_COUNT=121
+OS64FS_DATA_BLOCK_SIZE=512
+OS64FS_DIRECTORY_ENTRY_SIZE=64
 OS64FS_ROOT_INODE=1
 OS64FS_INVALID_BLOCK=4294967295
+OS64FS_BIGFILE_NAME="big.txt"
+OS64FS_BIGFILE_BLOCK_COUNT=10
 OS64FS_README="os64fs readme: the 64-bit kernel now mounts a real read-only filesystem."
 OS64FS_NOTES="os64fs notes: next steps are write support, cache, and real disk drivers."
 OS64FS_GUIDE="os64fs guide: stage2 only preloads raw sectors. the block device layer turns that memory into sector reads, and the filesystem layer resolves paths like docs/guide.txt inside the 64-bit kernel."
@@ -120,26 +135,53 @@ write_u8() {
   printf '%b' "\\$(printf '%03o' $(( value & 0xff )))"
 }
 
+write_bitmap_bit() {
+  local base_offset="$1"
+  local bit_index="$2"
+  local byte_offset=$((base_offset + bit_index / 8))
+  local bit_mask=$((1 << (bit_index % 8)))
+  local current_byte
+
+  current_byte="$(od -An -tu1 -N1 -j "$byte_offset" "$BOOT_VOLUME_BIN" | tr -d '[:space:]')"
+  if [ -z "$current_byte" ]; then
+    current_byte=0
+  fi
+
+  write_u8 $((current_byte | bit_mask)) | dd of="$BOOT_VOLUME_BIN" bs=1 seek="$byte_offset" conv=notrunc status=none
+}
+
 write_inode() {
   local base_offset="$1"
   local inode_number="$2"
   local type="$3"
   local link_count="$4"
   local size_bytes="$5"
-  local block0="$6"
-  local block1="$7"
-  local block2="$8"
-  local block3="$9"
+  local mode="$6"
+  local block_count="$7"
+  local indirect_block="$8"
 
   write_le32 "$inode_number" | dd of="$BOOT_VOLUME_BIN" bs=1 seek="$base_offset" conv=notrunc status=none
   write_le16 "$type" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 4)) conv=notrunc status=none
   write_le16 "$link_count" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 6)) conv=notrunc status=none
   write_le32 "$size_bytes" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 8)) conv=notrunc status=none
-  write_le32 "$block0" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 12)) conv=notrunc status=none
-  write_le32 "$block1" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 16)) conv=notrunc status=none
-  write_le32 "$block2" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 20)) conv=notrunc status=none
-  write_le32 "$block3" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 24)) conv=notrunc status=none
-  write_le32 0 | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 28)) conv=notrunc status=none
+  write_le32 "$mode" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 12)) conv=notrunc status=none
+
+  for block_slot in 0 1 2 3 4 5 6 7; do
+    write_le32 "$OS64FS_INVALID_BLOCK" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 16 + block_slot * 4)) conv=notrunc status=none
+  done
+
+  write_le32 "$indirect_block" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 48)) conv=notrunc status=none
+  write_le32 "$block_count" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 52)) conv=notrunc status=none
+  write_le32 0 | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 56)) conv=notrunc status=none
+  write_le32 0 | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 60)) conv=notrunc status=none
+}
+
+write_inode_direct_block() {
+  local base_offset="$1"
+  local block_slot="$2"
+  local block_index="$3"
+
+  write_le32 "$block_index" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 16 + block_slot * 4)) conv=notrunc status=none
 }
 
 write_dir_entry() {
@@ -179,6 +221,21 @@ nasm -f elf64 "$KERNEL_TASK_CONTEXT_SRC" -o "$KERNEL_TASK_CONTEXT_OBJ"
 
 echo "[extra] assembling user/hello.asm"
 nasm -f bin "$USER_HELLO_SRC" -o "$USER_HELLO_BIN"
+
+echo "[extra] assembling user/hello_elf.asm"
+nasm -f elf64 "$USER_HELLO_ELF_SRC" -o "$USER_HELLO_ELF_OBJ"
+
+echo "[extra] linking user/hello.elf"
+"$LD_BIN" \
+  -m elf_x86_64 \
+  -nostdlib \
+  -z max-page-size=0x8 \
+  -T "$USER_HELLO_ELF_LINKER_SCRIPT" \
+  -o "$USER_HELLO_ELF_UNSTRIPPED" \
+  "$USER_HELLO_ELF_OBJ"
+
+echo "[extra] stripping user/hello.elf"
+"$OBJCOPY_BIN" --strip-all "$USER_HELLO_ELF_UNSTRIPPED" "$USER_HELLO_ELF_BIN"
 
 # Compile the kernel with a freestanding x86_64-elf target so the host OS ABI does not leak in.
 echo "[5/34] compiling kernel_main.cpp"
@@ -577,6 +634,24 @@ echo "[26/34] compiling scheduler.cpp"
   -c "$KERNEL_SCHEDULER_SRC" \
   -o "$KERNEL_SCHEDULER_OBJ"
 
+echo "[extra] compiling elf_loader.cpp"
+"$CLANGXX_BIN" \
+  --target=x86_64-elf \
+  -I "$KERNEL_INCLUDE_DIR" \
+  -ffreestanding \
+  -fno-exceptions \
+  -fno-rtti \
+  -fno-stack-protector \
+  -fno-pic \
+  -mno-red-zone \
+  -mcmodel=kernel \
+  -O0 \
+  -Wall \
+  -Wextra \
+  $KERNEL_EXTRA_CXXFLAGS \
+  -c "$KERNEL_ELF_LOADER_SRC" \
+  -o "$KERNEL_ELF_LOADER_OBJ"
+
 # Link the kernel to a fixed address. For this learning round we intentionally keep it low
 # so stage2 can keep using the simplest BIOS CHS read path.
 echo "[27/34] linking kernel.elf"
@@ -608,6 +683,7 @@ echo "[27/34] linking kernel.elf"
   "$KERNEL_VFS_OBJ" \
   "$KERNEL_FD_OBJ" \
   "$KERNEL_SYSCALL_OBJ" \
+  "$KERNEL_ELF_LOADER_OBJ" \
   "$KERNEL_SCHEDULER_OBJ"
 
 # Stage2 wants a raw blob on disk, so we strip the ELF container and keep only the loadable bytes.
@@ -623,16 +699,46 @@ os64fs_readme_length="${#OS64FS_README}"
 os64fs_notes_length="${#OS64FS_NOTES}"
 os64fs_guide_length="${#OS64FS_GUIDE}"
 os64fs_hello_length="$(wc -c < "$USER_HELLO_BIN" | tr -d ' ')"
-os64fs_root_dir_bytes=$((3 * 32))
-os64fs_docs_dir_bytes=$((2 * 32))
+os64fs_hello_elf_length="$(wc -c < "$USER_HELLO_ELF_BIN" | tr -d ' ')"
+os64fs_bigfile_tmp="$BUILD_DIR/os64fs_big.bin"
+truncate -s 0 "$os64fs_bigfile_tmp"
+for block_index in 0 1 2 3 4 5 6 7 8 9; do
+  block_char="$(printf "\\$(printf '%03o' $((65 + block_index)))")"
+  printf '%*s' "$OS64FS_DATA_BLOCK_SIZE" '' | tr ' ' "$block_char" >> "$os64fs_bigfile_tmp"
+done
+os64fs_bigfile_length="$(wc -c < "$os64fs_bigfile_tmp" | tr -d ' ')"
+os64fs_hello_elf_block_count="$(((os64fs_hello_elf_length + OS64FS_DATA_BLOCK_SIZE - 1) / OS64FS_DATA_BLOCK_SIZE))"
+os64fs_root_dir_bytes=$((3 * OS64FS_DIRECTORY_ENTRY_SIZE))
+os64fs_docs_dir_bytes=$((4 * OS64FS_DIRECTORY_ENTRY_SIZE))
+os64fs_inode_bitmap_offset=$((OS64FS_INODE_BITMAP_START_SECTOR * 512))
+os64fs_data_bitmap_offset=$((OS64FS_DATA_BITMAP_START_SECTOR * 512))
 os64fs_inode_table_offset=$((OS64FS_INODE_TABLE_START_SECTOR * 512))
 os64fs_data_offset=$((OS64FS_DATA_START_SECTOR * 512))
-os64fs_root_dir_offset=$((os64fs_data_offset + 0 * OS64FS_DATA_BLOCK_SIZE))
-os64fs_readme_offset=$((os64fs_data_offset + 1 * OS64FS_DATA_BLOCK_SIZE))
-os64fs_notes_offset=$((os64fs_data_offset + 2 * OS64FS_DATA_BLOCK_SIZE))
-os64fs_docs_dir_offset=$((os64fs_data_offset + 3 * OS64FS_DATA_BLOCK_SIZE))
-os64fs_guide_offset=$((os64fs_data_offset + 4 * OS64FS_DATA_BLOCK_SIZE))
-os64fs_hello_offset=$((os64fs_data_offset + 6 * OS64FS_DATA_BLOCK_SIZE))
+os64fs_total_data_blocks=$((OS64FS_DATA_SECTOR_COUNT * 512 / OS64FS_DATA_BLOCK_SIZE))
+os64fs_root_dir_block=0
+os64fs_readme_block=1
+os64fs_notes_block=2
+os64fs_docs_dir_block=3
+os64fs_guide_block=4
+os64fs_hello_block=5
+os64fs_hello_elf_first_block=6
+os64fs_bigfile_indirect_block=$((os64fs_hello_elf_first_block + os64fs_hello_elf_block_count))
+os64fs_bigfile_first_data_block=$((os64fs_bigfile_indirect_block + 1))
+os64fs_used_data_blocks=$((os64fs_bigfile_first_data_block + OS64FS_BIGFILE_BLOCK_COUNT))
+os64fs_root_dir_offset=$((os64fs_data_offset + os64fs_root_dir_block * OS64FS_DATA_BLOCK_SIZE))
+os64fs_readme_offset=$((os64fs_data_offset + os64fs_readme_block * OS64FS_DATA_BLOCK_SIZE))
+os64fs_notes_offset=$((os64fs_data_offset + os64fs_notes_block * OS64FS_DATA_BLOCK_SIZE))
+os64fs_docs_dir_offset=$((os64fs_data_offset + os64fs_docs_dir_block * OS64FS_DATA_BLOCK_SIZE))
+os64fs_guide_offset=$((os64fs_data_offset + os64fs_guide_block * OS64FS_DATA_BLOCK_SIZE))
+os64fs_hello_offset=$((os64fs_data_offset + os64fs_hello_block * OS64FS_DATA_BLOCK_SIZE))
+os64fs_hello_elf_offset=$((os64fs_data_offset + os64fs_hello_elf_first_block * OS64FS_DATA_BLOCK_SIZE))
+os64fs_bigfile_indirect_offset=$((os64fs_data_offset + os64fs_bigfile_indirect_block * OS64FS_DATA_BLOCK_SIZE))
+os64fs_bigfile_offset=$((os64fs_data_offset + os64fs_bigfile_first_data_block * OS64FS_DATA_BLOCK_SIZE))
+os64fs_indirect_pointer_count=$((OS64FS_DATA_BLOCK_SIZE / 4))
+os64fs_used_inode_count=8
+os64fs_allocatable_inode_count=$((OS64FS_INODE_COUNT - 1))
+os64fs_free_inode_count=$((os64fs_allocatable_inode_count - os64fs_used_inode_count))
+os64fs_free_data_blocks=$((os64fs_total_data_blocks - os64fs_used_data_blocks))
 
 if [ "$kernel_sectors" -le 0 ] || [ "$kernel_sectors" -gt "$max_kernel_sectors" ]; then
   # stage2 现在已经是“每轮只读 1 个扇区”的 CHS 循环，
@@ -644,46 +750,104 @@ fi
 
 if [ "$os64fs_readme_length" -gt "$OS64FS_DATA_BLOCK_SIZE" ] || \
    [ "$os64fs_notes_length" -gt "$OS64FS_DATA_BLOCK_SIZE" ] || \
-   [ "$os64fs_guide_length" -le "$OS64FS_DATA_BLOCK_SIZE" ] || \
-   [ "$os64fs_guide_length" -gt $((OS64FS_DATA_BLOCK_SIZE * 2)) ] || \
+   [ "$os64fs_guide_length" -le 0 ] || \
+   [ "$os64fs_guide_length" -gt "$OS64FS_DATA_BLOCK_SIZE" ] || \
    [ "$os64fs_hello_length" -le 0 ] || \
-   [ "$os64fs_hello_length" -gt "$OS64FS_DATA_BLOCK_SIZE" ]; then
+   [ "$os64fs_hello_length" -gt "$OS64FS_DATA_BLOCK_SIZE" ] || \
+   [ "$os64fs_hello_elf_length" -le 0 ] || \
+   [ "$os64fs_hello_elf_length" -gt $((OS64FS_DATA_BLOCK_SIZE * 4)) ] || \
+   [ "$os64fs_hello_elf_block_count" -le 0 ] || \
+   [ "$os64fs_hello_elf_block_count" -gt 8 ] || \
+   [ "$os64fs_bigfile_length" -ne $((OS64FS_BIGFILE_BLOCK_COUNT * OS64FS_DATA_BLOCK_SIZE)) ] || \
+   [ "$os64fs_used_data_blocks" -gt "$os64fs_total_data_blocks" ]; then
   echo "os64fs file sizes do not match the planned data block layout" >&2
   exit 1
 fi
 
 echo "[29/34] generating boot_volume.bin"
+truncate -s 0 "$BOOT_VOLUME_BIN"
 truncate -s "$BOOT_VOLUME_BYTES" "$BOOT_VOLUME_BIN"
 printf '%s' "$OS64FS_SIGNATURE" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=0 conv=notrunc status=none
-write_le32 1 | dd of="$BOOT_VOLUME_BIN" bs=1 seek=8 conv=notrunc status=none
+write_le32 3 | dd of="$BOOT_VOLUME_BIN" bs=1 seek=8 conv=notrunc status=none
 write_le32 "$BOOT_VOLUME_SECTORS" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=12 conv=notrunc status=none
-write_le32 "$OS64FS_INODE_TABLE_START_SECTOR" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=16 conv=notrunc status=none
-write_le32 "$OS64FS_INODE_COUNT" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=20 conv=notrunc status=none
-write_le32 "$OS64FS_INODE_SIZE" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=24 conv=notrunc status=none
-write_le32 "$OS64FS_DATA_START_SECTOR" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=28 conv=notrunc status=none
-write_le32 "$OS64FS_DATA_SECTOR_COUNT" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=32 conv=notrunc status=none
-write_le32 "$OS64FS_DATA_BLOCK_SIZE" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=36 conv=notrunc status=none
-write_le32 "$OS64FS_ROOT_INODE" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=40 conv=notrunc status=none
-printf '%s' "$OS64FS_VOLUME_NAME" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=44 conv=notrunc status=none
+write_le32 "$OS64FS_INODE_BITMAP_START_SECTOR" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=16 conv=notrunc status=none
+write_le32 "$OS64FS_INODE_BITMAP_SECTOR_COUNT" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=20 conv=notrunc status=none
+write_le32 "$OS64FS_DATA_BITMAP_START_SECTOR" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=24 conv=notrunc status=none
+write_le32 "$OS64FS_DATA_BITMAP_SECTOR_COUNT" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=28 conv=notrunc status=none
+write_le32 "$OS64FS_INODE_TABLE_START_SECTOR" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=32 conv=notrunc status=none
+write_le32 "$OS64FS_INODE_TABLE_SECTOR_COUNT" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=36 conv=notrunc status=none
+write_le32 "$OS64FS_INODE_COUNT" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=40 conv=notrunc status=none
+write_le32 "$OS64FS_INODE_SIZE" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=44 conv=notrunc status=none
+write_le32 "$OS64FS_DATA_START_SECTOR" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=48 conv=notrunc status=none
+write_le32 "$OS64FS_DATA_SECTOR_COUNT" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=52 conv=notrunc status=none
+write_le32 "$OS64FS_DATA_BLOCK_SIZE" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=56 conv=notrunc status=none
+write_le32 "$OS64FS_ROOT_INODE" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=60 conv=notrunc status=none
+write_le32 "$OS64FS_DIRECTORY_ENTRY_SIZE" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=64 conv=notrunc status=none
+write_le32 "$os64fs_free_inode_count" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=68 conv=notrunc status=none
+write_le32 "$os64fs_free_data_blocks" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=72 conv=notrunc status=none
+printf '%s' "$OS64FS_VOLUME_NAME" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=76 conv=notrunc status=none
+write_le32 0 | dd of="$BOOT_VOLUME_BIN" bs=1 seek=88 conv=notrunc status=none
+write_le32 0 | dd of="$BOOT_VOLUME_BIN" bs=1 seek=92 conv=notrunc status=none
 
-write_inode $((os64fs_inode_table_offset + 0 * OS64FS_INODE_SIZE)) 0 0 0 0 0 0 0 0
-write_inode $((os64fs_inode_table_offset + 1 * OS64FS_INODE_SIZE)) 1 2 1 "$os64fs_root_dir_bytes" 0 "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK"
-write_inode $((os64fs_inode_table_offset + 2 * OS64FS_INODE_SIZE)) 2 1 1 "$os64fs_readme_length" 1 "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK"
-write_inode $((os64fs_inode_table_offset + 3 * OS64FS_INODE_SIZE)) 3 1 1 "$os64fs_notes_length" 2 "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK"
-write_inode $((os64fs_inode_table_offset + 4 * OS64FS_INODE_SIZE)) 4 2 1 "$os64fs_docs_dir_bytes" 3 "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK"
-write_inode $((os64fs_inode_table_offset + 5 * OS64FS_INODE_SIZE)) 5 1 1 "$os64fs_guide_length" 4 5 "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK"
-write_inode $((os64fs_inode_table_offset + 6 * OS64FS_INODE_SIZE)) 6 1 1 "$os64fs_hello_length" 6 "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK"
+write_inode $((os64fs_inode_table_offset + 0 * OS64FS_INODE_SIZE)) 0 0 0 0 0 0 "$OS64FS_INVALID_BLOCK"
+write_inode $((os64fs_inode_table_offset + 1 * OS64FS_INODE_SIZE)) 1 2 1 "$os64fs_root_dir_bytes" 493 1 "$OS64FS_INVALID_BLOCK"
+write_inode_direct_block $((os64fs_inode_table_offset + 1 * OS64FS_INODE_SIZE)) 0 "$os64fs_root_dir_block"
+write_inode $((os64fs_inode_table_offset + 2 * OS64FS_INODE_SIZE)) 2 1 1 "$os64fs_readme_length" 420 1 "$OS64FS_INVALID_BLOCK"
+write_inode_direct_block $((os64fs_inode_table_offset + 2 * OS64FS_INODE_SIZE)) 0 "$os64fs_readme_block"
+write_inode $((os64fs_inode_table_offset + 3 * OS64FS_INODE_SIZE)) 3 1 1 "$os64fs_notes_length" 420 1 "$OS64FS_INVALID_BLOCK"
+write_inode_direct_block $((os64fs_inode_table_offset + 3 * OS64FS_INODE_SIZE)) 0 "$os64fs_notes_block"
+write_inode $((os64fs_inode_table_offset + 4 * OS64FS_INODE_SIZE)) 4 2 1 "$os64fs_docs_dir_bytes" 493 1 "$OS64FS_INVALID_BLOCK"
+write_inode_direct_block $((os64fs_inode_table_offset + 4 * OS64FS_INODE_SIZE)) 0 "$os64fs_docs_dir_block"
+write_inode $((os64fs_inode_table_offset + 5 * OS64FS_INODE_SIZE)) 5 1 1 "$os64fs_guide_length" 420 1 "$OS64FS_INVALID_BLOCK"
+write_inode_direct_block $((os64fs_inode_table_offset + 5 * OS64FS_INODE_SIZE)) 0 "$os64fs_guide_block"
+write_inode $((os64fs_inode_table_offset + 6 * OS64FS_INODE_SIZE)) 6 1 1 "$os64fs_hello_length" 493 1 "$OS64FS_INVALID_BLOCK"
+write_inode_direct_block $((os64fs_inode_table_offset + 6 * OS64FS_INODE_SIZE)) 0 "$os64fs_hello_block"
+write_inode $((os64fs_inode_table_offset + 7 * OS64FS_INODE_SIZE)) 7 1 1 "$os64fs_hello_elf_length" 493 "$os64fs_hello_elf_block_count" "$OS64FS_INVALID_BLOCK"
+for hello_elf_block_slot in 0 1 2 3 4 5 6 7; do
+  if [ "$hello_elf_block_slot" -ge "$os64fs_hello_elf_block_count" ]; then
+    break
+  fi
+  write_inode_direct_block $((os64fs_inode_table_offset + 7 * OS64FS_INODE_SIZE)) "$hello_elf_block_slot" $((os64fs_hello_elf_first_block + hello_elf_block_slot))
+done
+write_inode $((os64fs_inode_table_offset + 8 * OS64FS_INODE_SIZE)) 8 1 1 "$os64fs_bigfile_length" 420 "$OS64FS_BIGFILE_BLOCK_COUNT" "$os64fs_bigfile_indirect_block"
+for big_direct_slot in 0 1 2 3 4 5 6 7; do
+  write_inode_direct_block $((os64fs_inode_table_offset + 8 * OS64FS_INODE_SIZE)) "$big_direct_slot" $((os64fs_bigfile_first_data_block + big_direct_slot))
+done
 
 write_dir_entry "$os64fs_root_dir_offset" 2 1 "readme.txt"
-write_dir_entry $((os64fs_root_dir_offset + 32)) 3 1 "notes.txt"
-write_dir_entry $((os64fs_root_dir_offset + 64)) 4 2 "docs"
+write_dir_entry $((os64fs_root_dir_offset + OS64FS_DIRECTORY_ENTRY_SIZE)) 3 1 "notes.txt"
+write_dir_entry $((os64fs_root_dir_offset + OS64FS_DIRECTORY_ENTRY_SIZE * 2)) 4 2 "docs"
 write_dir_entry "$os64fs_docs_dir_offset" 5 1 "guide.txt"
-write_dir_entry $((os64fs_docs_dir_offset + 32)) 6 1 "hello.bin"
+write_dir_entry $((os64fs_docs_dir_offset + OS64FS_DIRECTORY_ENTRY_SIZE)) 6 1 "hello.bin"
+write_dir_entry $((os64fs_docs_dir_offset + OS64FS_DIRECTORY_ENTRY_SIZE * 2)) 7 1 "hello.elf"
+write_dir_entry $((os64fs_docs_dir_offset + OS64FS_DIRECTORY_ENTRY_SIZE * 3)) 8 1 "$OS64FS_BIGFILE_NAME"
 
 printf '%s' "$OS64FS_README" | dd of="$BOOT_VOLUME_BIN" bs=1 seek="$os64fs_readme_offset" conv=notrunc status=none
 printf '%s' "$OS64FS_NOTES" | dd of="$BOOT_VOLUME_BIN" bs=1 seek="$os64fs_notes_offset" conv=notrunc status=none
 printf '%s' "$OS64FS_GUIDE" | dd of="$BOOT_VOLUME_BIN" bs=1 seek="$os64fs_guide_offset" conv=notrunc status=none
 dd if="$USER_HELLO_BIN" of="$BOOT_VOLUME_BIN" bs=1 seek="$os64fs_hello_offset" conv=notrunc status=none
+dd if="$USER_HELLO_ELF_BIN" of="$BOOT_VOLUME_BIN" bs=1 seek="$os64fs_hello_elf_offset" conv=notrunc status=none
+dd if="$os64fs_bigfile_tmp" of="$BOOT_VOLUME_BIN" bs=1 seek="$os64fs_bigfile_offset" conv=notrunc status=none
+
+indirect_slot=0
+while [ "$indirect_slot" -lt "$os64fs_indirect_pointer_count" ]; do
+  write_le32 "$OS64FS_INVALID_BLOCK" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((os64fs_bigfile_indirect_offset + indirect_slot * 4)) conv=notrunc status=none
+  indirect_slot=$((indirect_slot + 1))
+done
+write_le32 $((os64fs_bigfile_first_data_block + 8)) | dd of="$BOOT_VOLUME_BIN" bs=1 seek="$os64fs_bigfile_indirect_offset" conv=notrunc status=none
+write_le32 $((os64fs_bigfile_first_data_block + 9)) | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((os64fs_bigfile_indirect_offset + 4)) conv=notrunc status=none
+
+# v3 开始把“谁被占用、谁空闲”显式写进位图。
+# 这一步虽然还没有真正的写支持，但挂载时已经能按正式文件系统的思路做一致性校验。
+for inode_bit in 0 1 2 3 4 5 6 7 8; do
+  write_bitmap_bit "$os64fs_inode_bitmap_offset" "$inode_bit"
+done
+
+data_block_bit=0
+while [ "$data_block_bit" -lt "$os64fs_used_data_blocks" ]; do
+  write_bitmap_bit "$os64fs_data_bitmap_offset" "$data_block_bit"
+  data_block_bit=$((data_block_bit + 1))
+done
 
 # Stage2 needs to know how many sectors to read and what fixed address the kernel expects.
 echo "[30/34] generating kernel metadata for stage2"

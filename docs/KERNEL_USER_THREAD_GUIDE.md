@@ -1,5 +1,12 @@
 # 从“第一次真正进入用户态”到“第一版 scheduler-managed user thread”
 
+先给你一个阅读定位提醒：
+
+> 这篇讲的是“第一版由 scheduler 管起来的 user thread 骨架”。
+> 当时这条线程跑的还是内核里内嵌的测试用户程序。
+> 当前仓库后面又继续往前走了一步，已经把 `/docs/hello.elf` 也正式接进了 scheduler；
+> 读完这篇以后，下一篇建议接着看 `KERNEL_SCHEDULER_ELF_THREAD_GUIDE.md`。
+
 上一轮你已经做到了：
 
 ```text

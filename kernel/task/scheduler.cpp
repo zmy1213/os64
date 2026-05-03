@@ -78,6 +78,10 @@ bool is_user_thread_ready_to_enter(const ThreadControlBlock* thread) {
          thread->user_mode.user_stack_selector != 0;
 }
 
+bool page_is_directly_accessible_in_boot_identity_map(uint64_t physical_address) {
+  return physical_address != 0 && physical_address < kPagingBootIdentityLimit;
+}
+
 uint64_t scheduler_kernel_root_physical(const SchedulerState* scheduler) {
   if (scheduler != nullptr &&
       scheduler->processes[0].in_use &&
@@ -501,6 +505,15 @@ bool scheduler_is_ready(const SchedulerState* scheduler) {
   return scheduler != nullptr && scheduler->ready;
 }
 
+bool scheduler_set_active(SchedulerState* scheduler) {
+  if (scheduler != nullptr && !scheduler_is_ready(scheduler)) {
+    return false;
+  }
+
+  g_active_scheduler = scheduler;
+  return true;
+}
+
 ProcessControlBlock* scheduler_create_kernel_process(
     SchedulerState* scheduler,
     const char* name) {
@@ -574,6 +587,97 @@ bool scheduler_initialize_process_syscall_view(
     return false;
   }
 
+  return true;
+}
+
+bool scheduler_create_user_elf_thread(
+    SchedulerState* scheduler,
+    PageAllocator* allocator,
+    const Os64Fs* filesystem,
+    const VfsMount* vfs,
+    SyscallWriteHandler write_handler,
+    void* write_context,
+    const char* process_name,
+    const char* thread_name,
+    const char* elf_path,
+    uint64_t user_stack_pointer,
+    uint64_t user_rflags,
+    ThreadPriority priority,
+    SchedulerElfThreadLoadResult* out_result) {
+  if (!scheduler_is_ready(scheduler) ||
+      allocator == nullptr ||
+      filesystem == nullptr ||
+      !vfs_is_mounted(vfs) ||
+      elf_path == nullptr ||
+      elf_path[0] == '\0' ||
+      user_stack_pointer == 0 ||
+      out_result == nullptr ||
+      !is_runnable_priority(priority)) {
+    return false;
+  }
+
+  memory_set(out_result, 0, sizeof(*out_result));
+
+  // 这一轮第一次把“正式 ELF 文件”直接推进到 scheduler 持有的 process/thread 上。
+  // 调用方不需要再自己手工做：
+  // 1. create user process
+  // 2. 初始化 syscall/fd/cwd 视图
+  // 3. 把 ELF 段装进这份进程地址空间
+  // 4. 再单独补一页用户栈
+  // 5. 最后创建 user thread
+  ProcessControlBlock* const process =
+      scheduler_create_user_process(scheduler, allocator, process_name);
+  if (process == nullptr ||
+      !scheduler_initialize_process_syscall_view(process, vfs,
+                                                 write_handler,
+                                                 write_context)) {
+    return false;
+  }
+
+  LoadedUserElfProgram program;
+  memory_set(&program, 0, sizeof(program));
+  if (!load_elf_user_program(allocator, &process->address_space,
+                             filesystem, elf_path, &program)) {
+    return false;
+  }
+
+  const uint64_t stack_physical_page = alloc_page(allocator);
+  if (!page_is_directly_accessible_in_boot_identity_map(stack_physical_page)) {
+    return false;
+  }
+
+  memory_set(reinterpret_cast<void*>(
+                 static_cast<uintptr_t>(stack_physical_page)),
+             0,
+             kPagingPageSize);
+
+  // 这里先继续保持“1 条线程只有 1 页初始用户栈”的教学布局。
+  // 当前调用方传进来的通常是那一页顶端，例如 0x800000。
+  // 所以真正要映射的是它下面那页页框起点。
+  const uint64_t stack_page_virtual_address =
+      align_down(user_stack_pointer - 1, kPagingPageSize);
+  if (!address_space_map_user_page(&process->address_space, allocator,
+                                   stack_page_virtual_address,
+                                   stack_physical_page,
+                                   kPageWritable)) {
+    return false;
+  }
+
+  ThreadControlBlock* const thread =
+      scheduler_create_user_thread(scheduler, process, allocator,
+                                   thread_name,
+                                   program.entry_point,
+                                   user_stack_pointer,
+                                   user_rflags,
+                                   priority);
+  if (thread == nullptr) {
+    return false;
+  }
+
+  out_result->process = process;
+  out_result->thread = thread;
+  memory_copy(&out_result->program, &program, sizeof(program));
+  out_result->stack_physical_page = stack_physical_page;
   return true;
 }
 

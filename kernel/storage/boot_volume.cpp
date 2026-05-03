@@ -19,7 +19,7 @@ bool initialize_boot_volume(BootVolume* volume, const BootInfo* boot_info) {
     return false;
   }
 
-  volume->base = reinterpret_cast<const uint8_t*>(
+  volume->base = reinterpret_cast<uint8_t*>(
       static_cast<uintptr_t>(boot_info->boot_volume_ptr));
   volume->start_lba = boot_info->boot_volume_start_lba;
   volume->sector_count = boot_info->boot_volume_sector_count;
@@ -50,5 +50,18 @@ bool boot_volume_read_sector(const BootVolume* volume, uint32_t sector_index,
 
   const uint32_t byte_offset = sector_index * volume->sector_size;
   memory_copy(buffer, volume->base + byte_offset, volume->sector_size);
+  return true;
+}
+
+bool boot_volume_write_sector(BootVolume* volume, uint32_t sector_index,
+                              const void* buffer, size_t buffer_size) {
+  if (!boot_volume_is_ready(volume) || buffer == nullptr ||
+      buffer_size < volume->sector_size ||
+      sector_index >= volume->sector_count) {
+    return false;
+  }
+
+  const uint32_t byte_offset = sector_index * volume->sector_size;
+  memory_copy(volume->base + byte_offset, buffer, volume->sector_size);
   return true;
 }

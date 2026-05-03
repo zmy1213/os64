@@ -47,7 +47,7 @@ bool directory_open(const Os64Fs* filesystem, const char* path,
   }
 
   out_handle->filesystem = filesystem;
-  out_handle->inode = inode;
+  memory_copy(&out_handle->inode, &inode, sizeof(inode));
   out_handle->next_entry_index = 0;
   out_handle->entry_count =
       os64fs_directory_entry_count(filesystem, &inode);

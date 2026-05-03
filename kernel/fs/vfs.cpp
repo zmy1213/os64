@@ -25,8 +25,11 @@ bool copy_file_stat_to_vfs_stat(const FileStat* source, VfsStat* out_stat) {
   out_stat->type = to_vfs_node_type(source->type);
   out_stat->link_count = source->link_count;
   out_stat->size_bytes = source->size_bytes;
+  out_stat->mode = source->mode;
+  out_stat->block_count = source->block_count;
+  out_stat->indirect_block = source->indirect_block;
 
-  for (size_t i = 0; i < 4; ++i) {
+  for (size_t i = 0; i < kVfsDirectBlockCount; ++i) {
     out_stat->direct_blocks[i] = source->direct_blocks[i];
   }
 
@@ -58,7 +61,7 @@ bool copy_directory_entry_to_vfs_entry(const DirectoryEntry* source,
 
 }  // namespace
 
-bool initialize_vfs(VfsMount* mount, const Os64Fs* filesystem) {
+bool initialize_vfs(VfsMount* mount, Os64Fs* filesystem) {
   if (mount == nullptr) {
     return false;
   }
@@ -226,4 +229,40 @@ uint32_t vfs_tell_directory(const VfsDirectory* directory) {
   }
 
   return directory_tell(&directory->handle);
+}
+
+bool vfs_create_file(VfsMount* mount, const char* path) {
+  return vfs_is_mounted(mount) &&
+         path != nullptr &&
+         os64fs_create_file(mount->os64fs, path);
+}
+
+bool vfs_create_directory(VfsMount* mount, const char* path) {
+  return vfs_is_mounted(mount) &&
+         path != nullptr &&
+         os64fs_create_directory(mount->os64fs, path);
+}
+
+bool vfs_write_file(VfsMount* mount, const char* path,
+                    const void* buffer, size_t bytes_to_write) {
+  return vfs_is_mounted(mount) &&
+         path != nullptr &&
+         os64fs_write_file(mount->os64fs, path, buffer, bytes_to_write);
+}
+
+bool vfs_append_file(VfsMount* mount, const char* path,
+                     const void* buffer, size_t bytes_to_write) {
+  return vfs_is_mounted(mount) &&
+         path != nullptr &&
+         os64fs_append_file(mount->os64fs, path, buffer, bytes_to_write);
+}
+
+bool vfs_unlink(VfsMount* mount, const char* path) {
+  return vfs_is_mounted(mount) &&
+         path != nullptr &&
+         os64fs_unlink(mount->os64fs, path);
+}
+
+bool vfs_sync(VfsMount* mount) {
+  return vfs_is_mounted(mount) && os64fs_sync(mount->os64fs);
 }

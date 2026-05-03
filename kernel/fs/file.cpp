@@ -13,8 +13,11 @@ bool copy_inode_to_stat(const Os64FsInode* inode, FileStat* out_stat) {
   out_stat->type = inode->type;
   out_stat->link_count = inode->link_count;
   out_stat->size_bytes = inode->size_bytes;
+  out_stat->mode = inode->mode;
+  out_stat->block_count = inode->block_count;
+  out_stat->indirect_block = inode->indirect_block;
 
-  for (size_t i = 0; i < 4; ++i) {
+  for (size_t i = 0; i < kOs64FsDirectBlockCount; ++i) {
     out_stat->direct_blocks[i] = inode->direct_blocks[i];
   }
 
@@ -42,7 +45,7 @@ bool file_open(const Os64Fs* filesystem, const char* path,
   }
 
   out_handle->filesystem = filesystem;
-  out_handle->inode = inode;
+  memory_copy(&out_handle->inode, &inode, sizeof(inode));
   out_handle->offset = 0;
   out_handle->open = true;
   return true;

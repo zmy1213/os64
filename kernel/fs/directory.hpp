@@ -6,7 +6,8 @@
 
 #include "fs/os64fs.hpp"
 
-constexpr size_t kDirectoryEntryNameCapacity = 24;  // 和 OS64FS v1 的目录项名字容量保持一致。
+constexpr size_t kDirectoryEntryNameCapacity = kOs64FsDirectoryEntryNameCapacity;
+                                                    // 目录句柄层直接跟随底层目录项名字容量一起升级。
 
 // DirectoryEntry 是给上层看的目录项。
 // 它把底层 Os64FsDirEntry 包了一层，并顺手带上目标 inode 的大小，方便 `ls` 直接展示。

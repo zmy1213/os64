@@ -10,7 +10,7 @@
 // 这样文件系统以后只需要面对“按扇区读一个块设备”，
 // 而不用知道数据到底来自 stage2 预读内存、ATA、AHCI，还是别的驱动。
 struct BlockDevice {
-  const void* context;    // 真正的数据来源对象，这一轮会指向 BootVolume。
+  void* context;          // 真正的数据来源对象，这一轮会指向 BootVolume；写路径也会复用同一个上下文对象。
   uint32_t start_lba;     // 这个块设备在原始介质里的起始 LBA。
   uint32_t sector_count;  // 这个块设备一共有多少个扇区。
   uint16_t sector_size;   // 每个扇区大小，当前仍然是 512 字节。
@@ -21,13 +21,19 @@ struct BlockDevice {
                       uint32_t sector_index,
                       void* buffer,
                       size_t buffer_size);
+  bool (*write_sector)(void* context,
+                       uint32_t sector_index,
+                       const void* buffer,
+                       size_t buffer_size);
 };
 
 bool initialize_block_device_from_boot_volume(BlockDevice* device,
-                                              const BootVolume* volume);
+                                              BootVolume* volume);
 bool block_device_is_ready(const BlockDevice* device);
 uint64_t block_device_total_bytes(const BlockDevice* device);
 bool block_device_read_sector(const BlockDevice* device, uint32_t sector_index,
                               void* buffer, size_t buffer_size);
+bool block_device_write_sector(BlockDevice* device, uint32_t sector_index,
+                               const void* buffer, size_t buffer_size);
 
 #endif

@@ -7,6 +7,7 @@
 
 #include "memory/address_space.hpp"
 #include "syscall/syscall.hpp"
+#include "task/elf_loader.hpp"
 #include "task/user_mode.hpp"
 
 // 第一版 tasking 先故意保守一点：
@@ -129,9 +130,22 @@ struct SchedulerState {
   ThreadControlBlock threads[kSchedulerMaxThreadCount];
 };
 
+// 这是把“ELF loader”和“scheduler/process/thread”真正接起来的第一版返回结构。
+// 它专门把这次用户 ELF 线程启动时最值得观察的几样东西带回来：
+// - 创建出来的 process / thread
+// - ELF loader 解析出的 entry / segment 信息
+// - 映射成用户栈的那张物理页
+struct SchedulerElfThreadLoadResult {
+  ProcessControlBlock* process;
+  ThreadControlBlock* thread;
+  LoadedUserElfProgram program;
+  uint64_t stack_physical_page;
+};
+
 bool initialize_scheduler(SchedulerState* scheduler,
                           uint32_t time_slice_ticks);
 bool scheduler_is_ready(const SchedulerState* scheduler);
+bool scheduler_set_active(SchedulerState* scheduler);
 
 ProcessControlBlock* scheduler_create_kernel_process(
     SchedulerState* scheduler,
@@ -145,6 +159,20 @@ bool scheduler_initialize_process_syscall_view(
     const VfsMount* vfs,
     SyscallWriteHandler write_handler,
     void* write_context);
+bool scheduler_create_user_elf_thread(
+    SchedulerState* scheduler,
+    PageAllocator* allocator,
+    const Os64Fs* filesystem,
+    const VfsMount* vfs,
+    SyscallWriteHandler write_handler,
+    void* write_context,
+    const char* process_name,
+    const char* thread_name,
+    const char* elf_path,
+    uint64_t user_stack_pointer,
+    uint64_t user_rflags,
+    ThreadPriority priority,
+    SchedulerElfThreadLoadResult* out_result);
 
 ThreadControlBlock* scheduler_create_kernel_thread(
     SchedulerState* scheduler,

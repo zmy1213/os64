@@ -80,18 +80,24 @@
    再继续往前，第一次真正准备用户代码页、用户栈页和 `iretq` 入口帧，真的落进 ring 3，再让用户代码用 `int 0x80` 打回内核。
 38. [从“第一次真正进入用户态”到“第一版从文件系统加载用户程序”](./KERNEL_USER_PROGRAM_LOADER_GUIDE.md)
    再继续往前，把“用户代码只能来自内核内嵌字节数组”推进成“用户程序第一次真的作为 `OS64FS` 里的文件被读出来、映射成用户代码页，再落进 ring 3 执行”。
-39. [从“第一版从文件系统加载用户程序”到“第一版 scheduler-managed user thread”](./KERNEL_USER_THREAD_GUIDE.md)
+39. [从“第一版从文件系统加载用户程序”到“第一版 ELF 用户程序装载器”](./KERNEL_USER_ELF_LOADER_GUIDE.md)
+   再继续往前，把“文件里的原始机器码”推进成“标准 ELF64 可执行文件”，让内核第一次真正解析 ELF header / program header，再按 PT_LOAD 把段映射进用户地址空间。
+40. [从“第一版 ELF 用户程序装载器”到“第一版 scheduler-managed user thread”](./KERNEL_USER_THREAD_GUIDE.md)
    再继续往前，把那次 `kernel_main` 亲自做的一次性 user mode smoke，升级成真正挂在 scheduler 下面的一条 user thread，并让 `exit` 正式回到调度器。
-40. [从“第一版 scheduler-managed user thread”到“每进程 syscall context / fd 视图”](./KERNEL_PROCESS_SYSCALL_CONTEXT_GUIDE.md)
+41. [从“第一版 scheduler-managed user thread”到“scheduler 正式接管 ELF 用户线程”](./KERNEL_SCHEDULER_ELF_THREAD_GUIDE.md)
+   再继续往前，把“已经会跑内嵌 user thread 的 scheduler”和“已经会解析 ELF 的 loader”真正接起来，让 `/docs/hello.elf` 第一次作为一条 scheduler-managed user thread 跑完退出。
+42. [从“scheduler 正式接管 ELF 用户线程”到“每进程 syscall context / fd 视图”](./KERNEL_PROCESS_SYSCALL_CONTEXT_GUIDE.md)
    再继续往前，把还挂在全局变量上的 syscall/fd 视图真正挂进 PCB，让 ring 3 代码通过“当前线程所属进程”拿到自己的 cwd、相对路径和文件句柄视图。
-41. [从“每进程 syscall context / fd 视图”到“正式 UserTrapFrame + 每用户线程内核进入栈 + user yield/resume”](./KERNEL_USER_TRAPFRAME_YIELD_GUIDE.md)
+43. [从“每进程 syscall context / fd 视图”到“正式 UserTrapFrame + 每用户线程内核进入栈 + user yield/resume”](./KERNEL_USER_TRAPFRAME_YIELD_GUIDE.md)
    再继续往前，把“能进 ring 3、也能拿到自己 syscall 视图”的 user thread，推进成“能在 syscall 里主动 yield、切去别的线程、再恢复回 ring 3 继续跑”，并正式把 trap frame 和 `TSS.rsp0` 这层机器现场做成可解释的数据结构。
-42. [从“正式 UserTrapFrame + user yield/resume”到“第一版 user timer preemption”](./KERNEL_USER_TIMER_PREEMPT_GUIDE.md)
+44. [从“正式 UserTrapFrame + user yield/resume”到“第一版 user timer preemption”](./KERNEL_USER_TIMER_PREEMPT_GUIDE.md)
    再继续往前，把“只能在 syscall 里主动让出 CPU”的 user thread，推进成“正在 ring 3 跑时也会被 timer IRQ 抢占，切去别的线程，再顺着 IRQ 返回链回到用户态继续跑”。
-43. [从“第一版 user timer preemption”到“调度器保存内核上下文时也保存 CR3”](./KERNEL_SCHEDULER_CR3_SWITCH_GUIDE.md)
+45. [从“第一版 user timer preemption”到“调度器保存内核上下文时也保存 CR3”](./KERNEL_SCHEDULER_CR3_SWITCH_GUIDE.md)
    再继续往前，把“已经能从 ring 3 被 IRQ 抢占”的 user thread 调度路径，从“只保存内核栈 RSP”推进成“保存 RSP + 保存/恢复对应 CR3”，让 helper kernel thread 在 user process 下面也能重新用普通 kernel heap 栈。
-44. [从“调度器保存内核上下文时也保存 CR3”到“用户态 `read(0)` 真正 block/wake”](./KERNEL_USER_STDIN_BLOCK_GUIDE.md)
+46. [从“调度器保存内核上下文时也保存 CR3”到“用户态 `read(0)` 真正 block/wake”](./KERNEL_USER_STDIN_BLOCK_GUIDE.md)
    再继续往前，把“已经能 yield / preempt / root-aware 恢复”的 user thread，推进成“在 ring 3 里发起 `read(0)` 时，真的会在 syscall 里 block，再由键盘 IRQ 唤醒回来”。
+47. [从第一版只读文件系统到带位图和一致性校验的 `OS64FS v3`](./KERNEL_OS64FS_V3_GUIDE.md)
+   这条是存储线的继续深化：文件系统开始显式维护 `inode/data bitmap`、卷级空闲统计，以及挂载期一致性校验，为后面的可写文件系统做地基。
 
 一句话记忆这个顺序：
 
@@ -118,6 +124,7 @@ stage1
 -> kernel object allocator + formal memory subsystem
 -> raw boot volume + block device entry
 -> first read-only filesystem
+-> OS64FS v3 with inode/data bitmaps and mount-time consistency validation
 -> kernel file handle layer
 -> kernel directory handle layer
 -> first VFS layer
@@ -135,7 +142,9 @@ stage1
 -> first per-process address-space skeleton + cloned page-table root
 -> first real ring 3 entry via iretq + int 0x80 back to kernel
 -> first user program loaded from the filesystem into a real user code page
+-> first ELF64 user program loaded from OS64FS via ELF header + PT_LOAD + ELF entry point
 -> first scheduler-managed user thread with exit back to scheduler
+-> first scheduler-managed ELF user thread loaded from OS64FS
 -> first per-process syscall context and fd view for user processes
 -> formal UserTrapFrame + dedicated per-user-thread kernel-entry stack + user yield/resume path
 -> first user timer preemption from ring3 back through the paused IRQ return path

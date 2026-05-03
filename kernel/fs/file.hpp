@@ -13,7 +13,11 @@ struct FileStat {
   uint16_t type;              // 当前对象类型：file 或 dir。
   uint16_t link_count;        // 当前 inode 的链接计数。
   uint32_t size_bytes;        // 文件内容大小，目录则是目录项区域大小。
-  uint32_t direct_blocks[4];  // v1 仍然保留 direct block 信息，方便继续观察底层布局。
+  uint32_t mode;              // 磁盘 inode 里的 mode 字段先也透出给上层，后面做权限模型时不用再改接口。
+  uint32_t block_count;       // 这份 inode 真正占了多少个数据块。
+  uint32_t indirect_block;    // 如果文件已经用到了单级间接块，这里会告诉上层是哪一块。
+  uint32_t direct_blocks[kOs64FsDirectBlockCount];
+                              // 继续保留 direct block 信息，方便 `stat` 观察底层布局。
 };
 
 // FileHandle 是“已经打开的文件”。

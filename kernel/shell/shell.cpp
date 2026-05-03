@@ -1,14 +1,18 @@
 #include "shell/shell.hpp"
 
 #include "console/console.hpp"
+#include "fs/os64fs.hpp"
 #include "interrupts/keyboard.hpp"
 #include "interrupts/pit.hpp"
 #include "runtime/runtime.hpp"
 #include "storage/boot_volume.hpp"
+#include "task/scheduler.hpp"
 
 namespace {
 
 constexpr size_t kShellListDirCapacity = 8;  // 当前教学文件系统很小，先用固定数组装目录项，保持实现简单可预测。
+constexpr uint64_t kShellRunUserStackTop = 0x0000000000800000ULL;  // 先继续复用当前教学内核统一的用户栈顶。
+constexpr uint64_t kShellRunDefaultUserRflags = 0x202ULL;          // bit1 恒为 1，并先把 IF 打开，让 shell 启动的用户程序也能继续接收外部 IRQ。
 
 struct CpuidResult {
   uint32_t eax;
@@ -136,12 +140,78 @@ size_t string_length(const char* text) {
   return length;
 }
 
+const char* path_leaf_name(const char* path) {
+  if (path == nullptr) {
+    return nullptr;
+  }
+
+  const char* leaf = path;
+  for (size_t i = 0; path[i] != '\0'; ++i) {
+    if (path[i] == '/') {
+      leaf = path + i + 1;
+    }
+  }
+
+  return (leaf[0] != '\0') ? leaf : path;
+}
+
 const char* trim_trailing_spaces(const char* begin, const char* end) {
   while (end > begin && is_space_char(end[-1])) {
     --end;
   }
 
   return end;
+}
+
+bool copy_text_slice(char* destination,
+                     size_t capacity,
+                     const char* begin,
+                     const char* end) {
+  if (destination == nullptr || begin == nullptr || end == nullptr ||
+      end < begin || capacity == 0) {
+    return false;
+  }
+
+  const size_t length = static_cast<size_t>(end - begin);
+  if (length >= capacity) {
+    return false;
+  }
+
+  for (size_t i = 0; i < length; ++i) {
+    destination[i] = begin[i];
+  }
+  destination[length] = '\0';
+  return true;
+}
+
+bool split_path_and_text(const char* arguments,
+                         char* out_path,
+                         size_t path_capacity,
+                         const char** out_text) {
+  if (arguments == nullptr || out_path == nullptr || path_capacity == 0 ||
+      out_text == nullptr) {
+    return false;
+  }
+
+  const char* path_begin = skip_spaces(arguments);
+  if (path_begin == nullptr || path_begin[0] == '\0') {
+    return false;
+  }
+
+  const char* path_end = path_begin;
+  while (path_end[0] != '\0' && !is_space_char(path_end[0])) {
+    ++path_end;
+  }
+
+  if (!copy_text_slice(out_path, path_capacity, path_begin, path_end)) {
+    return false;
+  }
+
+  *out_text = skip_spaces(path_end);
+  if (*out_text == nullptr) {
+    *out_text = path_end;
+  }
+  return true;
 }
 
 bool is_boot_info_valid(const BootInfo* boot_info) {
@@ -302,6 +372,20 @@ void handle_help_command(const ShellState* shell) {
   write_newline(shell);
   write_string(shell, "stat  - show inode metadata");
   write_newline(shell);
+  write_string(shell, "touch - create an empty file");
+  write_newline(shell);
+  write_string(shell, "mkdir - create a directory");
+  write_newline(shell);
+  write_string(shell, "write - replace a file with text");
+  write_newline(shell);
+  write_string(shell, "append - append text to a file");
+  write_newline(shell);
+  write_string(shell, "rm    - remove a file or empty dir");
+  write_newline(shell);
+  write_string(shell, "sync  - flush filesystem metadata");
+  write_newline(shell);
+  write_string(shell, "run   - load and start a user ELF from OS64FS");
+  write_newline(shell);
   write_string(shell, "irq   - show timer/keyboard irq stats");
   write_newline(shell);
   write_string(shell, "bootinfo - show boot handoff info");
@@ -397,6 +481,54 @@ void handle_disk_command(const ShellState* shell) {
 
   write_string(shell, "disk_total_bytes=");
   write_u64(shell, block_device_total_bytes(shell->block_device));
+  write_newline(shell);
+
+  if (shell->filesystem == nullptr || !os64fs_is_mounted(shell->filesystem)) {
+    return;
+  }
+
+  const Os64FsSuperblock* const superblock =
+      os64fs_superblock(shell->filesystem);
+  Os64FsStats stats;
+  if (superblock == nullptr ||
+      !os64fs_query_stats(shell->filesystem, &stats)) {
+    return;
+  }
+
+  write_string(shell, "disk_fs_version=");
+  write_u64(shell, superblock->version);
+  write_newline(shell);
+
+  write_string(shell, "disk_inode_bitmap_sectors=");
+  write_u64(shell, superblock->inode_bitmap_sector_count);
+  write_newline(shell);
+
+  write_string(shell, "disk_data_bitmap_sectors=");
+  write_u64(shell, superblock->data_bitmap_sector_count);
+  write_newline(shell);
+
+  write_string(shell, "disk_inode_total=");
+  write_u64(shell, stats.allocatable_inodes);
+  write_newline(shell);
+
+  write_string(shell, "disk_inode_used=");
+  write_u64(shell, stats.used_inodes);
+  write_newline(shell);
+
+  write_string(shell, "disk_inode_free=");
+  write_u64(shell, stats.free_inodes);
+  write_newline(shell);
+
+  write_string(shell, "disk_data_blocks=");
+  write_u64(shell, stats.total_data_blocks);
+  write_newline(shell);
+
+  write_string(shell, "disk_data_used=");
+  write_u64(shell, stats.used_data_blocks);
+  write_newline(shell);
+
+  write_string(shell, "disk_data_free=");
+  write_u64(shell, stats.free_data_blocks);
   write_newline(shell);
 }
 
@@ -685,18 +817,15 @@ void handle_stat_command(const ShellState* shell, const char* arguments) {
   write_u64(shell, stat.link_count);
   write_newline(shell);
 
-  uint32_t block_count = 0;
-  for (size_t block_index = 0; block_index < 4; ++block_index) {
-    if (stat.direct_blocks[block_index] != kVfsInvalidBlockIndex) {
-      ++block_count;
-    }
-  }
-
   write_string(shell, "stat_blocks=");
-  write_u64(shell, block_count);
+  write_u64(shell, stat.block_count);
   write_newline(shell);
 
-  for (size_t block_index = 0; block_index < 4; ++block_index) {
+  write_string(shell, "stat_mode=");
+  write_u64(shell, stat.mode);
+  write_newline(shell);
+
+  for (size_t block_index = 0; block_index < kVfsDirectBlockCount; ++block_index) {
     if (stat.direct_blocks[block_index] == kVfsInvalidBlockIndex) {
       continue;
     }
@@ -707,6 +836,378 @@ void handle_stat_command(const ShellState* shell, const char* arguments) {
     write_u64(shell, stat.direct_blocks[block_index]);
     write_newline(shell);
   }
+
+  if (stat.indirect_block != kVfsInvalidBlockIndex) {
+    write_string(shell, "stat_indirect_block=");
+    write_u64(shell, stat.indirect_block);
+    write_newline(shell);
+  }
+}
+
+void handle_touch_command(ShellState* shell, const char* arguments) {
+  if (shell == nullptr || shell->vfs == nullptr ||
+      !vfs_is_mounted(shell->vfs) ||
+      !syscall_context_is_ready(shell->syscall_context)) {
+    write_string(shell, "fs unavailable");
+    write_newline(shell);
+    return;
+  }
+
+  const char* path = skip_spaces(arguments);
+  if (path == nullptr || path[0] == '\0') {
+    write_string(shell, "usage: touch <path>");
+    write_newline(shell);
+    return;
+  }
+
+  char resolved_path[kSyscallPathCapacity];
+  if (!syscall_resolve_path(shell->syscall_context, path, resolved_path,
+                            sizeof(resolved_path))) {
+    write_string(shell, "touch path too long");
+    write_newline(shell);
+    return;
+  }
+
+  VfsStat existing;
+  const SyscallStatus status =
+      sys_stat_path(shell->syscall_context, path, &existing);
+  if (status == kSyscallOk) {
+    if (existing.type != kVfsNodeTypeFile) {
+      write_string(shell, "touch not a file: ");
+      write_string(shell, path);
+      write_newline(shell);
+      return;
+    }
+
+    write_string(shell, "touch_resolved_path=");
+    write_string(shell, resolved_path);
+    write_newline(shell);
+    write_string(shell, "touch_exists=1");
+    write_newline(shell);
+    return;
+  }
+
+  if (status != kSyscallNotFound || !vfs_create_file(shell->vfs, resolved_path)) {
+    write_string(shell, "touch failed: ");
+    write_string(shell, path);
+    write_newline(shell);
+    return;
+  }
+
+  write_string(shell, "touch_resolved_path=");
+  write_string(shell, resolved_path);
+  write_newline(shell);
+  write_string(shell, "touch_exists=0");
+  write_newline(shell);
+}
+
+void handle_mkdir_command(ShellState* shell, const char* arguments) {
+  if (shell == nullptr || shell->vfs == nullptr ||
+      !vfs_is_mounted(shell->vfs) ||
+      !syscall_context_is_ready(shell->syscall_context)) {
+    write_string(shell, "fs unavailable");
+    write_newline(shell);
+    return;
+  }
+
+  const char* path = skip_spaces(arguments);
+  if (path == nullptr || path[0] == '\0') {
+    write_string(shell, "usage: mkdir <path>");
+    write_newline(shell);
+    return;
+  }
+
+  char resolved_path[kSyscallPathCapacity];
+  if (!syscall_resolve_path(shell->syscall_context, path, resolved_path,
+                            sizeof(resolved_path))) {
+    write_string(shell, "mkdir path too long");
+    write_newline(shell);
+    return;
+  }
+
+  VfsStat existing;
+  if (sys_stat_path(shell->syscall_context, path, &existing) == kSyscallOk) {
+    write_string(shell, "mkdir exists: ");
+    write_string(shell, path);
+    write_newline(shell);
+    return;
+  }
+
+  if (!vfs_create_directory(shell->vfs, resolved_path)) {
+    write_string(shell, "mkdir failed: ");
+    write_string(shell, path);
+    write_newline(shell);
+    return;
+  }
+
+  write_string(shell, "mkdir_resolved_path=");
+  write_string(shell, resolved_path);
+  write_newline(shell);
+}
+
+void handle_write_command(ShellState* shell, const char* arguments) {
+  if (shell == nullptr || shell->vfs == nullptr ||
+      !vfs_is_mounted(shell->vfs) ||
+      !syscall_context_is_ready(shell->syscall_context)) {
+    write_string(shell, "fs unavailable");
+    write_newline(shell);
+    return;
+  }
+
+  char path[kSyscallPathCapacity];
+  const char* text = nullptr;
+  if (!split_path_and_text(arguments, path, sizeof(path), &text)) {
+    write_string(shell, "usage: write <path> <text>");
+    write_newline(shell);
+    return;
+  }
+
+  char resolved_path[kSyscallPathCapacity];
+  if (!syscall_resolve_path(shell->syscall_context, path, resolved_path,
+                            sizeof(resolved_path))) {
+    write_string(shell, "write path too long");
+    write_newline(shell);
+    return;
+  }
+
+  const size_t text_length = string_length(text);
+  if (!vfs_write_file(shell->vfs, resolved_path, text, text_length)) {
+    write_string(shell, "write failed: ");
+    write_string(shell, path);
+    write_newline(shell);
+    return;
+  }
+
+  write_string(shell, "write_resolved_path=");
+  write_string(shell, resolved_path);
+  write_newline(shell);
+  write_string(shell, "write_bytes=");
+  write_u64(shell, text_length);
+  write_newline(shell);
+}
+
+void handle_append_command(ShellState* shell, const char* arguments) {
+  if (shell == nullptr || shell->vfs == nullptr ||
+      !vfs_is_mounted(shell->vfs) ||
+      !syscall_context_is_ready(shell->syscall_context)) {
+    write_string(shell, "fs unavailable");
+    write_newline(shell);
+    return;
+  }
+
+  char path[kSyscallPathCapacity];
+  const char* text = nullptr;
+  if (!split_path_and_text(arguments, path, sizeof(path), &text)) {
+    write_string(shell, "usage: append <path> <text>");
+    write_newline(shell);
+    return;
+  }
+
+  char resolved_path[kSyscallPathCapacity];
+  if (!syscall_resolve_path(shell->syscall_context, path, resolved_path,
+                            sizeof(resolved_path))) {
+    write_string(shell, "append path too long");
+    write_newline(shell);
+    return;
+  }
+
+  const size_t text_length = string_length(text);
+  if (!vfs_append_file(shell->vfs, resolved_path, text, text_length)) {
+    write_string(shell, "append failed: ");
+    write_string(shell, path);
+    write_newline(shell);
+    return;
+  }
+
+  write_string(shell, "append_resolved_path=");
+  write_string(shell, resolved_path);
+  write_newline(shell);
+  write_string(shell, "append_bytes=");
+  write_u64(shell, text_length);
+  write_newline(shell);
+}
+
+void handle_rm_command(ShellState* shell, const char* arguments) {
+  if (shell == nullptr || shell->vfs == nullptr ||
+      !vfs_is_mounted(shell->vfs) ||
+      !syscall_context_is_ready(shell->syscall_context)) {
+    write_string(shell, "fs unavailable");
+    write_newline(shell);
+    return;
+  }
+
+  const char* path = skip_spaces(arguments);
+  if (path == nullptr || path[0] == '\0') {
+    write_string(shell, "usage: rm <path>");
+    write_newline(shell);
+    return;
+  }
+
+  char resolved_path[kSyscallPathCapacity];
+  if (!syscall_resolve_path(shell->syscall_context, path, resolved_path,
+                            sizeof(resolved_path))) {
+    write_string(shell, "rm path too long");
+    write_newline(shell);
+    return;
+  }
+
+  if (!vfs_unlink(shell->vfs, resolved_path)) {
+    write_string(shell, "rm failed: ");
+    write_string(shell, path);
+    write_newline(shell);
+    return;
+  }
+
+  write_string(shell, "rm_resolved_path=");
+  write_string(shell, resolved_path);
+  write_newline(shell);
+}
+
+void handle_sync_command(ShellState* shell) {
+  if (shell == nullptr || shell->vfs == nullptr ||
+      !vfs_is_mounted(shell->vfs)) {
+    write_string(shell, "fs unavailable");
+    write_newline(shell);
+    return;
+  }
+
+  if (!vfs_sync(shell->vfs)) {
+    write_string(shell, "sync failed");
+    write_newline(shell);
+    return;
+  }
+
+  write_string(shell, "sync ok");
+  write_newline(shell);
+}
+
+void handle_run_command(ShellState* shell, const char* arguments) {
+  if (shell == nullptr ||
+      shell->allocator == nullptr ||
+      shell->filesystem == nullptr ||
+      shell->vfs == nullptr ||
+      shell->scheduler == nullptr ||
+      !syscall_context_is_ready(shell->syscall_context) ||
+      !scheduler_is_ready(shell->scheduler) ||
+      !vfs_is_mounted(shell->vfs)) {
+    write_string(shell, "run unavailable");
+    write_newline(shell);
+    return;
+  }
+
+  const char* path = skip_spaces(arguments);
+  if (path == nullptr || path[0] == '\0') {
+    write_string(shell, "usage: run <path>");
+    write_newline(shell);
+    return;
+  }
+
+  char resolved_path[kSyscallPathCapacity];
+  if (!syscall_resolve_path(shell->syscall_context, path, resolved_path,
+                            sizeof(resolved_path))) {
+    write_string(shell, "run path too long");
+    write_newline(shell);
+    return;
+  }
+
+  VfsStat stat;
+  const SyscallStatus stat_status =
+      sys_stat_path(shell->syscall_context, path, &stat);
+  if (stat_status == kSyscallNotFound) {
+    write_string(shell, "run path not found: ");
+    write_string(shell, path);
+    write_newline(shell);
+    return;
+  }
+
+  if (stat_status != kSyscallOk || stat.type != kVfsNodeTypeFile) {
+    write_string(shell, "run not a file: ");
+    write_string(shell, path);
+    write_newline(shell);
+    return;
+  }
+
+  SchedulerElfThreadLoadResult launch_result;
+  memory_set(&launch_result, 0, sizeof(launch_result));
+  const char* const process_name = path_leaf_name(resolved_path);
+  if (!scheduler_create_user_elf_thread(
+          shell->scheduler,
+          shell->allocator,
+          shell->filesystem,
+          shell->vfs,
+          shell->syscall_context->write_handler,
+          shell->syscall_context->write_context,
+          process_name,
+          "main",
+          resolved_path,
+          kShellRunUserStackTop,
+          kShellRunDefaultUserRflags,
+          kThreadPriorityNormal,
+          &launch_result)) {
+    write_string(shell, "run load failed: ");
+    write_string(shell, resolved_path);
+    write_newline(shell);
+    return;
+  }
+
+  write_string(shell, "run_path=");
+  write_string(shell, path);
+  write_newline(shell);
+
+  write_string(shell, "run_resolved_path=");
+  write_string(shell, resolved_path);
+  write_newline(shell);
+
+  write_string(shell, "run_inode=");
+  write_u64(shell, launch_result.program.inode_number);
+  write_newline(shell);
+
+  write_string(shell, "run_pid=");
+  write_u64(shell, launch_result.process->pid);
+  write_newline(shell);
+
+  write_string(shell, "run_tid=");
+  write_u64(shell, launch_result.thread->tid);
+  write_newline(shell);
+
+  write_string(shell, "run_entry=0x");
+  write_hex64(shell, launch_result.program.entry_point);
+  write_newline(shell);
+
+  write_string(shell, "run_stack_top=0x");
+  write_hex64(shell, kShellRunUserStackTop);
+  write_newline(shell);
+
+  write_string(shell, "run_segment_count=");
+  write_u64(shell, launch_result.program.loadable_segment_count);
+  write_newline(shell);
+
+  write_string(shell, "run_page_count=");
+  write_u64(shell, launch_result.program.mapped_page_count);
+  write_newline(shell);
+
+  if (scheduler_current_thread(shell->scheduler) == nullptr) {
+    (void)scheduler_run_until_idle(shell->scheduler);
+  } else {
+    (void)scheduler_yield_current_thread();
+  }
+
+  if (launch_result.thread->state == kThreadStateFinished) {
+    const uint64_t return_value = launch_result.thread->user_mode.return_value;
+    write_string(shell, "run_return_flags=0x");
+    write_hex64(shell, return_value >> 16);
+    write_newline(shell);
+  }
+
+  write_string(shell, "run_process_state=");
+  write_string(shell,
+               scheduler_process_state_name(launch_result.process->state));
+  write_newline(shell);
+
+  write_string(shell, "run_thread_state=");
+  write_string(shell,
+               scheduler_thread_state_name(launch_result.thread->state));
+  write_newline(shell);
 }
 
 void handle_irq_command(const ShellState* shell) {
@@ -909,10 +1410,13 @@ void handle_history_command(const ShellState* shell) {
 
 bool initialize_shell(ShellState* shell,
                       const BootInfo* boot_info,
-                      const PageAllocator* allocator,
+                      PageAllocator* allocator,
                       const KernelHeap* heap,
                       const BootVolume* boot_volume,
                       const BlockDevice* block_device,
+                      const Os64Fs* filesystem,
+                      VfsMount* vfs,
+                      SchedulerState* scheduler,
                       SyscallContext* syscall_context,
                       const ShellOutput* output) {
   if (shell == nullptr || output == nullptr || output->write_char == nullptr ||
@@ -925,6 +1429,9 @@ bool initialize_shell(ShellState* shell,
   shell->heap = heap;
   shell->boot_volume = boot_volume;
   shell->block_device = block_device;
+  shell->filesystem = filesystem;
+  shell->vfs = vfs;
+  shell->scheduler = scheduler;
   shell->syscall_context = syscall_context;
   shell->output = *output;
   shell->history_count = 0;
@@ -1026,6 +1533,42 @@ ShellCommandResult shell_execute_line(ShellState* shell,
 
   if (command_matches(trimmed_line, "stat", &arguments)) {
     handle_stat_command(shell, arguments);
+    return kShellCommandExecuted;
+  }
+
+  if (command_matches(trimmed_line, "touch", &arguments)) {
+    handle_touch_command(shell, arguments);
+    return kShellCommandExecuted;
+  }
+
+  if (command_matches(trimmed_line, "mkdir", &arguments)) {
+    handle_mkdir_command(shell, arguments);
+    return kShellCommandExecuted;
+  }
+
+  if (command_matches(trimmed_line, "write", &arguments)) {
+    handle_write_command(shell, arguments);
+    return kShellCommandExecuted;
+  }
+
+  if (command_matches(trimmed_line, "append", &arguments)) {
+    handle_append_command(shell, arguments);
+    return kShellCommandExecuted;
+  }
+
+  if (command_matches(trimmed_line, "rm", &arguments)) {
+    handle_rm_command(shell, arguments);
+    return kShellCommandExecuted;
+  }
+
+  if (command_matches(trimmed_line, "sync", &arguments) &&
+      is_empty_after_trim(arguments)) {
+    handle_sync_command(shell);
+    return kShellCommandExecuted;
+  }
+
+  if (command_matches(trimmed_line, "run", &arguments)) {
+    handle_run_command(shell, arguments);
     return kShellCommandExecuted;
   }
 

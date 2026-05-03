@@ -10,12 +10,13 @@
 constexpr uint16_t kVfsNodeTypeFile = 1;       // VFS 上层看到的普通文件。
 constexpr uint16_t kVfsNodeTypeDirectory = 2;  // VFS 上层看到的目录。
 constexpr uint32_t kVfsInvalidBlockIndex = kOs64FsInvalidBlockIndex;
+constexpr size_t kVfsDirectBlockCount = kOs64FsDirectBlockCount;
 constexpr size_t kVfsDirectoryEntryNameCapacity = kDirectoryEntryNameCapacity;
 
 // VfsMount 表示“一个已经挂载进 VFS 的文件系统”。
 // 现在它只包一份 OS64FS；以后有多个文件系统时，这里会继续长出 ops 表。
 struct VfsMount {
-  const Os64Fs* os64fs;  // 第一版 VFS 先只挂载一个 OS64FS 根文件系统。
+  Os64Fs* os64fs;        // 第一版 VFS 先只挂载一个 OS64FS 根文件系统；现在上层已经能发起写操作，所以这里不再只读。
   bool mounted;          // true 表示 VFS 入口已经可用。
 };
 
@@ -26,7 +27,11 @@ struct VfsStat {
   uint16_t type;              // file 或 directory。
   uint16_t link_count;        // 链接计数。
   uint32_t size_bytes;        // 文件内容大小，目录则是目录项区域大小。
-  uint32_t direct_blocks[4];  // 先保留底层 direct block 信息，方便 `stat` 继续观察布局。
+  uint32_t mode;              // 透传底层 mode，后面做权限模型时上层接口不用再变。
+  uint32_t block_count;       // 这份文件/目录当前一共占用了多少个数据块。
+  uint32_t indirect_block;    // 如果已经用到了单级间接块，这里把块号一起透给上层。
+  uint32_t direct_blocks[kVfsDirectBlockCount];
+                              // 保留 direct block 信息，方便 `stat` 继续观察布局。
 };
 
 // VfsFile 是 VFS 层的打开文件对象。
@@ -50,7 +55,7 @@ struct VfsDirectoryEntry {
   uint32_t size_bytes;
 };
 
-bool initialize_vfs(VfsMount* mount, const Os64Fs* filesystem);
+bool initialize_vfs(VfsMount* mount, Os64Fs* filesystem);
 bool vfs_is_mounted(const VfsMount* mount);
 const char* vfs_node_type_name(uint16_t type);
 
@@ -74,5 +79,13 @@ bool vfs_read_directory(VfsDirectory* directory,
                         VfsDirectoryEntry* out_entry);
 bool vfs_rewind_directory(VfsDirectory* directory);
 uint32_t vfs_tell_directory(const VfsDirectory* directory);
+bool vfs_create_file(VfsMount* mount, const char* path);
+bool vfs_create_directory(VfsMount* mount, const char* path);
+bool vfs_write_file(VfsMount* mount, const char* path,
+                    const void* buffer, size_t bytes_to_write);
+bool vfs_append_file(VfsMount* mount, const char* path,
+                     const void* buffer, size_t bytes_to_write);
+bool vfs_unlink(VfsMount* mount, const char* path);
+bool vfs_sync(VfsMount* mount);
 
 #endif

@@ -140,6 +140,9 @@ make clean
 - `user mode ok`
 - `user_file_program=hello from fs`
 - `user_file_program ok`
+- `user_elf_program=hello from elf`
+- `user_elf_program ok`
+- `scheduler_elf_thread ok`
 - `filesystem ok`
 - `file_layer ok`
 - `directory_layer ok`
@@ -161,6 +164,7 @@ make clean
 - `user_thread_helper_resume_root=0x...`
 - `user_thread_stdin_done_flag=1`
 - `ls[1]=file hello.bin size=87`
+- `ls[2]=file hello.elf size=424`
 - `shell ok`
 - `shell_process_pid=6`
 - `shell_thread_tid=13`
@@ -243,6 +247,11 @@ os64>
 - `stage2` 会先把一小段 `boot volume` 从启动介质读进内存
 - `BootInfo` 会把这段原始块区的位置和扇区信息交给 64 位内核
 - kernel 里现在已经有 `BootVolume -> BlockDevice -> OS64FS` 这条读路径
+- `OS64FS` 这条线现在又从前一版只读布局升级到了 `OS64FS v3`
+- `OS64FS v3` 现在已经明确拆成：`superblock + inode bitmap + data bitmap + inode table + data area`
+- 挂载文件系统时，内核现在不只会“把结构读出来”，还会做一次最小一致性校验，检查位图和 inode 实际占用是否一致
+- shell 里的 `disk` 命令现在也不只会显示总字节数，还会显示 `inode/data block` 的已用和空闲统计
+- 这意味着当前文件系统虽然仍然是只读的，但已经开始具备更接近正式系统的“资源分配元数据骨架”
 - kernel 里又在 `OS64FS` 上面补了 `FileHandle` 文件句柄层
 - kernel 里还在 `OS64FS` 上面补了 `DirectoryHandle` 目录句柄层
 - kernel 里现在又在文件句柄和目录句柄上面补了第一版 `VFS`
@@ -263,7 +272,10 @@ os64>
 - 当前调度模型还不是“完整抢占式内核”：大多数 kernel thread 仍然主要在 `timer_wait_ticks` / `console_read_line_with_history` / `sys_read(stdin)` 这种安全点切换；但 user thread 这条路径已经能在 ring 3 被 timer IRQ 抢占，并沿着 IRQ 返回链切去别的线程再回来
 - kernel 里现在已经第一次真正进入 ring 3：内核会克隆一份用户地址空间、映射 1 页用户代码和 1 页用户栈、用 `iretq` 落进用户态，再让用户代码用 `int 0x80` 调回现有 syscall 路径
 - 这一步现在还只是教学型 smoke test，不是完整用户进程模型；它主要证明 `ring 0 -> ring 3 -> ring 0` 的链路已经打通
+- kernel 里现在已经能把 `/docs/hello.bin` 当成 flat binary 用户程序装进用户地址空间，再真正落进 ring 3 执行
+- kernel 里现在又往前走了一步：已经能把 `/docs/hello.elf` 当成真正的 `ELF64` 可执行文件来解析，读出 `entry` 和 `PT_LOAD`，再装进用户地址空间运行
 - kernel 里现在又往前走了一步：这次用户态不再只是 `kernel_main` 自己手工调一次，而是已经能作为第一版 `user thread` 挂进 scheduler，由 scheduler 切它进 ring 3，再在 `exit` 后正式把线程回收到 `finished`
+- 现在这两条线已经第一次真正接起来了：scheduler 不只会跑内嵌测试程序，也已经能创建 user process、装入 `/docs/hello.elf`，再把 ELF entry 当成一条正式 user thread 跑完退出
 - 这一步里专门避开了一个很典型的坑：user thread 的 kernel-resume 栈现在先放在 low identity-mapped 页上，避免切到 cloned user root 之后当前内核栈突然失去映射
 - kernel 里现在又把 `FileDescriptorTable + SyscallContext` 正式挂进 `ProcessControlBlock`，让“每进程自己的 cwd/fd/syscall 视图”第一次真正落地
 - `int 0x80` 分发现在如果正跑在线程上下文里，会优先取“当前线程所属进程”的 `syscall_context`，不再先信任全局默认上下文
@@ -276,6 +288,10 @@ os64>
 - shell 会先把相对路径按 cwd 解析成绝对路径，例如 `cd docs` 后 `cat guide.txt` 会解析成 `/docs/guide.txt`
 - 现在 `pwd` / `cd` / `ls` / `cat` / `stat` 这些路径命令都已经开始改成通过 `SyscallContext + sys_*` 这层工作
 - 这样 cwd 不再只是 shell 私有变量，而开始变成更像“进程上下文”的内核状态
+
+如果你想专门看这次文件系统升级为什么这样做、磁盘布局怎么变、挂载时到底检查了什么，可以直接看：
+
+- [docs/KERNEL_OS64FS_V3_GUIDE.md](./docs/KERNEL_OS64FS_V3_GUIDE.md)
 
 ### 一个很重要的提醒
 

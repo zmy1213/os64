@@ -23,6 +23,7 @@
 #include "storage/block_device.hpp"
 #include "storage/boot_volume.hpp"
 #include "syscall/syscall.hpp"
+#include "task/elf_loader.hpp"
 #include "task/scheduler.hpp"
 
 namespace {
@@ -64,6 +65,7 @@ constexpr uint64_t kUserModeResultYieldResumeOk = 0x4;                     // �
 constexpr uint64_t kUserModeResultTimerPreemptOk = 0x8;                    // 这一步再往前走一格：用户线程在 ring 3 自旋时被 timer 抢占，回来还能继续执行。
 constexpr uint64_t kUserModeResultStdinBlockOk = 0x10;                     // 再继续往前：用户线程在 ring 3 里 `read(0)` 遇到空输入时会先 block，再被键盘 IRQ 唤醒回来。
 constexpr uint64_t kUserModeResultFileProgramOk = 0x20;                    // 这一步再继续：用户程序不再只来自内核内嵌字节，还要能从文件系统加载出来执行。
+constexpr uint64_t kUserModeResultElfProgramOk = 0x40;                     // 再往前一格：用户程序第一次不再只是原始机器码文件，而是标准 ELF 可执行文件。
 constexpr uint64_t kUserModeExpectedResultFlags =
     kUserModeResultRootCwdOk | kUserModeResultReadmePrefixOk;
 constexpr uint64_t kUserModeExpectedYieldResultFlags =
@@ -74,6 +76,8 @@ constexpr uint64_t kUserModeExpectedStdinBlockResultFlags =
     kUserModeExpectedTimerPreemptResultFlags | kUserModeResultStdinBlockOk;
 constexpr uint64_t kUserModeExpectedFileProgramResultFlags =
     kUserModeResultFileProgramOk;
+constexpr uint64_t kUserModeExpectedElfProgramResultFlags =
+    kUserModeResultElfProgramOk;
 constexpr uint64_t kHeapTestSmallPattern = 0xA1B2C3D4E5F60718ULL;      // 小块堆分配测试用的模式值。
 constexpr uint64_t kHeapTestLargePattern0 = 0x0123456789ABCDEFULL;     // 大块堆分配第一页起始位置的模式值。
 constexpr uint64_t kHeapTestLargePattern1 = 0xFEDCBA9876543210ULL;     // 大块堆分配跨页位置的模式值。
@@ -91,13 +95,22 @@ constexpr uint64_t kKernelObjectExpectedSum = 0x2222222222222222ULL;   // 这就
 constexpr uint64_t kKernelObjectCookie = 0x4B4F424A45435431ULL;        // ASCII 看起来像 "KOBJECT1"，用于校验对象真的构造过。
 constexpr uint64_t kAlignedObjectMarker = 0xA55AA55AA55AA55AULL;       // 再给高对齐对象一个单独的标记值。
 constexpr uint64_t kAlignedObjectAlignment = 64;                       // 故意把对象对齐拉到 64，证明 knew<T>() 不只会处理 16 字节对齐。
-constexpr char kOs64FsExpectedSignature[] = "OS64FSV1";                // superblock 的前 8 字节固定就是这个签名。
+constexpr char kOs64FsExpectedSignature[] = "OS64FSV3";                // superblock 的前 8 字节固定就是这个签名。
 constexpr char kOs64FsExpectedName[] = "os64-root";                    // 这就是脚本里写进 superblock 的卷名。
 constexpr char kOs64FsExpectedReadme[] =
     "os64fs readme: the 64-bit kernel now mounts a real read-only filesystem.";
 constexpr char kOs64FsExpectedGuide[] =
     "os64fs guide: stage2 only preloads raw sectors. the block device layer turns that memory into sector reads, and the filesystem layer resolves paths like docs/guide.txt inside the 64-bit kernel.";
+constexpr char kOs64FsBigFilePath[] = "/docs/big.txt";                 // 这份大文件专门拿来证明 v2 的单级间接块真的能被读通。
+constexpr char kOs64FsWriteSmokeDirPath[] = "/lab";                   // 这一步新建一个独立目录，避免把前面只读烟测依赖的现有文件污染掉。
+constexpr char kOs64FsWriteSmokeTempFilePath[] = "/lab/blank.txt";    // 先单独测 create/unlink。
+constexpr char kOs64FsWriteSmokeFilePath[] = "/lab/note.txt";         // 再用这份文件把 write + append + remount 都串起来。
+constexpr char kOs64FsWriteSmokeSubdirPath[] = "/lab/sub";            // 空目录专门拿来测 mkdir + unlink(empty dir)。
+constexpr char kOs64FsWriteSmokeInitialText[] = "alpha";
+constexpr char kOs64FsWriteSmokeAppendText[] = "+beta";
+constexpr char kOs64FsWriteSmokeExpectedText[] = "alpha+beta";
 constexpr char kUserFileProgramPath[] = "/docs/hello.bin";             // 这是第一份真正放在文件系统里的用户程序路径。
+constexpr char kUserElfProgramPath[] = "/docs/hello.elf";              // 下一步继续正规化：这是一份真正的 ELF64 可执行文件路径。
 constexpr uint32_t kPitFrequencyHz = 100;                              // 先把时钟中断频率设成 100Hz，够平滑也够好测。
 constexpr uint64_t kTimerFirstLogTick = 10;                            // 先在第 10 个 tick 打一次点。
 constexpr uint64_t kTimerSecondLogTick = 20;                           // 第 20 个 tick 再打一次点，证明中断在持续发生。
@@ -244,6 +257,13 @@ constexpr uint8_t kShellStatParentNotesScancodes[] = {
     0x14, 0x2D, 0x14,              // txt
     0x1C,                          // Enter
 };
+constexpr uint8_t kShellRunHelloElfScancodes[] = {
+    0x13, 0x16, 0x31, 0x39,        // run + Space
+    0x23, 0x12, 0x26, 0x26, 0x18,  // hello
+    0x34,                          // .
+    0x12, 0x26, 0x21,              // elf
+    0x1C,                          // Enter
+};
 constexpr uint8_t kShellIrqScancodes[] = {
     0x17, 0x13, 0x10, 0x1C,        // irq + Enter
 };
@@ -301,6 +321,7 @@ ShellState g_shell;                           // 最小 shell 的状态也先放
 BootVolume g_boot_volume;                     // 这一轮新增的启动卷状态，表示 stage2 预读进来的那段扇区数据。
 BlockDevice g_boot_block_device;             // 再往上一层，把 boot volume 包成通用块设备接口。
 Os64Fs g_os64fs;                             // 第一版只读文件系统状态也先做成全局对象。
+Os64Fs g_os64fs_write_remount_fs;            // 写路径回归里需要“重新挂载再读回来”验证；这个对象很大，放全局区避免把内核栈挤爆。
 VfsMount g_vfs;                              // VFS 根挂载点，shell 以后从这里而不是直接从 OS64FS 进入。
 FileDescriptorTable g_fd_table;              // 第一版全局 fd 表；以后有进程后会变成每个进程一张表。
 SyscallContext g_syscall_context;            // 这份“内核默认 syscall 上下文”仍然保留，方便 boot/smoke 阶段和没有线程时的早期调用。
@@ -1315,6 +1336,344 @@ bool run_user_file_program_smoke_test(PageAllocator* allocator,
   return ok;
 }
 
+// 这一步把“文件里的原始机器码”继续推进成“标准 ELF 可执行文件”。
+// 当前这版 loader 先故意只支持：
+// - ELF64
+// - x86_64
+// - ET_EXEC
+// - 恰好 1 个 PT_LOAD 段
+//
+// 这样能先把“ELF header / program header / 段映射 / entry point”
+// 这些核心概念讲清楚，再继续往多段装载和更正式的 exec 路径扩。
+bool run_user_elf_program_smoke_test(PageAllocator* allocator,
+                                     const Os64Fs* filesystem,
+                                     SyscallContext* context,
+                                     FileDescriptorTable* fd_table) {
+  if (allocator == nullptr ||
+      filesystem == nullptr ||
+      context == nullptr ||
+      fd_table == nullptr ||
+      !initialize_syscall_context(context, fd_table) ||
+      !install_syscall_write_handler(context, syscall_output_write, nullptr) ||
+      !install_syscall_dispatch_context(context) ||
+      !syscall_dispatch_is_ready()) {
+    return false;
+  }
+
+  AddressSpace user_space;
+  memory_set(&user_space, 0, sizeof(user_space));
+  if (!clone_current_address_space(&user_space, allocator)) {
+    return false;
+  }
+
+  LoadedUserElfProgram program;
+  if (!load_elf_user_program(allocator, &user_space, filesystem,
+                             kUserElfProgramPath, &program)) {
+    return false;
+  }
+
+  const uint64_t stack_physical_page = alloc_page(allocator);
+  if (!page_is_directly_accessible_in_boot_identity_map(stack_physical_page)) {
+    return false;
+  }
+
+  memory_set(reinterpret_cast<void*>(static_cast<uintptr_t>(stack_physical_page)),
+             0, kPageSize);
+  if (!address_space_map_user_page(&user_space, allocator,
+                                   kUserModeStackPageVirtualAddress,
+                                   stack_physical_page,
+                                   kPageWritable)) {
+    return false;
+  }
+
+  serial_write_string("user_elf_program_path=");
+  serial_write_string(kUserElfProgramPath);
+  serial_write_crlf();
+
+  serial_write_string("user_elf_program_inode=");
+  serial_write_u64(program.inode_number);
+  serial_write_crlf();
+
+  serial_write_string("user_elf_program_root=0x");
+  serial_write_hex64(user_space.root_physical_address);
+  serial_write_crlf();
+
+  serial_write_string("user_elf_program_first_page_phys=0x");
+  serial_write_hex64(program.first_page_physical);
+  serial_write_crlf();
+
+  serial_write_string("user_elf_program_stack_phys=0x");
+  serial_write_hex64(stack_physical_page);
+  serial_write_crlf();
+
+  serial_write_string("user_elf_program_entry=0x");
+  serial_write_hex64(program.entry_point);
+  serial_write_crlf();
+
+  serial_write_string("user_elf_program_stack_top=0x");
+  serial_write_hex64(kUserModeInitialStackPointer);
+  serial_write_crlf();
+
+  serial_write_string("user_elf_program_file_size=");
+  serial_write_u64(program.file_size_bytes);
+  serial_write_crlf();
+
+  serial_write_string("user_elf_program_segment_count=");
+  serial_write_u64(program.loadable_segment_count);
+  serial_write_crlf();
+
+  serial_write_string("user_elf_program_segment_vaddr=0x");
+  serial_write_hex64(program.segment_virtual_address);
+  serial_write_crlf();
+
+  serial_write_string("user_elf_program_segment_offset=0x");
+  serial_write_hex64(program.segment_file_offset);
+  serial_write_crlf();
+
+  serial_write_string("user_elf_program_segment_filesz=");
+  serial_write_u64(program.segment_file_size);
+  serial_write_crlf();
+
+  serial_write_string("user_elf_program_segment_memsz=");
+  serial_write_u64(program.segment_memory_size);
+  serial_write_crlf();
+
+  serial_write_string("user_elf_program_segment_flags=0x");
+  serial_write_hex64(program.segment_flags);
+  serial_write_crlf();
+
+  serial_write_string("user_elf_program_page_count=");
+  serial_write_u64(program.mapped_page_count);
+  serial_write_crlf();
+
+  UserModeLaunchContext session;
+  memory_set(&session, 0, sizeof(session));
+  session.kernel_root_physical = paging_current_root_physical();
+  session.user_root_physical = user_space.root_physical_address;
+  session.user_instruction_pointer = program.entry_point;
+  session.user_stack_pointer = kUserModeInitialStackPointer;
+  session.user_rflags =
+      (read_rflags() | kUserModeRequiredRflags) & ~(1ULL << 9);
+  session.user_code_selector = kUserCodeSelectorRpl3;
+  session.user_stack_selector = kUserDataSelectorRpl3;
+  session.return_value = 0;
+
+  g_active_user_mode_session = &session;
+  const uint64_t return_value = user_mode_enter(&session);
+  g_active_user_mode_session = nullptr;
+  session.return_value = return_value;
+  const uint64_t return_cs =
+      return_value & kUserModeReturnCodeSelectorMask;
+  const uint64_t return_flags =
+      return_value >> kUserModeReturnResultShift;
+
+  serial_write_string("user_elf_program_return_cs=0x");
+  serial_write_hex64(return_cs);
+  serial_write_crlf();
+
+  serial_write_string("user_elf_program_return_cpl=");
+  serial_write_u64(return_cs & 0x3);
+  serial_write_crlf();
+
+  serial_write_string("user_elf_program_return_flags=0x");
+  serial_write_hex64(return_flags);
+  serial_write_crlf();
+
+  const bool ok =
+      program.inode_number == 7 &&
+      program.file_size_bytes > 0 &&
+      program.file_size_bytes <= 1024 &&
+      program.loadable_segment_count == 2 &&
+      program.mapped_page_count == 2 &&
+      return_cs == kUserModeExpectedCodeSelector &&
+      (return_cs & 0x3) == kUserModeExpectedCpl &&
+      return_flags == kUserModeExpectedElfProgramResultFlags;
+  if (ok) {
+    serial_write_string("user_elf_program ok");
+    serial_write_crlf();
+  }
+
+  return ok;
+}
+
+// 这一步不再只是在 `kernel_main` 里“手工调一次 ELF loader + user_mode_enter”。
+// 我们现在要继续验证：
+// 1. scheduler 真的能创建一份 user process
+// 2. 这份 process 真的能从 OS64FS 里装入 ELF
+// 3. ELF entry 最后真的能作为一条 user thread 挂进 scheduler 运行并退出
+bool run_scheduler_elf_thread_smoke_test(PageAllocator* allocator,
+                                         const Os64Fs* filesystem,
+                                         SyscallContext* context,
+                                         FileDescriptorTable* fd_table) {
+  if (allocator == nullptr ||
+      filesystem == nullptr ||
+      context == nullptr ||
+      fd_table == nullptr ||
+      !initialize_syscall_context(context, fd_table) ||
+      !install_syscall_write_handler(context, syscall_output_write, nullptr) ||
+      !install_syscall_dispatch_context(context) ||
+      !syscall_dispatch_is_ready() ||
+      !initialize_scheduler(&g_scheduler, kSchedulerTimeSliceTicks)) {
+    return false;
+  }
+
+  SchedulerElfThreadLoadResult load_result;
+  memory_set(&load_result, 0, sizeof(load_result));
+
+  // 这条 ELF 线程当前只做 `write + exit`，
+  // 所以先保持 IF 关闭，避免把“能否被 IRQ 抢占”这个变量混进这轮测试。
+  const uint64_t user_rflags =
+      (read_rflags() | kUserModeRequiredRflags) & ~(1ULL << 9);
+  if (!scheduler_create_user_elf_thread(&g_scheduler,
+                                        allocator,
+                                        filesystem,
+                                        &g_vfs,
+                                        syscall_output_write,
+                                        nullptr,
+                                        "elf-proc",
+                                        "elf-main",
+                                        kUserElfProgramPath,
+                                        kUserModeInitialStackPointer,
+                                        user_rflags,
+                                        kThreadPriorityNormal,
+                                        &load_result)) {
+    return false;
+  }
+
+  serial_write_string("scheduler_elf_pid=");
+  serial_write_u64(load_result.process->pid);
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_tid=");
+  serial_write_u64(load_result.thread->tid);
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_path=");
+  serial_write_string(kUserElfProgramPath);
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_inode=");
+  serial_write_u64(load_result.program.inode_number);
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_root=0x");
+  serial_write_hex64(load_result.process->address_space.root_physical_address);
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_first_page_phys=0x");
+  serial_write_hex64(load_result.program.first_page_physical);
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_stack_phys=0x");
+  serial_write_hex64(load_result.stack_physical_page);
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_entry=0x");
+  serial_write_hex64(load_result.program.entry_point);
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_stack_top=0x");
+  serial_write_hex64(kUserModeInitialStackPointer);
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_file_size=");
+  serial_write_u64(load_result.program.file_size_bytes);
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_segment_count=");
+  serial_write_u64(load_result.program.loadable_segment_count);
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_segment_vaddr=0x");
+  serial_write_hex64(load_result.program.segment_virtual_address);
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_page_count=");
+  serial_write_u64(load_result.program.mapped_page_count);
+  serial_write_crlf();
+
+  const bool run_ok = scheduler_run_until_idle(&g_scheduler);
+  const uint64_t return_value = load_result.thread->user_mode.return_value;
+  const uint64_t return_cs =
+      return_value & kUserModeReturnCodeSelectorMask;
+  const uint64_t return_flags =
+      return_value >> kUserModeReturnResultShift;
+  const char* const process_cwd =
+      syscall_current_working_directory(&load_result.process->syscall_context);
+  const uint32_t open_count =
+      fd_open_count(&load_result.process->file_descriptors);
+  const uint64_t current_tss_rsp0 = tss_kernel_rsp0();
+
+  serial_write_string("scheduler_elf_return_cs=0x");
+  serial_write_hex64(return_cs);
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_return_cpl=");
+  serial_write_u64(return_cs & 0x3);
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_return_flags=0x");
+  serial_write_hex64(return_flags);
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_process_cwd=");
+  serial_write_string(process_cwd != nullptr ? process_cwd : "<null>");
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_open_count=");
+  serial_write_u64(open_count);
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_tss_rsp0=0x");
+  serial_write_hex64(current_tss_rsp0);
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_process_state=");
+  serial_write_string(scheduler_process_state_name(load_result.process->state));
+  serial_write_crlf();
+
+  serial_write_string("scheduler_elf_thread_state=");
+  serial_write_string(scheduler_thread_state_name(load_result.thread->state));
+  serial_write_crlf();
+
+  const bool ok =
+      run_ok &&
+      load_result.process->pid == 1 &&
+      load_result.thread->tid == 1 &&
+      load_result.program.inode_number == 7 &&
+      load_result.program.file_size_bytes > 0 &&
+      load_result.program.file_size_bytes <= 1024 &&
+      load_result.program.loadable_segment_count == 2 &&
+      load_result.program.mapped_page_count == 2 &&
+      process_cwd != nullptr &&
+      strings_equal(process_cwd, "/") &&
+      open_count == 0 &&
+      current_tss_rsp0 == load_result.thread->user_kernel_entry_stack_top &&
+      return_cs == kUserModeExpectedCodeSelector &&
+      (return_cs & 0x3) == kUserModeExpectedCpl &&
+      return_flags == kUserModeExpectedElfProgramResultFlags &&
+      load_result.process->state == kProcessStateExited &&
+      load_result.thread->state == kThreadStateFinished &&
+      scheduler_current_thread(&g_scheduler) == nullptr &&
+      scheduler_ready_thread_count(&g_scheduler) == 0 &&
+      scheduler_live_thread_count(&g_scheduler) == 0 &&
+      scheduler_sleeping_thread_count(&g_scheduler) == 0 &&
+      scheduler_blocked_thread_count(&g_scheduler) == 0;
+
+  const bool restored_kernel_context =
+      initialize_syscall_context(context, fd_table) &&
+      install_syscall_write_handler(context, syscall_output_write, nullptr) &&
+      install_syscall_dispatch_context(context) &&
+      syscall_dispatch_is_ready();
+
+  if (ok && restored_kernel_context) {
+    serial_write_string("scheduler_elf_thread ok");
+    serial_write_crlf();
+  }
+
+  return ok && restored_kernel_context;
+}
+
 // 这里用两次堆分配证明两件事：
 // 1. 小块对象已经能落在新的堆虚拟地址上
 // 2. 大块对象已经能跨页工作，而不是只会在单页里凑巧成功
@@ -1634,20 +1993,42 @@ bool run_boot_volume_smoke_test(const BootInfo* boot_info,
 // 也就是：
 // sector 0 -> superblock
 // sector 1 -> inode table
-// sector 2+ -> 数据区
-bool run_filesystem_smoke_test(const BlockDevice* device,
+// sector 1 -> inode bitmap
+// sector 2 -> data bitmap
+// sector 3-6 -> inode table
+// sector 7+ -> 数据区
+bool run_filesystem_smoke_test(BlockDevice* device,
                                Os64Fs* filesystem) {
   if (device == nullptr || filesystem == nullptr) {
+    serial_write_string("os64fs_smoke_bad_input");
+    serial_write_crlf();
     return false;
   }
 
   if (!initialize_os64fs(filesystem, device) ||
       !os64fs_is_mounted(filesystem)) {
+    serial_write_string("os64fs_mount_fail");
+    serial_write_crlf();
+    serial_write_string("os64fs_mount_error=");
+    serial_write_u64(os64fs_mount_error(filesystem));
+    serial_write_crlf();
     return false;
   }
 
+  serial_write_string("os64fs_mount ok");
+  serial_write_crlf();
+
   const Os64FsSuperblock* const superblock = os64fs_superblock(filesystem);
   if (superblock == nullptr) {
+    serial_write_string("os64fs_superblock_fail");
+    serial_write_crlf();
+    return false;
+  }
+
+  Os64FsStats filesystem_stats;
+  if (!os64fs_query_stats(filesystem, &filesystem_stats)) {
+    serial_write_string("os64fs_stats_fail");
+    serial_write_crlf();
     return false;
   }
 
@@ -1657,6 +2038,8 @@ bool run_filesystem_smoke_test(const BlockDevice* device,
   Os64FsInode docs_inode;
   Os64FsInode guide_inode;
   Os64FsInode hello_inode;
+  Os64FsInode hello_elf_inode;
+  Os64FsInode big_inode;
   if (!os64fs_lookup_path(filesystem, "/", &root_inode) ||
       !os64fs_lookup_path(filesystem, "readme.txt", &readme_inode) ||
       !os64fs_lookup_path(filesystem, "./readme.txt", &readme_inode) ||
@@ -1664,9 +2047,16 @@ bool run_filesystem_smoke_test(const BlockDevice* device,
       !os64fs_lookup_path(filesystem, "docs/guide.txt", &guide_inode) ||
       !os64fs_lookup_path(filesystem, "/docs/guide.txt", &guide_inode) ||
       !os64fs_lookup_path(filesystem, "docs/hello.bin", &hello_inode) ||
+      !os64fs_lookup_path(filesystem, "docs/hello.elf", &hello_elf_inode) ||
+      !os64fs_lookup_path(filesystem, kOs64FsBigFilePath, &big_inode) ||
       !os64fs_lookup_path(filesystem, "docs/../notes.txt", &notes_inode)) {
+    serial_write_string("os64fs_lookup_fail");
+    serial_write_crlf();
     return false;
   }
+
+  serial_write_string("os64fs_lookup ok");
+  serial_write_crlf();
 
   char readme_text[256];
   char guide_text[256];
@@ -1674,8 +2064,26 @@ bool run_filesystem_smoke_test(const BlockDevice* device,
                        sizeof(readme_text)) ||
       !read_inode_text(filesystem, &guide_inode, guide_text,
                        sizeof(guide_text))) {
+    serial_write_string("os64fs_text_fail");
+    serial_write_crlf();
     return false;
   }
+
+  serial_write_string("os64fs_text ok");
+  serial_write_crlf();
+
+  char big_markers[4];
+  if (!os64fs_read_inode_data(filesystem, &big_inode, 0, &big_markers[0], 1) ||
+      !os64fs_read_inode_data(filesystem, &big_inode, 4095, &big_markers[1], 1) ||
+      !os64fs_read_inode_data(filesystem, &big_inode, 4096, &big_markers[2], 1) ||
+      !os64fs_read_inode_data(filesystem, &big_inode, 5119, &big_markers[3], 1)) {
+    serial_write_string("os64fs_big_read_fail");
+    serial_write_crlf();
+    return false;
+  }
+
+  serial_write_string("os64fs_big_read ok");
+  serial_write_crlf();
 
   serial_write_string("os64fs_signature=");
   serial_write_bounded_string(superblock->signature,
@@ -1695,6 +2103,34 @@ bool run_filesystem_smoke_test(const BlockDevice* device,
   serial_write_u64(superblock->data_block_size);
   serial_write_crlf();
 
+  serial_write_string("os64fs_inode_bitmap_sectors=");
+  serial_write_u64(superblock->inode_bitmap_sector_count);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_data_bitmap_sectors=");
+  serial_write_u64(superblock->data_bitmap_sector_count);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_inode_used=");
+  serial_write_u64(filesystem_stats.used_inodes);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_inode_free=");
+  serial_write_u64(filesystem_stats.free_inodes);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_data_blocks=");
+  serial_write_u64(filesystem_stats.total_data_blocks);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_data_used=");
+  serial_write_u64(filesystem_stats.used_data_blocks);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_data_free=");
+  serial_write_u64(filesystem_stats.free_data_blocks);
+  serial_write_crlf();
+
   serial_write_string("os64fs_root_entries=");
   serial_write_u64(os64fs_directory_entry_count(filesystem, &root_inode));
   serial_write_crlf();
@@ -1711,6 +2147,14 @@ bool run_filesystem_smoke_test(const BlockDevice* device,
   serial_write_u64(hello_inode.inode_number);
   serial_write_crlf();
 
+  serial_write_string("os64fs_hello_elf_inode=");
+  serial_write_u64(hello_elf_inode.inode_number);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_big_inode=");
+  serial_write_u64(big_inode.inode_number);
+  serial_write_crlf();
+
   serial_write_string("os64fs_readme=");
   serial_write_string(readme_text);
   serial_write_crlf();
@@ -1719,31 +2163,70 @@ bool run_filesystem_smoke_test(const BlockDevice* device,
   serial_write_string(guide_text);
   serial_write_crlf();
 
+  serial_write_string("os64fs_big_markers=");
+  serial_write_char(big_markers[0]);
+  serial_write_char(big_markers[1]);
+  serial_write_char(big_markers[2]);
+  serial_write_char(big_markers[3]);
+  serial_write_crlf();
+
   return bounded_text_equals(superblock->signature,
                              kOs64FsExpectedSignature,
                              sizeof(superblock->signature)) &&
          strings_equal(superblock->volume_name, kOs64FsExpectedName) &&
          superblock->version == kOs64FsVersion &&
          superblock->total_sectors == device->sector_count &&
-         superblock->inode_count == 7 &&
+         superblock->inode_bitmap_start_sector == 1 &&
+         superblock->inode_bitmap_sector_count == 1 &&
+         superblock->data_bitmap_start_sector == 2 &&
+         superblock->data_bitmap_sector_count == 1 &&
+         superblock->inode_table_start_sector == 3 &&
+         superblock->inode_table_sector_count == 4 &&
+         superblock->inode_count == 32 &&
          superblock->inode_size == sizeof(Os64FsInode) &&
+         superblock->data_start_sector == 7 &&
+         superblock->data_sector_count == 121 &&
          superblock->root_inode == 1 &&
-         superblock->data_block_size == 128 &&
+         superblock->free_inode_count == 23 &&
+         superblock->free_data_block_count == 102 &&
+         superblock->data_block_size == 512 &&
+         filesystem_stats.allocatable_inodes == 31 &&
+         filesystem_stats.used_inodes == 8 &&
+         filesystem_stats.free_inodes == 23 &&
+         filesystem_stats.total_data_blocks == 121 &&
+         filesystem_stats.used_data_blocks == 19 &&
+         filesystem_stats.free_data_blocks == 102 &&
          root_inode.type == kOs64FsTypeDirectory &&
          os64fs_directory_entry_count(filesystem, &root_inode) == 3 &&
          docs_inode.type == kOs64FsTypeDirectory &&
-         os64fs_directory_entry_count(filesystem, &docs_inode) == 2 &&
+         os64fs_directory_entry_count(filesystem, &docs_inode) == 4 &&
          readme_inode.type == kOs64FsTypeFile &&
          notes_inode.type == kOs64FsTypeFile &&
          notes_inode.inode_number == 3 &&
          guide_inode.type == kOs64FsTypeFile &&
          guide_inode.direct_blocks[0] != kOs64FsInvalidBlockIndex &&
-         guide_inode.direct_blocks[1] != kOs64FsInvalidBlockIndex &&
+         guide_inode.block_count == 1 &&
          hello_inode.type == kOs64FsTypeFile &&
          hello_inode.inode_number == 6 &&
          hello_inode.size_bytes > 0 &&
-         hello_inode.size_bytes <= 128 &&
-         hello_inode.direct_blocks[0] == 6 &&
+         hello_inode.size_bytes <= 512 &&
+         hello_inode.direct_blocks[0] == 5 &&
+         hello_elf_inode.type == kOs64FsTypeFile &&
+         hello_elf_inode.inode_number == 7 &&
+         hello_elf_inode.size_bytes > 0 &&
+         hello_elf_inode.size_bytes <= 1024 &&
+         hello_elf_inode.block_count == 2 &&
+         hello_elf_inode.direct_blocks[0] == 6 &&
+         hello_elf_inode.direct_blocks[1] == 7 &&
+         big_inode.type == kOs64FsTypeFile &&
+         big_inode.inode_number == 8 &&
+         big_inode.size_bytes == 5120 &&
+         big_inode.block_count == 10 &&
+         big_inode.indirect_block != kOs64FsInvalidBlockIndex &&
+         big_markers[0] == 'A' &&
+         big_markers[1] == 'H' &&
+         big_markers[2] == 'I' &&
+         big_markers[3] == 'J' &&
          strings_equal(readme_text, kOs64FsExpectedReadme) &&
          strings_equal(guide_text, kOs64FsExpectedGuide);
 }
@@ -1835,7 +2318,7 @@ bool run_file_handle_smoke_test(const Os64Fs* filesystem) {
       guide_stat.inode_number == 5 &&
       guide_stat.type == kOs64FsTypeFile &&
       guide_stat.direct_blocks[0] == 4 &&
-      guide_stat.direct_blocks[1] == 5 &&
+      guide_stat.block_count == 1 &&
       docs_stat.type == kOs64FsTypeDirectory;
 
   if (ok) {
@@ -1900,16 +2383,20 @@ bool run_directory_handle_smoke_test(const Os64Fs* filesystem) {
   DirectoryHandle docs_handle;
   DirectoryEntry guide_entry;
   DirectoryEntry hello_entry;
+  DirectoryEntry hello_elf_entry;
+  DirectoryEntry big_entry;
   const bool docs_open_ok =
       directory_open(filesystem, "docs", &docs_handle);
   const bool docs_read_ok =
       docs_open_ok &&
-      directory_entry_count(&docs_handle) == 2 &&
+      directory_entry_count(&docs_handle) == 4 &&
       directory_read(&docs_handle, &guide_entry) &&
-      directory_read(&docs_handle, &hello_entry);
+      directory_read(&docs_handle, &hello_entry) &&
+      directory_read(&docs_handle, &hello_elf_entry) &&
+      directory_read(&docs_handle, &big_entry);
   const bool docs_eof_ok =
       docs_read_ok &&
-      !directory_read(&docs_handle, &hello_entry);
+      !directory_read(&docs_handle, &big_entry);
   const bool close_docs_ok =
       docs_open_ok ? directory_close(&docs_handle) : false;
 
@@ -1919,6 +2406,14 @@ bool run_directory_handle_smoke_test(const Os64Fs* filesystem) {
 
   serial_write_string("directory_docs_second_inode=");
   serial_write_u64(docs_read_ok ? hello_entry.inode_number : 0);
+  serial_write_crlf();
+
+  serial_write_string("directory_docs_third_inode=");
+  serial_write_u64(docs_read_ok ? hello_elf_entry.inode_number : 0);
+  serial_write_crlf();
+
+  serial_write_string("directory_docs_fourth_inode=");
+  serial_write_u64(docs_read_ok ? big_entry.inode_number : 0);
   serial_write_crlf();
 
   const bool ok =
@@ -1944,7 +2439,13 @@ bool run_directory_handle_smoke_test(const Os64Fs* filesystem) {
       strings_equal(guide_entry.name, "guide.txt") &&
       hello_entry.inode_number == 6 &&
       hello_entry.type == kOs64FsTypeFile &&
-      strings_equal(hello_entry.name, "hello.bin");
+      strings_equal(hello_entry.name, "hello.bin") &&
+      hello_elf_entry.inode_number == 7 &&
+      hello_elf_entry.type == kOs64FsTypeFile &&
+      strings_equal(hello_elf_entry.name, "hello.elf") &&
+      big_entry.inode_number == 8 &&
+      big_entry.type == kOs64FsTypeFile &&
+      strings_equal(big_entry.name, "big.txt");
 
   if (ok) {
     serial_write_string("directory_layer ok");
@@ -1956,7 +2457,7 @@ bool run_directory_handle_smoke_test(const Os64Fs* filesystem) {
 
 // VFS 是“具体文件系统”之上的统一入口。
 // 这一版 VFS 只挂载一个 OS64FS，但 shell 以后已经可以先依赖 vfs_* 接口。
-bool run_vfs_smoke_test(VfsMount* mount, const Os64Fs* filesystem) {
+bool run_vfs_smoke_test(VfsMount* mount, Os64Fs* filesystem) {
   if (mount == nullptr || !initialize_vfs(mount, filesystem) ||
       !vfs_is_mounted(mount)) {
     return false;
@@ -2042,7 +2543,7 @@ bool run_vfs_smoke_test(VfsMount* mount, const Os64Fs* filesystem) {
       strings_equal(readme_text, kOs64FsExpectedReadme) &&
       guide_stat.inode_number == 5 &&
       guide_stat.direct_blocks[0] == 4 &&
-      guide_stat.direct_blocks[1] == 5 &&
+      guide_stat.block_count == 1 &&
       docs_stat.type == kVfsNodeTypeDirectory &&
       root_entry_count == 3 &&
       first_entry_ok &&
@@ -2052,6 +2553,228 @@ bool run_vfs_smoke_test(VfsMount* mount, const Os64Fs* filesystem) {
 
   if (ok) {
     serial_write_string("vfs_layer ok");
+    serial_write_crlf();
+  }
+
+  return ok;
+}
+
+bool run_filesystem_write_smoke_test(BlockDevice* device, VfsMount* mount) {
+  const bool mount_ok = vfs_is_mounted(mount);
+  serial_write_string("os64fs_write_enter=1");
+  serial_write_crlf();
+  serial_write_string("os64fs_write_mount_ok=");
+  serial_write_u64(mount_ok ? 1 : 0);
+  serial_write_crlf();
+
+  if (device == nullptr || mount == nullptr || !mount_ok) {
+    return false;
+  }
+
+  const size_t initial_length = string_length(kOs64FsWriteSmokeInitialText);
+  const size_t append_length = string_length(kOs64FsWriteSmokeAppendText);
+  const size_t expected_length = string_length(kOs64FsWriteSmokeExpectedText);
+
+  const bool create_dir_ok =
+      vfs_create_directory(mount, kOs64FsWriteSmokeDirPath);
+  const bool create_file_ok =
+      vfs_create_file(mount, kOs64FsWriteSmokeTempFilePath);
+  const bool write_ok =
+      vfs_write_file(mount, kOs64FsWriteSmokeFilePath,
+                     kOs64FsWriteSmokeInitialText, initial_length);
+  const bool append_ok =
+      vfs_append_file(mount, kOs64FsWriteSmokeFilePath,
+                      kOs64FsWriteSmokeAppendText, append_length);
+  const bool create_subdir_ok =
+      vfs_create_directory(mount, kOs64FsWriteSmokeSubdirPath);
+  const bool unlink_subdir_ok =
+      vfs_unlink(mount, kOs64FsWriteSmokeSubdirPath);
+  const bool unlink_file_ok =
+      vfs_unlink(mount, kOs64FsWriteSmokeTempFilePath);
+  const bool sync_ok = vfs_sync(mount);
+
+  VfsStat lab_stat;
+  VfsStat note_stat;
+  const bool stat_ok =
+      create_dir_ok &&
+      create_file_ok &&
+      write_ok &&
+      append_ok &&
+      create_subdir_ok &&
+      unlink_subdir_ok &&
+      unlink_file_ok &&
+      sync_ok &&
+      vfs_stat(mount, kOs64FsWriteSmokeDirPath, &lab_stat) &&
+      vfs_stat(mount, kOs64FsWriteSmokeFilePath, &note_stat);
+
+  serial_write_string("os64fs_write_create_dir=");
+  serial_write_u64(create_dir_ok ? 1 : 0);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_write_create_file=");
+  serial_write_u64(create_file_ok ? 1 : 0);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_write_write=");
+  serial_write_u64(write_ok ? 1 : 0);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_write_append=");
+  serial_write_u64(append_ok ? 1 : 0);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_write_create_subdir=");
+  serial_write_u64(create_subdir_ok ? 1 : 0);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_write_unlink_subdir=");
+  serial_write_u64(unlink_subdir_ok ? 1 : 0);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_write_unlink_file=");
+  serial_write_u64(unlink_file_ok ? 1 : 0);
+  serial_write_crlf();
+
+  memory_set(&g_os64fs_write_remount_fs, 0, sizeof(g_os64fs_write_remount_fs));
+  if (!stat_ok) {
+    serial_write_string("os64fs_write_stat_ok=0");
+    serial_write_crlf();
+    return false;
+  }
+
+  serial_write_string("os64fs_write_stat_ok=1");
+  serial_write_crlf();
+
+  const bool remount_ok = initialize_os64fs(&g_os64fs_write_remount_fs, device);
+  serial_write_string("os64fs_write_remount=");
+  serial_write_u64(remount_ok ? 1 : 0);
+  serial_write_crlf();
+  if (!remount_ok) {
+    Os64FsValidationDebug validation_debug;
+    memory_set(&validation_debug, 0, sizeof(validation_debug));
+    (void)os64fs_query_validation_debug(&g_os64fs_write_remount_fs,
+                                        &validation_debug);
+    serial_write_string("os64fs_write_remount_error=");
+    serial_write_u64(os64fs_mount_error(&g_os64fs_write_remount_fs));
+    serial_write_crlf();
+    serial_write_string("os64fs_write_validate_code=");
+    serial_write_u64(validation_debug.code);
+    serial_write_crlf();
+    serial_write_string("os64fs_write_validate_index=");
+    serial_write_u64(validation_debug.index);
+    serial_write_crlf();
+    serial_write_string("os64fs_write_validate_expected=");
+    serial_write_u64(validation_debug.expected);
+    serial_write_crlf();
+    serial_write_string("os64fs_write_validate_actual=");
+    serial_write_u64(validation_debug.actual);
+    serial_write_crlf();
+    return false;
+  }
+
+  FileHandle note_handle;
+  char note_text[64];
+  memory_set(note_text, 0, sizeof(note_text));
+  size_t total_read = 0;
+  const bool file_open_ok =
+      file_open(&g_os64fs_write_remount_fs,
+                kOs64FsWriteSmokeFilePath, &note_handle);
+  serial_write_string("os64fs_write_file_open=");
+  serial_write_u64(file_open_ok ? 1 : 0);
+  serial_write_crlf();
+  if (!file_open_ok) {
+    return false;
+  }
+
+  while (total_read < expected_length) {
+    const size_t bytes_read =
+        file_read(&note_handle, note_text + total_read, expected_length - total_read);
+    if (bytes_read == 0) {
+      (void)file_close(&note_handle);
+      return false;
+    }
+
+    total_read += bytes_read;
+  }
+  note_text[total_read] = '\0';
+  if (!file_close(&note_handle)) {
+    return false;
+  }
+
+  DirectoryHandle lab_directory;
+  const bool directory_open_ok =
+      directory_open(&g_os64fs_write_remount_fs,
+                     kOs64FsWriteSmokeDirPath, &lab_directory);
+  serial_write_string("os64fs_write_dir_open=");
+  serial_write_u64(directory_open_ok ? 1 : 0);
+  serial_write_crlf();
+  if (!directory_open_ok) {
+    return false;
+  }
+
+  const uint32_t lab_entry_count = directory_entry_count(&lab_directory);
+  DirectoryEntry first_entry;
+  memory_set(&first_entry, 0, sizeof(first_entry));
+  const bool first_entry_ok =
+      directory_read(&lab_directory, &first_entry) &&
+      !directory_read(&lab_directory, &first_entry) &&
+      directory_close(&lab_directory);
+
+  Os64FsStats remount_stats;
+  if (!os64fs_query_stats(&g_os64fs_write_remount_fs, &remount_stats)) {
+    return false;
+  }
+
+  serial_write_string("os64fs_write_sync=");
+  serial_write_u64(sync_ok ? 1 : 0);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_write_lab_entries=");
+  serial_write_u64(lab_entry_count);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_write_note_size=");
+  serial_write_u64(note_stat.size_bytes);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_write_note_text=");
+  serial_write_string(note_text);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_write_inode_used=");
+  serial_write_u64(remount_stats.used_inodes);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_write_inode_free=");
+  serial_write_u64(remount_stats.free_inodes);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_write_data_used=");
+  serial_write_u64(remount_stats.used_data_blocks);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_write_data_free=");
+  serial_write_u64(remount_stats.free_data_blocks);
+  serial_write_crlf();
+
+  const bool ok =
+      first_entry_ok &&
+      lab_stat.type == kVfsNodeTypeDirectory &&
+      note_stat.type == kVfsNodeTypeFile &&
+      note_stat.size_bytes == expected_length &&
+      note_stat.block_count == 1 &&
+      strings_equal(note_text, kOs64FsWriteSmokeExpectedText) &&
+      lab_entry_count == 1 &&
+      first_entry.inode_number == note_stat.inode_number &&
+      first_entry.type == kOs64FsTypeFile &&
+      strings_equal(first_entry.name, "note.txt") &&
+      remount_stats.used_inodes == 10 &&
+      remount_stats.free_inodes == 21 &&
+      remount_stats.used_data_blocks == 21 &&
+      remount_stats.free_data_blocks == 100;
+
+  if (ok) {
+    serial_write_string("os64fs_write ok");
     serial_write_crlf();
   }
 
@@ -2357,9 +3080,11 @@ bool run_syscall_smoke_test(SyscallContext* context,
       strings_equal(cwd, "/") &&
       root_entry_count == 3 &&
       strings_equal(cwd_after_cd, "/docs") &&
-      directory_entry_count == 2 &&
+      directory_entry_count == 4 &&
       strings_equal(directory_entries[0].name, "guide.txt") &&
       strings_equal(directory_entries[1].name, "hello.bin") &&
+      strings_equal(directory_entries[2].name, "hello.elf") &&
+      strings_equal(directory_entries[3].name, "big.txt") &&
       guide_path_stat.inode_number == 5 &&
       guide_stat.inode_number == 5 &&
       guide_stat.size_bytes == expected_guide_length &&
@@ -2611,9 +3336,11 @@ bool run_int80_syscall_smoke_test(SyscallContext* context,
       chdir_status == kSyscallOk &&
       cwd_after_cd_length == 5 &&
       strings_equal(cwd_after_cd, "/docs") &&
-      directory_entry_count == 2 &&
+      directory_entry_count == 4 &&
       strings_equal(directory_entries[0].name, "guide.txt") &&
       strings_equal(directory_entries[1].name, "hello.bin") &&
+      strings_equal(directory_entries[2].name, "hello.elf") &&
+      strings_equal(directory_entries[3].name, "big.txt") &&
       path_stat_status == kSyscallOk &&
       stdout_write == static_cast<int64_t>(int80_write_stdout_length) &&
       stderr_write == static_cast<int64_t>(int80_write_stderr_length) &&
@@ -4110,6 +4837,10 @@ constexpr ShellSmokeCommand kShellSmokeCommands[] = {
     {"cat guide.txt", kShellCatGuideScancodes,
      sizeof(kShellCatGuideScancodes) / sizeof(kShellCatGuideScancodes[0]),
      kShellCommandExecuted},
+    {"run hello.elf", kShellRunHelloElfScancodes,
+     sizeof(kShellRunHelloElfScancodes) /
+         sizeof(kShellRunHelloElfScancodes[0]),
+     kShellCommandExecuted},
     {"irq", kShellIrqScancodes,
      sizeof(kShellIrqScancodes) / sizeof(kShellIrqScancodes[0]),
      kShellCommandExecuted},
@@ -4180,9 +4911,18 @@ bool run_shell_smoke_test(const BootInfo* boot_info,
   console_set_viewport(kConsoleInsetStartColumn, kConsoleInsetEndColumn);
   initialize_console(kShellTestStartRow, kShellTextColor);
 
+  SchedulerState shell_smoke_scheduler;
+  memory_set(&shell_smoke_scheduler, 0, sizeof(shell_smoke_scheduler));
+  if (!initialize_scheduler(&shell_smoke_scheduler, kSchedulerTimeSliceTicks)) {
+    (void)scheduler_set_active(&g_scheduler);
+    return false;
+  }
+
   if (!initialize_shell(&g_shell, boot_info, &g_page_allocator, &g_kernel_heap,
-                        boot_volume, block_device, syscall_context,
-                        &kShellOutput)) {
+                        boot_volume, block_device,
+                        &g_os64fs, &g_vfs, &shell_smoke_scheduler,
+                        syscall_context, &kShellOutput)) {
+    (void)scheduler_set_active(&g_scheduler);
     return false;
   }
 
@@ -4199,6 +4939,7 @@ bool run_shell_smoke_test(const BootInfo* boot_info,
                                   command.scancode_count,
                                   &expected_irq_count)) {
       disable_interrupts();
+      (void)scheduler_set_active(&g_scheduler);
       return false;
     }
 
@@ -4224,11 +4965,13 @@ bool run_shell_smoke_test(const BootInfo* boot_info,
         line_length != string_length(command.expected_line) ||
         result != command.expected_result) {
       disable_interrupts();
+      (void)scheduler_set_active(&g_scheduler);
       return false;
     }
   }
 
   disable_interrupts();
+  (void)scheduler_set_active(&g_scheduler);
   return keyboard_irq_count() == expected_irq_count &&
          keyboard_buffered_char_count() == 0;
 }
@@ -4486,6 +5229,14 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
     return;
   }
 
+  if (!run_user_elf_program_smoke_test(&g_page_allocator,
+                                       &g_os64fs,
+                                       &g_syscall_context,
+                                       &g_fd_table)) {
+    write_status_line(kStorageStatusRow, "user elf bad");
+    return;
+  }
+
   write_status_line(kStorageStatusRow, "filesystem ok");
 
   if (!run_timer_smoke_test()) {
@@ -4494,6 +5245,14 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
   }
 
   write_status_line(kRuntimeStatusRow, "timer ok");
+
+  if (!run_scheduler_elf_thread_smoke_test(&g_page_allocator,
+                                           &g_os64fs,
+                                           &g_syscall_context,
+                                           &g_fd_table)) {
+    write_status_line(kRuntimeStatusRow, "sched elf bad");
+    return;
+  }
 
   if (!run_scheduler_smoke_test()) {
     write_status_line(kRuntimeStatusRow, "scheduler bad");
@@ -4534,6 +5293,12 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
     return;
   }
 
+  if (!run_filesystem_write_smoke_test(&g_boot_block_device, &g_vfs)) {
+    write_status_line(kStorageStatusRow, "fs write bad");
+    return;
+  }
+
+  write_status_line(kStorageStatusRow, "fs write ok");
   write_status_line(kShellStatusRow, "shell ok");
 
 #if defined(OS64_ENABLE_PAGE_FAULT_SMOKE)
@@ -4549,6 +5314,7 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 #if !defined(OS64_ENABLE_PAGE_FAULT_SMOKE) && !defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
   if (!initialize_shell(&g_shell, boot_info, &g_page_allocator, &g_kernel_heap,
                         &g_boot_volume, &g_boot_block_device,
+                        &g_os64fs, &g_vfs, &g_scheduler,
                         &g_syscall_context, &kShellOutput)) {
     write_status_line(kShellStatusRow, "shell reset bad");
     return;

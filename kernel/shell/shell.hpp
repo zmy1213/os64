@@ -11,6 +11,10 @@
 #include "storage/boot_volume.hpp"
 #include "syscall/syscall.hpp"
 
+struct SchedulerState;
+struct Os64Fs;
+struct VfsMount;
+
 constexpr size_t kShellHistoryCapacity = 24;       // 文件系统命令变多后，先记最近 24 条命令，仍然保持固定 ring buffer。
 constexpr size_t kShellHistoryEntryCapacity = 32;  // 和当前 shell 输入缓冲区保持同量级，先不做超长命令历史。
 
@@ -26,10 +30,13 @@ struct ShellOutput {
 
 struct ShellState {
   const BootInfo* boot_info;        // `bootinfo` / `e820` 命令要从这里看启动阶段交进来的信息。
-  const PageAllocator* allocator;  // `mem` 命令会从这里拿当前页分配器状态。
+  PageAllocator* allocator;         // `mem` 只读它；`run <path>` 则真的会继续用它分配用户页。
   const KernelHeap* heap;          // `heap` 命令会从这里拿当前堆状态。
   const BootVolume* boot_volume;   // `bootinfo` 仍然会顺手展示这段预读卷的搬运结果。
   const BlockDevice* block_device; // `disk` 命令现在看的是更通用的块设备抽象。
+  const Os64Fs* filesystem;        // `run <path>` 需要拿它把 ELF 文件真正装进新进程地址空间。
+  VfsMount* vfs;                   // shell 现在已经能发起写操作，所以这里持有可变 VFS 挂载点。
+  SchedulerState* scheduler;       // `run <path>` 最后要把新建 user thread 挂到哪一份 scheduler 上。
   SyscallContext* syscall_context; // `pwd/cd/ls/cat/stat` 现在统一走 syscall 上下文，不再私藏一份 cwd。
   ShellOutput output;              // 所有 shell 输出最终都走这个回调。
   uint16_t history_count;          // 当前 ring buffer 里实际存了多少条命令。
@@ -47,10 +54,13 @@ enum ShellCommandResult : uint8_t {
 
 bool initialize_shell(ShellState* shell,
                       const BootInfo* boot_info,
-                      const PageAllocator* allocator,
+                      PageAllocator* allocator,
                       const KernelHeap* heap,
                       const BootVolume* boot_volume,
                       const BlockDevice* block_device,
+                      const Os64Fs* filesystem,
+                      VfsMount* vfs,
+                      SchedulerState* scheduler,
                       SyscallContext* syscall_context,
                       const ShellOutput* output);
 
@@ -66,9 +76,16 @@ void shell_print_prompt(const ShellState* shell);
 // - disk
 // - pwd
 // - cd [path]
-// - ls [path]
-// - cat <path>
-// - stat <path>
+    // - ls [path]
+    // - cat <path>
+    // - stat <path>
+    // - touch <path>
+    // - mkdir <path>
+    // - write <path> <text>
+    // - append <path> <text>
+    // - rm <path>
+    // - sync
+    // - run <path>
 // - irq
 // - bootinfo
 // - e820
