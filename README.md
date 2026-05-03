@@ -145,6 +145,8 @@ os64>
 - `ticks`
 - `heap`
 - `disk`
+- `pwd`
+- `cd [path]`
 - `ls [path]`
 - `cat <path>`
 - `stat <path>`
@@ -190,9 +192,10 @@ os64>
 - kernel 里还在 `OS64FS` 上面补了 `DirectoryHandle` 目录句柄层
 - kernel 里现在又在文件句柄和目录句柄上面补了第一版 `VFS`
 - kernel 里现在还在 `VFS` 上面补了第一版 `FileDescriptorTable` 文件描述符表
-- shell 里可以用 `disk` 看块设备，用 `ls` / `cat` / `stat` 看文件系统
+- shell 里可以用 `disk` 看块设备，用 `pwd` / `cd` 管当前目录，用 `ls` / `cat` / `stat` 看文件系统
 - 其中 `ls` / `stat` 走 `vfs_*` 接口，`cat` 进一步走 `fd_open` / `fd_read` / `fd_close`
-- 这样 shell 不再直接调用底层 `OS64FS` / `FileHandle` / `DirectoryHandle`，读文件的形状开始接近真实系统调用模型
+- shell 会先把相对路径按 cwd 解析成绝对路径，例如 `cd docs` 后 `cat guide.txt` 会解析成 `/docs/guide.txt`
+- 这样 shell 不再直接调用底层 `OS64FS` / `FileHandle` / `DirectoryHandle`，读文件和路径解析的形状开始接近真实系统调用模型
 
 ### 一个很重要的提醒
 

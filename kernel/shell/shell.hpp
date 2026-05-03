@@ -14,6 +14,7 @@
 
 constexpr size_t kShellHistoryCapacity = 24;       // 文件系统命令变多后，先记最近 24 条命令，仍然保持固定 ring buffer。
 constexpr size_t kShellHistoryEntryCapacity = 32;  // 和当前 shell 输入缓冲区保持同量级，先不做超长命令历史。
+constexpr size_t kShellPathCapacity = 64;          // 第一版 cwd 先限制 63 个字符，够覆盖当前 OS64FS 教学路径。
 
 // shell 只要求外界提供一个“输出 1 个字符”的最小能力。
 // 这样它就不用关心自己是在写 VGA、串口，还是两边一起写。
@@ -33,6 +34,7 @@ struct ShellState {
   const BlockDevice* block_device; // `disk` 命令现在看的是更通用的块设备抽象。
   const VfsMount* vfs;             // `ls` / `stat` 这类路径查询统一从 VFS 入口访问文件系统。
   FileDescriptorTable* fd_table;   // `cat` 先通过 fd_open 拿小整数 fd，再用 fd_read 顺序读取文件。
+  char current_working_directory[kShellPathCapacity];  // shell 当前工作目录，始终保存成 `/docs` 这种绝对路径。
   ShellOutput output;              // 所有 shell 输出最终都走这个回调。
   uint16_t history_count;          // 当前 ring buffer 里实际存了多少条命令。
   uint16_t history_next_slot;      // 下一条命令应该写进哪个槽位。
@@ -67,6 +69,8 @@ void shell_print_prompt(const ShellState* shell);
 // - ticks
 // - heap
 // - disk
+// - pwd
+// - cd [path]
 // - ls [path]
 // - cat <path>
 // - stat <path>

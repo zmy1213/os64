@@ -111,6 +111,14 @@ constexpr uint8_t kShellHeapScancodes[] = {
 constexpr uint8_t kShellDiskScancodes[] = {
     0x20, 0x17, 0x1F, 0x25, 0x1C,  // disk + Enter
 };
+constexpr uint8_t kShellPwdScancodes[] = {
+    0x19, 0x11, 0x20, 0x1C,        // pwd + Enter
+};
+constexpr uint8_t kShellCdDocsScancodes[] = {
+    0x2E, 0x20, 0x39,              // cd + Space
+    0x20, 0x18, 0x2E, 0x1F,        // docs
+    0x1C,                          // Enter
+};
 constexpr uint8_t kShellLsScancodes[] = {
     0x26, 0x1F, 0x1C,              // ls + Enter
 };
@@ -131,6 +139,13 @@ constexpr uint8_t kShellCatAbsoluteGuideScancodes[] = {
     0x35,                          // /
     0x20, 0x18, 0x2E, 0x1F,        // docs
     0x35,                          // /
+    0x22, 0x16, 0x17, 0x20, 0x12,  // guide
+    0x34,                          // .
+    0x14, 0x2D, 0x14,              // txt
+    0x1C,                          // Enter
+};
+constexpr uint8_t kShellCatGuideScancodes[] = {
+    0x2E, 0x1E, 0x14, 0x39,        // cat + Space
     0x22, 0x16, 0x17, 0x20, 0x12,  // guide
     0x34,                          // .
     0x14, 0x2D, 0x14,              // txt
@@ -1696,6 +1711,21 @@ constexpr ShellSmokeCommand kShellSmokeCommands[] = {
     {"stat docs/../notes.txt", kShellStatParentNotesScancodes,
      sizeof(kShellStatParentNotesScancodes) /
          sizeof(kShellStatParentNotesScancodes[0]),
+     kShellCommandExecuted},
+    {"pwd", kShellPwdScancodes,
+     sizeof(kShellPwdScancodes) / sizeof(kShellPwdScancodes[0]),
+     kShellCommandExecuted},
+    {"cd docs", kShellCdDocsScancodes,
+     sizeof(kShellCdDocsScancodes) / sizeof(kShellCdDocsScancodes[0]),
+     kShellCommandExecuted},
+    {"pwd", kShellPwdScancodes,
+     sizeof(kShellPwdScancodes) / sizeof(kShellPwdScancodes[0]),
+     kShellCommandExecuted},
+    {"ls", kShellLsScancodes,
+     sizeof(kShellLsScancodes) / sizeof(kShellLsScancodes[0]),
+     kShellCommandExecuted},
+    {"cat guide.txt", kShellCatGuideScancodes,
+     sizeof(kShellCatGuideScancodes) / sizeof(kShellCatGuideScancodes[0]),
      kShellCommandExecuted},
     {"irq", kShellIrqScancodes,
      sizeof(kShellIrqScancodes) / sizeof(kShellIrqScancodes[0]),

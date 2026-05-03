@@ -459,3 +459,7 @@ cwd + cd/pwd
 
 原因是它能继续锻炼 VFS 路径解析，
 而且会让 shell 更像一个真正 OS 的调试终端。
+
+这一轮已经继续落到了下一篇：
+
+[从文件描述符表到 shell 当前工作目录](./KERNEL_SHELL_CWD_GUIDE.md)

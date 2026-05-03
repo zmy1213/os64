@@ -160,6 +160,8 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "ticks - show timer tick count" "$SERIAL_LOG" \
   && grep -q "heap  - show kernel heap stats" "$SERIAL_LOG" \
   && grep -q "disk  - show raw boot block device info" "$SERIAL_LOG" \
+  && grep -q "pwd   - show current directory" "$SERIAL_LOG" \
+  && grep -q "cd    - change current directory" "$SERIAL_LOG" \
   && grep -q "ls    - list directory entries" "$SERIAL_LOG" \
   && grep -q "cat   - print file contents" "$SERIAL_LOG" \
   && grep -q "stat  - show inode metadata" "$SERIAL_LOG" \
@@ -190,23 +192,28 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "disk_total_bytes=2048" "$SERIAL_LOG" \
   && grep -q "shell_line=ls" "$SERIAL_LOG" \
   && grep -q "ls_path=/" "$SERIAL_LOG" \
+  && grep -q "ls_resolved_path=/" "$SERIAL_LOG" \
   && grep -q "ls_entry_count=3" "$SERIAL_LOG" \
   && grep -q "ls\\[0\\]=file readme.txt size=" "$SERIAL_LOG" \
   && grep -q "ls\\[1\\]=file notes.txt size=" "$SERIAL_LOG" \
   && grep -q "ls\\[2\\]=dir docs size=" "$SERIAL_LOG" \
   && grep -q "shell_line=ls docs" "$SERIAL_LOG" \
   && grep -q "ls_path=docs" "$SERIAL_LOG" \
+  && grep -q "ls_resolved_path=/docs" "$SERIAL_LOG" \
   && grep -q "ls_entry_count=1" "$SERIAL_LOG" \
   && grep -q "ls\\[0\\]=file guide.txt size=" "$SERIAL_LOG" \
   && grep -q "shell_line=cat readme.txt" "$SERIAL_LOG" \
   && grep -q "cat_path=readme.txt" "$SERIAL_LOG" \
+  && grep -q "cat_resolved_path=/readme.txt" "$SERIAL_LOG" \
   && grep -q "cat_size=" "$SERIAL_LOG" \
   && grep -q "os64fs readme: the 64-bit kernel now mounts a real read-only filesystem." "$SERIAL_LOG" \
   && grep -q "shell_line=cat /docs/guide.txt" "$SERIAL_LOG" \
   && grep -q "cat_path=/docs/guide.txt" "$SERIAL_LOG" \
+  && grep -q "cat_resolved_path=/docs/guide.txt" "$SERIAL_LOG" \
   && grep -q "os64fs guide: stage2 only preloads raw sectors." "$SERIAL_LOG" \
   && grep -q "shell_line=stat docs/guide.txt" "$SERIAL_LOG" \
   && grep -q "stat_path=docs/guide.txt" "$SERIAL_LOG" \
+  && grep -q "stat_resolved_path=/docs/guide.txt" "$SERIAL_LOG" \
   && grep -q "stat_inode=5" "$SERIAL_LOG" \
   && grep -q "stat_type=file" "$SERIAL_LOG" \
   && grep -q "stat_links=1" "$SERIAL_LOG" \
@@ -215,9 +222,18 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "stat_block_1=5" "$SERIAL_LOG" \
   && grep -q "shell_line=stat docs/../notes.txt" "$SERIAL_LOG" \
   && grep -q "stat_path=docs/../notes.txt" "$SERIAL_LOG" \
+  && grep -q "stat_resolved_path=/notes.txt" "$SERIAL_LOG" \
   && grep -q "stat_inode=3" "$SERIAL_LOG" \
   && grep -q "stat_blocks=1" "$SERIAL_LOG" \
   && grep -q "stat_block_0=2" "$SERIAL_LOG" \
+  && grep -q "shell_line=pwd" "$SERIAL_LOG" \
+  && grep -q "pwd_path=/" "$SERIAL_LOG" \
+  && grep -q "shell_line=cd docs" "$SERIAL_LOG" \
+  && grep -q "cwd_path=/docs" "$SERIAL_LOG" \
+  && grep -q "pwd_path=/docs" "$SERIAL_LOG" \
+  && grep -q "ls_path=/docs" "$SERIAL_LOG" \
+  && grep -q "cat_path=guide.txt" "$SERIAL_LOG" \
+  && grep -q "cat_resolved_path=/docs/guide.txt" "$SERIAL_LOG" \
   && grep -q "shell_line=irq" "$SERIAL_LOG" \
   && grep -q "irq_timer_ticks=" "$SERIAL_LOG" \
   && grep -q "irq_timer_frequency_hz=100" "$SERIAL_LOG" \
@@ -248,8 +264,8 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "uptime_frequency_hz=100" "$SERIAL_LOG" \
   && grep -q "uptime_ms=" "$SERIAL_LOG" \
   && grep -q "shell_line=history" "$SERIAL_LOG" \
-  && grep -q "history_buffered=18" "$SERIAL_LOG" \
-  && grep -q "history_total=18" "$SERIAL_LOG" \
+  && grep -q "history_buffered=23" "$SERIAL_LOG" \
+  && grep -q "history_total=23" "$SERIAL_LOG" \
   && grep -Fq "history[1]=help" "$SERIAL_LOG" \
   && grep -Fq "history[2]=mem" "$SERIAL_LOG" \
   && grep -Fq "history[3]=ticks" "$SERIAL_LOG" \
@@ -261,16 +277,21 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -Fq "history[9]=cat /docs/guide.txt" "$SERIAL_LOG" \
   && grep -Fq "history[10]=stat docs/guide.txt" "$SERIAL_LOG" \
   && grep -Fq "history[11]=stat docs/../notes.txt" "$SERIAL_LOG" \
-  && grep -Fq "history[12]=irq" "$SERIAL_LOG" \
-  && grep -Fq "history[13]=bootinfo" "$SERIAL_LOG" \
-  && grep -Fq "history[14]=e820" "$SERIAL_LOG" \
-  && grep -Fq "history[15]=cpu" "$SERIAL_LOG" \
-  && grep -Fq "history[16]=echo hi42" "$SERIAL_LOG" \
-  && grep -Fq "history[17]=uptime" "$SERIAL_LOG" \
-  && grep -Fq "history[18]=history" "$SERIAL_LOG" \
-  && grep -q "history_buffered=19" "$SERIAL_LOG" \
-  && grep -q "history_total=19" "$SERIAL_LOG" \
-  && grep -Fq "history[19]=history" "$SERIAL_LOG" \
+  && grep -Fq "history[12]=pwd" "$SERIAL_LOG" \
+  && grep -Fq "history[13]=cd docs" "$SERIAL_LOG" \
+  && grep -Fq "history[14]=pwd" "$SERIAL_LOG" \
+  && grep -Fq "history[15]=ls" "$SERIAL_LOG" \
+  && grep -Fq "history[16]=cat guide.txt" "$SERIAL_LOG" \
+  && grep -Fq "history[17]=irq" "$SERIAL_LOG" \
+  && grep -Fq "history[18]=bootinfo" "$SERIAL_LOG" \
+  && grep -Fq "history[19]=e820" "$SERIAL_LOG" \
+  && grep -Fq "history[20]=cpu" "$SERIAL_LOG" \
+  && grep -Fq "history[21]=echo hi42" "$SERIAL_LOG" \
+  && grep -Fq "history[22]=uptime" "$SERIAL_LOG" \
+  && grep -Fq "history[23]=history" "$SERIAL_LOG" \
+  && grep -q "history_buffered=24" "$SERIAL_LOG" \
+  && grep -q "history_total=24" "$SERIAL_LOG" \
+  && grep -Fq "history[24]=history" "$SERIAL_LOG" \
   && grep -q "shell_line=clear" "$SERIAL_LOG" \
   && grep -q "shell_line=bad" "$SERIAL_LOG" \
   && grep -q "shell_result=unknown" "$SERIAL_LOG" \

@@ -104,6 +104,10 @@ bool is_space_char(char ch) {
   return ch == ' ' || ch == '\t';
 }
 
+bool is_path_separator(char ch) {
+  return ch == '/';
+}
+
 const char* skip_spaces(const char* text) {
   if (text == nullptr) {
     return nullptr;
@@ -140,6 +144,178 @@ const char* trim_trailing_spaces(const char* begin, const char* end) {
   }
 
   return end;
+}
+
+const char* skip_path_separators(const char* cursor, const char* end) {
+  while (cursor < end && is_path_separator(*cursor)) {
+    ++cursor;
+  }
+
+  return cursor;
+}
+
+size_t path_component_length(const char* begin, const char* end) {
+  size_t length = 0;
+  while ((begin + length) < end &&
+         !is_path_separator(begin[length])) {
+    ++length;
+  }
+
+  return length;
+}
+
+bool path_component_is_dot(const char* component, size_t length) {
+  return component != nullptr && length == 1 && component[0] == '.';
+}
+
+bool path_component_is_dot_dot(const char* component, size_t length) {
+  return component != nullptr &&
+         length == 2 &&
+         component[0] == '.' &&
+         component[1] == '.';
+}
+
+bool copy_string(char* destination, size_t capacity, const char* source) {
+  if (destination == nullptr || source == nullptr || capacity == 0) {
+    return false;
+  }
+
+  const size_t length = string_length(source);
+  if (length >= capacity) {
+    return false;
+  }
+
+  for (size_t i = 0; i < length; ++i) {
+    destination[i] = source[i];
+  }
+  destination[length] = '\0';
+  return true;
+}
+
+bool set_root_path(char* path, size_t capacity) {
+  if (path == nullptr || capacity < 2) {
+    return false;
+  }
+
+  path[0] = '/';
+  path[1] = '\0';
+  return true;
+}
+
+bool append_path_component(char* path,
+                           size_t capacity,
+                           const char* component,
+                           size_t component_length) {
+  if (path == nullptr || component == nullptr || capacity == 0 ||
+      component_length == 0) {
+    return false;
+  }
+
+  size_t current_length = string_length(path);
+  const bool path_is_root =
+      current_length == 1 && path[0] == '/';
+  const size_t slash_bytes = path_is_root ? 0 : 1;
+  if (current_length + slash_bytes + component_length >= capacity) {
+    return false;
+  }
+
+  if (!path_is_root) {
+    path[current_length++] = '/';
+  }
+
+  for (size_t i = 0; i < component_length; ++i) {
+    path[current_length + i] = component[i];
+  }
+
+  path[current_length + component_length] = '\0';
+  return true;
+}
+
+void pop_path_component(char* path) {
+  if (path == nullptr) {
+    return;
+  }
+
+  const size_t length = string_length(path);
+  if (length <= 1) {
+    (void)set_root_path(path, kShellPathCapacity);
+    return;
+  }
+
+  size_t index = length;
+  while (index > 1 && path[index - 1] != '/') {
+    --index;
+  }
+
+  if (index <= 1) {
+    (void)set_root_path(path, kShellPathCapacity);
+    return;
+  }
+
+  path[index - 1] = '\0';
+}
+
+bool resolve_shell_path(const ShellState* shell,
+                        const char* raw_path,
+                        char* out_path,
+                        size_t capacity) {
+  if (shell == nullptr || out_path == nullptr || capacity < 2) {
+    return false;
+  }
+
+  const char* begin = skip_spaces(raw_path);
+  if (begin == nullptr || begin[0] == '\0') {
+    return copy_string(out_path, capacity,
+                       shell->current_working_directory);
+  }
+
+  const char* end = begin + string_length(begin);
+  end = trim_trailing_spaces(begin, end);
+  if (end <= begin) {
+    return copy_string(out_path, capacity,
+                       shell->current_working_directory);
+  }
+
+  const bool absolute = is_path_separator(begin[0]);
+  if (absolute) {
+    if (!set_root_path(out_path, capacity)) {
+      return false;
+    }
+  } else if (!copy_string(out_path, capacity,
+                          shell->current_working_directory)) {
+    return false;
+  }
+
+  const char* cursor =
+      absolute ? skip_path_separators(begin, end) : begin;
+  while (cursor < end) {
+    const size_t component_length =
+        path_component_length(cursor, end);
+    if (component_length == 0) {
+      cursor = skip_path_separators(cursor, end);
+      continue;
+    }
+
+    if (path_component_is_dot(cursor, component_length)) {
+      cursor = skip_path_separators(cursor + component_length, end);
+      continue;
+    }
+
+    if (path_component_is_dot_dot(cursor, component_length)) {
+      pop_path_component(out_path);
+      cursor = skip_path_separators(cursor + component_length, end);
+      continue;
+    }
+
+    if (!append_path_component(out_path, capacity, cursor,
+                               component_length)) {
+      return false;
+    }
+
+    cursor = skip_path_separators(cursor + component_length, end);
+  }
+
+  return true;
 }
 
 bool is_boot_info_valid(const BootInfo* boot_info) {
@@ -290,6 +466,10 @@ void handle_help_command(const ShellState* shell) {
   write_newline(shell);
   write_string(shell, "disk  - show raw boot block device info");
   write_newline(shell);
+  write_string(shell, "pwd   - show current directory");
+  write_newline(shell);
+  write_string(shell, "cd    - change current directory");
+  write_newline(shell);
   write_string(shell, "ls    - list directory entries");
   write_newline(shell);
   write_string(shell, "cat   - print file contents");
@@ -394,6 +574,64 @@ void handle_disk_command(const ShellState* shell) {
   write_newline(shell);
 }
 
+void handle_pwd_command(const ShellState* shell) {
+  if (shell == nullptr) {
+    return;
+  }
+
+  write_string(shell, "pwd_path=");
+  write_string(shell, shell->current_working_directory);
+  write_newline(shell);
+}
+
+void handle_cd_command(ShellState* shell, const char* arguments) {
+  if (shell == nullptr || !vfs_is_mounted(shell->vfs)) {
+    write_string(shell, "fs unavailable");
+    write_newline(shell);
+    return;
+  }
+
+  char resolved_path[kShellPathCapacity];
+  const char* path = skip_spaces(arguments);
+  if (path == nullptr || path[0] == '\0') {
+    path = "/";
+  }
+
+  if (!resolve_shell_path(shell, path, resolved_path,
+                          sizeof(resolved_path))) {
+    write_string(shell, "cd path too long");
+    write_newline(shell);
+    return;
+  }
+
+  VfsStat stat;
+  if (!vfs_stat(shell->vfs, resolved_path, &stat)) {
+    write_string(shell, "cd path not found: ");
+    write_string(shell, path);
+    write_newline(shell);
+    return;
+  }
+
+  if (stat.type != kVfsNodeTypeDirectory) {
+    write_string(shell, "cd not a directory: ");
+    write_string(shell, path);
+    write_newline(shell);
+    return;
+  }
+
+  if (!copy_string(shell->current_working_directory,
+                   sizeof(shell->current_working_directory),
+                   resolved_path)) {
+    write_string(shell, "cd update failed");
+    write_newline(shell);
+    return;
+  }
+
+  write_string(shell, "cwd_path=");
+  write_string(shell, shell->current_working_directory);
+  write_newline(shell);
+}
+
 void handle_ls_command(const ShellState* shell, const char* arguments) {
   if (shell == nullptr || !vfs_is_mounted(shell->vfs)) {
     write_string(shell, "fs unavailable");
@@ -402,12 +640,20 @@ void handle_ls_command(const ShellState* shell, const char* arguments) {
   }
 
   const char* path = skip_spaces(arguments);
+  char resolved_path[kShellPathCapacity];
   if (path == nullptr || path[0] == '\0') {
-    path = "/";
+    path = shell->current_working_directory;
+  }
+
+  if (!resolve_shell_path(shell, path, resolved_path,
+                          sizeof(resolved_path))) {
+    write_string(shell, "ls path too long");
+    write_newline(shell);
+    return;
   }
 
   VfsStat stat;
-  if (!vfs_stat(shell->vfs, path, &stat)) {
+  if (!vfs_stat(shell->vfs, resolved_path, &stat)) {
     write_string(shell, "ls path not found: ");
     write_string(shell, path);
     write_newline(shell);
@@ -422,7 +668,7 @@ void handle_ls_command(const ShellState* shell, const char* arguments) {
   }
 
   VfsDirectory handle;
-  if (!vfs_open_directory(shell->vfs, path, &handle)) {
+  if (!vfs_open_directory(shell->vfs, resolved_path, &handle)) {
     write_string(shell, "ls open failed");
     write_newline(shell);
     return;
@@ -432,6 +678,10 @@ void handle_ls_command(const ShellState* shell, const char* arguments) {
 
   write_string(shell, "ls_path=");
   write_string(shell, path);
+  write_newline(shell);
+
+  write_string(shell, "ls_resolved_path=");
+  write_string(shell, resolved_path);
   write_newline(shell);
 
   write_string(shell, "ls_entry_count=");
@@ -476,8 +726,16 @@ void handle_cat_command(const ShellState* shell, const char* arguments) {
     return;
   }
 
+  char resolved_path[kShellPathCapacity];
+  if (!resolve_shell_path(shell, path, resolved_path,
+                          sizeof(resolved_path))) {
+    write_string(shell, "cat path too long");
+    write_newline(shell);
+    return;
+  }
+
   VfsStat stat;
-  if (!vfs_stat(shell->vfs, path, &stat)) {
+  if (!vfs_stat(shell->vfs, resolved_path, &stat)) {
     write_string(shell, "cat path not found: ");
     write_string(shell, path);
     write_newline(shell);
@@ -491,7 +749,7 @@ void handle_cat_command(const ShellState* shell, const char* arguments) {
     return;
   }
 
-  const int32_t fd = fd_open(shell->fd_table, path);
+  const int32_t fd = fd_open(shell->fd_table, resolved_path);
   if (fd == kInvalidFileDescriptor) {
     write_string(shell, "cat open failed");
     write_newline(shell);
@@ -508,6 +766,10 @@ void handle_cat_command(const ShellState* shell, const char* arguments) {
 
   write_string(shell, "cat_path=");
   write_string(shell, path);
+  write_newline(shell);
+
+  write_string(shell, "cat_resolved_path=");
+  write_string(shell, resolved_path);
   write_newline(shell);
 
   write_string(shell, "cat_size=");
@@ -550,8 +812,16 @@ void handle_stat_command(const ShellState* shell, const char* arguments) {
     return;
   }
 
+  char resolved_path[kShellPathCapacity];
+  if (!resolve_shell_path(shell, path, resolved_path,
+                          sizeof(resolved_path))) {
+    write_string(shell, "stat path too long");
+    write_newline(shell);
+    return;
+  }
+
   VfsStat stat;
-  if (!vfs_stat(shell->vfs, path, &stat)) {
+  if (!vfs_stat(shell->vfs, resolved_path, &stat)) {
     write_string(shell, "stat path not found: ");
     write_string(shell, path);
     write_newline(shell);
@@ -560,6 +830,10 @@ void handle_stat_command(const ShellState* shell, const char* arguments) {
 
   write_string(shell, "stat_path=");
   write_string(shell, path);
+  write_newline(shell);
+
+  write_string(shell, "stat_resolved_path=");
+  write_string(shell, resolved_path);
   write_newline(shell);
 
   write_string(shell, "stat_inode=");
@@ -827,6 +1101,12 @@ bool initialize_shell(ShellState* shell,
   memory_set(shell->history_sequence_numbers, 0,
              sizeof(shell->history_sequence_numbers));
   memory_set(shell->history_entries, 0, sizeof(shell->history_entries));
+  memory_set(shell->current_working_directory, 0,
+             sizeof(shell->current_working_directory));
+  if (!set_root_path(shell->current_working_directory,
+                     sizeof(shell->current_working_directory))) {
+    return false;
+  }
   return true;
 }
 
@@ -894,6 +1174,17 @@ ShellCommandResult shell_execute_line(ShellState* shell,
   if (command_matches(trimmed_line, "disk", &arguments) &&
       is_empty_after_trim(arguments)) {
     handle_disk_command(shell);
+    return kShellCommandExecuted;
+  }
+
+  if (command_matches(trimmed_line, "pwd", &arguments) &&
+      is_empty_after_trim(arguments)) {
+    handle_pwd_command(shell);
+    return kShellCommandExecuted;
+  }
+
+  if (command_matches(trimmed_line, "cd", &arguments)) {
+    handle_cd_command(shell, arguments);
     return kShellCommandExecuted;
   }
 
