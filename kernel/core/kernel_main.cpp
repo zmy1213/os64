@@ -64,10 +64,14 @@ constexpr uint64_t kTimerSecondLogTick = 20;                           // 第 20
 constexpr uint64_t kTimerWaitTestTicks = 3;                            // 第一段先直接按 tick 等 3 下。
 constexpr uint64_t kTimerSleepTestMs = 50;                             // 第二段再按毫秒等 50ms，在 100Hz 下约等于 5 个 tick。
 constexpr uint64_t kTimerSleepMinTicks = 5;                            // 50ms 在 100Hz 下至少应该跨过 5 个 tick。
-constexpr uint32_t kSchedulerTimeSliceTicks = 1;                       // 第一版时间片先故意压成 1 tick，方便把线程切换痕迹放大出来。
-constexpr uint64_t kSchedulerThreadWaitTicks = 1;                      // 每个 smoke 线程每轮都先等 1 个 tick，再观察调度器会不会换人。
-constexpr size_t kSchedulerThreadIterations = 2;                       // 2 个线程各跑 2 轮，最理想的切换轨迹就是 ABAB。
-constexpr char kSchedulerExpectedTrace[] = "ABAB";                     // 这就是这一轮最直观的预期执行顺序。
+constexpr uint32_t kSchedulerTimeSliceTicks = 1;                       // 时间片仍然故意压成 1 tick，这样线程切换痕迹最容易看出来。
+constexpr uint64_t kSchedulerThreadWaitTicks = 1;                      // 需要观察 round-robin 的线程，每轮都先等 1 个 tick。
+constexpr size_t kSchedulerPriorityNormalIterations = 2;               // 两个 normal 线程各跑 2 轮，方便证明同优先级里会轮转。
+constexpr size_t kSchedulerSleepIterations = 2;                        // sleep 烟测里两个线程也各跑 2 轮，目标轨迹还是 ABAB。
+constexpr uint64_t kSchedulerWakeThreadWaitTicks = 1;                  // waker 先等 1 个 tick，再去唤醒 blocked 线程。
+constexpr char kSchedulerPriorityExpectedTrace[] = "HABABC";           // high 先跑，两个 normal 轮转，最后 background 才跑。
+constexpr char kSchedulerSleepExpectedTrace[] = "ABAB";                // 两个 normal 线程各 sleep 1 tick 后，应被 idle + timer 唤醒成交替执行。
+constexpr char kSchedulerBlockExpectedTrace[] = "BWb";                 // waiter 先 block，waker 唤醒后 waiter 再继续补完自己的后半段。
 constexpr uint8_t kKeyboardIrqLine = 1;                                // 传统 PC 键盘走主 PIC 的 IRQ1。
 constexpr uint64_t kKeyboardTestTimeoutTicks = 20;                     // 键盘测试每轮最多等 20 个 tick，避免异常时无限卡住。
 constexpr uint16_t kConsoleTestStartRow = 20;                          // 新增 scheduler 状态行后，把交互测试区再往下挪一行。
@@ -303,14 +307,40 @@ struct alignas(64) KernelAlignedObjectProbe {
 };
 
 struct SchedulerSmokeState {
-  char trace[8];             // 线程每跑一轮，就往这里追加一个标记字符。
-  size_t trace_length;       // 当前已经记录了多少步。
+  char priority_trace[8];        // priority 烟测专用轨迹。
+  size_t priority_trace_length;
+  char sleep_trace[8];           // sleep + idle 烟测专用轨迹。
+  size_t sleep_trace_length;
+  char block_trace[8];           // block + wake 烟测专用轨迹。
+  size_t block_trace_length;
 };
 
-struct SchedulerSmokeThreadContext {
-  SchedulerSmokeState* shared;   // 两个线程共享同一份轨迹缓冲区，方便最后核对执行顺序。
-  char trace_mark;               // 这个线程每次执行时要写进轨迹里的字符，比如 'A' 或 'B'。
+struct SchedulerPriorityThreadContext {
+  SchedulerSmokeState* shared;   // 多个 priority 线程共享同一份记录区。
+  char trace_mark;               // 这个线程执行时往 priority trace 里写哪个字符。
   uint64_t observed_tid;         // 线程第一次真正跑起来后，会把自己看到的 tid 记到这里。
+  size_t iterations;             // 这个线程要执行多少轮。
+  uint64_t wait_ticks;           // 每轮后要不要等 1 个 tick，从而给调度器制造切换机会。
+};
+
+struct SchedulerSleepThreadContext {
+  SchedulerSmokeState* shared;   // sleep 烟测的共享状态。
+  char trace_mark;               // 每次醒来/运行时写入的字符。
+  uint64_t observed_tid;         // 证明线程上下文里看到的 tid 确实是它自己。
+  size_t iterations;             // 一共要跑几轮。
+  uint64_t sleep_ticks;          // 每跑一轮后睡多久。
+};
+
+struct SchedulerBlockedThreadContext {
+  SchedulerSmokeState* shared;   // block/wake 烟测的共享状态。
+  uint64_t observed_tid;         // waiter 线程第一次真正跑起来时看到的 tid。
+};
+
+struct SchedulerWakeThreadContext {
+  SchedulerSmokeState* shared;   // block/wake 烟测的共享状态。
+  ThreadControlBlock* wake_target;  // 这个线程负责唤醒谁。
+  uint64_t observed_tid;            // waker 第一次真正跑起来时看到的 tid。
+  uint64_t wait_ticks;              // 先等几个 tick，再去 wake。
 };
 
 // 往 I/O 端口写一个字节。内核里没有现成库函数，所以这里自己直接发机器指令。
@@ -2036,33 +2066,120 @@ bool run_timer_smoke_test() {
          sleep_elapsed_ticks >= kTimerSleepMinTicks;
 }
 
-void append_scheduler_trace(SchedulerSmokeState* state, char mark) {
-  if (state == nullptr || state->trace_length + 1 >= sizeof(state->trace)) {
+void append_scheduler_trace(char* trace,
+                            size_t capacity,
+                            size_t* trace_length,
+                            char mark) {
+  if (trace == nullptr || trace_length == nullptr ||
+      (*trace_length + 1) >= capacity) {
     return;
   }
 
-  state->trace[state->trace_length++] = mark;
-  state->trace[state->trace_length] = '\0';
+  trace[*trace_length] = mark;
+  ++(*trace_length);
+  trace[*trace_length] = '\0';
 }
 
-void scheduler_smoke_thread_entry(void* raw_context) {
-  auto* const context =
-      static_cast<SchedulerSmokeThreadContext*>(raw_context);
-  if (context == nullptr || context->shared == nullptr) {
+void observe_scheduler_thread_tid(uint64_t* observed_tid) {
+  if (observed_tid == nullptr || *observed_tid != 0) {
     return;
   }
 
   const ThreadControlBlock* const current_thread =
       scheduler_current_thread(&g_scheduler);
   if (current_thread != nullptr) {
-    context->observed_tid = current_thread->tid;
+    *observed_tid = current_thread->tid;
+  }
+}
+
+bool run_scheduler_phase_until_idle() {
+  enable_interrupts();
+  const bool run_ok = scheduler_run_until_idle(&g_scheduler);
+  disable_interrupts();
+  return run_ok;
+}
+
+void scheduler_priority_thread_entry(void* raw_context) {
+  auto* const context =
+      static_cast<SchedulerPriorityThreadContext*>(raw_context);
+  if (context == nullptr || context->shared == nullptr) {
+    return;
   }
 
-  for (size_t iteration = 0; iteration < kSchedulerThreadIterations;
-       ++iteration) {
-    append_scheduler_trace(context->shared, context->trace_mark);
-    timer_wait_ticks(kSchedulerThreadWaitTicks);
+  observe_scheduler_thread_tid(&context->observed_tid);
+
+  for (size_t iteration = 0; iteration < context->iterations; ++iteration) {
+    append_scheduler_trace(context->shared->priority_trace,
+                           sizeof(context->shared->priority_trace),
+                           &context->shared->priority_trace_length,
+                           context->trace_mark);
+
+    if (context->wait_ticks != 0) {
+      timer_wait_ticks(context->wait_ticks);
+    }
   }
+}
+
+void scheduler_sleep_thread_entry(void* raw_context) {
+  auto* const context =
+      static_cast<SchedulerSleepThreadContext*>(raw_context);
+  if (context == nullptr || context->shared == nullptr) {
+    return;
+  }
+
+  observe_scheduler_thread_tid(&context->observed_tid);
+
+  for (size_t iteration = 0; iteration < context->iterations; ++iteration) {
+    append_scheduler_trace(context->shared->sleep_trace,
+                           sizeof(context->shared->sleep_trace),
+                           &context->shared->sleep_trace_length,
+                           context->trace_mark);
+    (void)scheduler_sleep_current_thread(context->sleep_ticks);
+  }
+}
+
+void scheduler_blocked_thread_entry(void* raw_context) {
+  auto* const context =
+      static_cast<SchedulerBlockedThreadContext*>(raw_context);
+  if (context == nullptr || context->shared == nullptr) {
+    return;
+  }
+
+  observe_scheduler_thread_tid(&context->observed_tid);
+  append_scheduler_trace(context->shared->block_trace,
+                         sizeof(context->shared->block_trace),
+                         &context->shared->block_trace_length,
+                         'B');
+
+  if (!scheduler_block_current_thread()) {
+    return;
+  }
+
+  append_scheduler_trace(context->shared->block_trace,
+                         sizeof(context->shared->block_trace),
+                         &context->shared->block_trace_length,
+                         'b');
+}
+
+void scheduler_wake_thread_entry(void* raw_context) {
+  auto* const context =
+      static_cast<SchedulerWakeThreadContext*>(raw_context);
+  if (context == nullptr || context->shared == nullptr) {
+    return;
+  }
+
+  observe_scheduler_thread_tid(&context->observed_tid);
+  timer_wait_ticks(context->wait_ticks);
+  append_scheduler_trace(context->shared->block_trace,
+                         sizeof(context->shared->block_trace),
+                         &context->shared->block_trace_length,
+                         'W');
+
+  if (context->wake_target != nullptr) {
+    (void)scheduler_wake_thread(context->wake_target);
+  }
+
+  (void)scheduler_yield_current_thread();
 }
 
 bool run_scheduler_smoke_test() {
@@ -2073,72 +2190,219 @@ bool run_scheduler_smoke_test() {
   SchedulerSmokeState smoke_state;
   memory_set(&smoke_state, 0, sizeof(smoke_state));
 
-  SchedulerSmokeThreadContext thread_a_context;
-  memory_set(&thread_a_context, 0, sizeof(thread_a_context));
-  thread_a_context.shared = &smoke_state;
-  thread_a_context.trace_mark = 'A';
+  SchedulerPriorityThreadContext high_context;
+  memory_set(&high_context, 0, sizeof(high_context));
+  high_context.shared = &smoke_state;
+  high_context.trace_mark = 'H';
+  high_context.iterations = 1;
 
-  SchedulerSmokeThreadContext thread_b_context;
-  memory_set(&thread_b_context, 0, sizeof(thread_b_context));
-  thread_b_context.shared = &smoke_state;
-  thread_b_context.trace_mark = 'B';
+  SchedulerPriorityThreadContext normal_a_context;
+  memory_set(&normal_a_context, 0, sizeof(normal_a_context));
+  normal_a_context.shared = &smoke_state;
+  normal_a_context.trace_mark = 'A';
+  normal_a_context.iterations = kSchedulerPriorityNormalIterations;
+  normal_a_context.wait_ticks = kSchedulerThreadWaitTicks;
 
-  ProcessControlBlock* const process =
-      scheduler_create_kernel_process(&g_scheduler, "kernel-smoke");
-  if (process == nullptr) {
+  SchedulerPriorityThreadContext normal_b_context;
+  memory_set(&normal_b_context, 0, sizeof(normal_b_context));
+  normal_b_context.shared = &smoke_state;
+  normal_b_context.trace_mark = 'B';
+  normal_b_context.iterations = kSchedulerPriorityNormalIterations;
+  normal_b_context.wait_ticks = kSchedulerThreadWaitTicks;
+
+  SchedulerPriorityThreadContext background_context;
+  memory_set(&background_context, 0, sizeof(background_context));
+  background_context.shared = &smoke_state;
+  background_context.trace_mark = 'C';
+  background_context.iterations = 1;
+
+  SchedulerSleepThreadContext sleep_a_context;
+  memory_set(&sleep_a_context, 0, sizeof(sleep_a_context));
+  sleep_a_context.shared = &smoke_state;
+  sleep_a_context.trace_mark = 'A';
+  sleep_a_context.iterations = kSchedulerSleepIterations;
+  sleep_a_context.sleep_ticks = 1;
+
+  SchedulerSleepThreadContext sleep_b_context;
+  memory_set(&sleep_b_context, 0, sizeof(sleep_b_context));
+  sleep_b_context.shared = &smoke_state;
+  sleep_b_context.trace_mark = 'B';
+  sleep_b_context.iterations = kSchedulerSleepIterations;
+  sleep_b_context.sleep_ticks = 1;
+
+  SchedulerBlockedThreadContext blocked_context;
+  memory_set(&blocked_context, 0, sizeof(blocked_context));
+  blocked_context.shared = &smoke_state;
+
+  SchedulerWakeThreadContext wake_context;
+  memory_set(&wake_context, 0, sizeof(wake_context));
+  wake_context.shared = &smoke_state;
+  wake_context.wait_ticks = kSchedulerWakeThreadWaitTicks;
+
+  ProcessControlBlock* const priority_process =
+      scheduler_create_kernel_process(&g_scheduler, "sched-priority");
+  if (priority_process == nullptr) {
     return false;
   }
 
-  ThreadControlBlock* const thread_a =
-      scheduler_create_kernel_thread(&g_scheduler, process, "sched-a",
-                                     scheduler_smoke_thread_entry,
-                                     &thread_a_context, 0);
-  ThreadControlBlock* const thread_b =
-      scheduler_create_kernel_thread(&g_scheduler, process, "sched-b",
-                                     scheduler_smoke_thread_entry,
-                                     &thread_b_context, 0);
-  if (thread_a == nullptr || thread_b == nullptr) {
+  ThreadControlBlock* const high_thread =
+      scheduler_create_kernel_thread(&g_scheduler, priority_process,
+                                     "sched-high",
+                                     scheduler_priority_thread_entry,
+                                     &high_context, 0, kThreadPriorityHigh);
+  ThreadControlBlock* const normal_a_thread =
+      scheduler_create_kernel_thread(&g_scheduler, priority_process,
+                                     "sched-normal-a",
+                                     scheduler_priority_thread_entry,
+                                     &normal_a_context, 0,
+                                     kThreadPriorityNormal);
+  ThreadControlBlock* const normal_b_thread =
+      scheduler_create_kernel_thread(&g_scheduler, priority_process,
+                                     "sched-normal-b",
+                                     scheduler_priority_thread_entry,
+                                     &normal_b_context, 0,
+                                     kThreadPriorityNormal);
+  ThreadControlBlock* const background_thread =
+      scheduler_create_kernel_thread(&g_scheduler, priority_process,
+                                     "sched-background",
+                                     scheduler_priority_thread_entry,
+                                     &background_context, 0,
+                                     kThreadPriorityBackground);
+  if (high_thread == nullptr || normal_a_thread == nullptr ||
+      normal_b_thread == nullptr || background_thread == nullptr) {
     return false;
   }
 
-  serial_write_string("sched_pid=");
-  serial_write_u64(process->pid);
+  serial_write_string("sched_priority_pid=");
+  serial_write_u64(priority_process->pid);
   serial_write_crlf();
 
-  serial_write_string("sched_thread_a_tid=");
-  serial_write_u64(thread_a->tid);
+  serial_write_string("sched_priority_high_tid=");
+  serial_write_u64(high_thread->tid);
   serial_write_crlf();
 
-  serial_write_string("sched_thread_b_tid=");
-  serial_write_u64(thread_b->tid);
+  serial_write_string("sched_priority_normal_a_tid=");
+  serial_write_u64(normal_a_thread->tid);
   serial_write_crlf();
 
-  enable_interrupts();
-  const bool run_ok = scheduler_run_until_idle(&g_scheduler);
-  disable_interrupts();
-
-  serial_write_string("sched_trace=");
-  serial_write_string(smoke_state.trace);
+  serial_write_string("sched_priority_normal_b_tid=");
+  serial_write_u64(normal_b_thread->tid);
   serial_write_crlf();
 
-  serial_write_string("sched_process_state=");
-  serial_write_string(scheduler_process_state_name(process->state));
+  serial_write_string("sched_priority_background_tid=");
+  serial_write_u64(background_thread->tid);
   serial_write_crlf();
 
-  serial_write_string("sched_thread_a_state=");
-  serial_write_string(scheduler_thread_state_name(thread_a->state));
+  const bool run_priority_ok = run_scheduler_phase_until_idle();
+
+  ProcessControlBlock* const sleep_process =
+      scheduler_create_kernel_process(&g_scheduler, "sched-sleep");
+  if (sleep_process == nullptr) {
+    return false;
+  }
+
+  ThreadControlBlock* const sleep_a_thread =
+      scheduler_create_kernel_thread(&g_scheduler, sleep_process,
+                                     "sched-sleep-a",
+                                     scheduler_sleep_thread_entry,
+                                     &sleep_a_context, 0,
+                                     kThreadPriorityNormal);
+  ThreadControlBlock* const sleep_b_thread =
+      scheduler_create_kernel_thread(&g_scheduler, sleep_process,
+                                     "sched-sleep-b",
+                                     scheduler_sleep_thread_entry,
+                                     &sleep_b_context, 0,
+                                     kThreadPriorityNormal);
+  if (sleep_a_thread == nullptr || sleep_b_thread == nullptr) {
+    return false;
+  }
+
+  serial_write_string("sched_sleep_pid=");
+  serial_write_u64(sleep_process->pid);
   serial_write_crlf();
 
-  serial_write_string("sched_thread_b_state=");
-  serial_write_string(scheduler_thread_state_name(thread_b->state));
+  serial_write_string("sched_sleep_thread_a_tid=");
+  serial_write_u64(sleep_a_thread->tid);
   serial_write_crlf();
 
-  serial_write_string("sched_thread_a_ticks=");
-  serial_write_u64(thread_a->consumed_ticks);
+  serial_write_string("sched_sleep_thread_b_tid=");
+  serial_write_u64(sleep_b_thread->tid);
   serial_write_crlf();
 
-  serial_write_string("sched_thread_b_ticks=");
-  serial_write_u64(thread_b->consumed_ticks);
+  const bool run_sleep_ok = run_scheduler_phase_until_idle();
+
+  ProcessControlBlock* const block_process =
+      scheduler_create_kernel_process(&g_scheduler, "sched-block");
+  if (block_process == nullptr) {
+    return false;
+  }
+
+  ThreadControlBlock* const blocked_thread =
+      scheduler_create_kernel_thread(&g_scheduler, block_process,
+                                     "sched-blocked",
+                                     scheduler_blocked_thread_entry,
+                                     &blocked_context, 0,
+                                     kThreadPriorityNormal);
+  if (blocked_thread == nullptr) {
+    return false;
+  }
+
+  wake_context.wake_target = blocked_thread;
+  ThreadControlBlock* const wake_thread =
+      scheduler_create_kernel_thread(&g_scheduler, block_process,
+                                     "sched-waker",
+                                     scheduler_wake_thread_entry,
+                                     &wake_context, 0,
+                                     kThreadPriorityNormal);
+  if (wake_thread == nullptr) {
+    return false;
+  }
+
+  serial_write_string("sched_block_pid=");
+  serial_write_u64(block_process->pid);
+  serial_write_crlf();
+
+  serial_write_string("sched_block_waiter_tid=");
+  serial_write_u64(blocked_thread->tid);
+  serial_write_crlf();
+
+  serial_write_string("sched_block_waker_tid=");
+  serial_write_u64(wake_thread->tid);
+  serial_write_crlf();
+
+  const bool run_block_ok = run_scheduler_phase_until_idle();
+
+  serial_write_string("sched_priority_trace=");
+  serial_write_string(smoke_state.priority_trace);
+  serial_write_crlf();
+
+  serial_write_string("sched_sleep_trace=");
+  serial_write_string(smoke_state.sleep_trace);
+  serial_write_crlf();
+
+  serial_write_string("sched_block_trace=");
+  serial_write_string(smoke_state.block_trace);
+  serial_write_crlf();
+
+  serial_write_string("sched_priority_process_state=");
+  serial_write_string(scheduler_process_state_name(priority_process->state));
+  serial_write_crlf();
+
+  serial_write_string("sched_sleep_process_state=");
+  serial_write_string(scheduler_process_state_name(sleep_process->state));
+  serial_write_crlf();
+
+  serial_write_string("sched_block_process_state=");
+  serial_write_string(scheduler_process_state_name(block_process->state));
+  serial_write_crlf();
+
+  serial_write_string("sched_idle_priority=");
+  serial_write_string(scheduler_thread_priority_name(
+      g_scheduler.idle_thread->priority));
+  serial_write_crlf();
+
+  serial_write_string("sched_idle_dispatches=");
+  serial_write_u64(g_scheduler.idle_thread->dispatch_count);
   serial_write_crlf();
 
   serial_write_string("sched_total_ticks=");
@@ -2157,6 +2421,14 @@ bool run_scheduler_smoke_test() {
   serial_write_u64(g_scheduler.preempt_request_count);
   serial_write_crlf();
 
+  serial_write_string("sched_sleeping_after=");
+  serial_write_u64(scheduler_sleeping_thread_count(&g_scheduler));
+  serial_write_crlf();
+
+  serial_write_string("sched_blocked_after=");
+  serial_write_u64(scheduler_blocked_thread_count(&g_scheduler));
+  serial_write_crlf();
+
   serial_write_string("sched_ready_after=");
   serial_write_u64(scheduler_ready_thread_count(&g_scheduler));
   serial_write_crlf();
@@ -2166,21 +2438,55 @@ bool run_scheduler_smoke_test() {
   serial_write_crlf();
 
   const bool ok =
-      run_ok &&
-      process->pid == 1 &&
-      thread_a->tid == 1 &&
-      thread_b->tid == 2 &&
-      thread_a_context.observed_tid == thread_a->tid &&
-      thread_b_context.observed_tid == thread_b->tid &&
-      strings_equal(smoke_state.trace, kSchedulerExpectedTrace) &&
-      process->state == kProcessStateExited &&
-      thread_a->state == kThreadStateFinished &&
-      thread_b->state == kThreadStateFinished &&
-      thread_a->consumed_ticks >= kSchedulerThreadIterations &&
-      thread_b->consumed_ticks >= kSchedulerThreadIterations &&
-      g_scheduler.total_switches >= 5 &&
-      g_scheduler.total_yields >= 4 &&
-      g_scheduler.preempt_request_count >= 4 &&
+      run_priority_ok &&
+      run_sleep_ok &&
+      run_block_ok &&
+      priority_process->pid == 1 &&
+      sleep_process->pid == 2 &&
+      block_process->pid == 3 &&
+      high_thread->tid == 1 &&
+      normal_a_thread->tid == 2 &&
+      normal_b_thread->tid == 3 &&
+      background_thread->tid == 4 &&
+      sleep_a_thread->tid == 5 &&
+      sleep_b_thread->tid == 6 &&
+      blocked_thread->tid == 7 &&
+      wake_thread->tid == 8 &&
+      high_context.observed_tid == high_thread->tid &&
+      normal_a_context.observed_tid == normal_a_thread->tid &&
+      normal_b_context.observed_tid == normal_b_thread->tid &&
+      background_context.observed_tid == background_thread->tid &&
+      sleep_a_context.observed_tid == sleep_a_thread->tid &&
+      sleep_b_context.observed_tid == sleep_b_thread->tid &&
+      blocked_context.observed_tid == blocked_thread->tid &&
+      wake_context.observed_tid == wake_thread->tid &&
+      strings_equal(smoke_state.priority_trace,
+                    kSchedulerPriorityExpectedTrace) &&
+      strings_equal(smoke_state.sleep_trace,
+                    kSchedulerSleepExpectedTrace) &&
+      strings_equal(smoke_state.block_trace,
+                    kSchedulerBlockExpectedTrace) &&
+      priority_process->state == kProcessStateExited &&
+      sleep_process->state == kProcessStateExited &&
+      block_process->state == kProcessStateExited &&
+      high_thread->state == kThreadStateFinished &&
+      normal_a_thread->state == kThreadStateFinished &&
+      normal_b_thread->state == kThreadStateFinished &&
+      background_thread->state == kThreadStateFinished &&
+      sleep_a_thread->state == kThreadStateFinished &&
+      sleep_b_thread->state == kThreadStateFinished &&
+      blocked_thread->state == kThreadStateFinished &&
+      wake_thread->state == kThreadStateFinished &&
+      normal_a_thread->consumed_ticks >=
+          kSchedulerPriorityNormalIterations &&
+      normal_b_thread->consumed_ticks >=
+          kSchedulerPriorityNormalIterations &&
+      wake_thread->consumed_ticks >= kSchedulerWakeThreadWaitTicks &&
+      g_scheduler.idle_thread != nullptr &&
+      g_scheduler.idle_thread->priority == kThreadPriorityIdle &&
+      g_scheduler.idle_thread->dispatch_count >= 2 &&
+      scheduler_sleeping_thread_count(&g_scheduler) == 0 &&
+      scheduler_blocked_thread_count(&g_scheduler) == 0 &&
       scheduler_ready_thread_count(&g_scheduler) == 0 &&
       scheduler_live_thread_count(&g_scheduler) == 0 &&
       scheduler_current_thread(&g_scheduler) == nullptr;

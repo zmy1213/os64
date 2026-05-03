@@ -108,7 +108,7 @@ kernel/
 - 基于 tick 的最小等待 / sleep 测试
 - 键盘 IRQ + 字符缓冲区测试
 - 第一版 `stdin/read(0)` 键盘字符流烟测
-- 第一版 `process/thread/scheduler` 烟测
+- 第一版 `process/thread/scheduler` + priority/sleep/block/wake 烟测
 - 控制台回显 + 最小行输入测试
 - 最小 shell 命令测试
 - shell 当前工作目录 `pwd` / `cd` / 相对路径测试
@@ -243,7 +243,7 @@ kernel/
 这里放第一版任务系统模块：
 
 - `scheduler.cpp/.hpp`
-  现在先放 `ProcessControlBlock`、`ThreadControlBlock`、`SchedulerState`，以及第一版 ready queue、线程创建、线程退出、时间片请求和协作式切换入口。
+  现在先放 `ProcessControlBlock`、`ThreadControlBlock`、`SchedulerState`，以及分优先级 ready queue、idle thread、`sleep/block/wake` 骨架、线程创建/退出、时间片请求和协作式切换入口。
 - `context_switch.asm`
   这是第一版真正的线程上下文切换汇编。当前先只保存 callee-saved 寄存器和 `RSP`，刚好够这轮 kernel thread 骨架使用。
 

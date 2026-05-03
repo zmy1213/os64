@@ -191,23 +191,43 @@ thread  = “谁真的在 CPU 上跑”
 
 调度器状态现在主要有：
 
-- ready queue
+- per-priority ready queue
 - current thread
+- idle thread
 - time slice
+- sleeping / blocked 线程计数
 - total switches
 - total yields
 - preempt request count
 
-这一步还没有复杂策略，
-先只做：
+现在的调度策略已经不是“所有线程排一个大队”了，
+而是先做一版非常粗粒度、但已经更像真实内核的策略：
 
 ```text
-round-robin
+priority-aware round-robin
 ```
 
-也就是：
+也就是先按优先级选：
 
-> 谁先进入 ready queue，谁先被拿出来跑；跑完一片以后，再排到后面。
+- `high`
+- `normal`
+- `background`
+
+如果某个优先级里有多个线程，
+那就在这个优先级内部做 round-robin：
+
+> 谁先进入这个优先级的 ready queue，谁先被拿出来跑；跑完一片以后，再排到后面。
+
+如果现在一个普通线程都没有 ready，
+但系统里还有线程只是暂时 `sleeping` / `blocked`，
+那 CPU 就先落到 `idle thread`。
+
+这样做的原因很简单：
+
+```text
+先把“优先级”和“等待状态”这两个最重要的调度维度补出来，
+但还不一下子跳到完整公平调度器 / 多核调度器。
+```
 
 ---
 
@@ -353,47 +373,92 @@ IRQ 里记账和发请求
 
 ## 8. 这一轮的烟测到底验证了什么
 
-这一轮在 `kernel_main` 里新增了 `run_scheduler_smoke_test()`。
+这一轮在 `kernel_main` 里继续扩了 `run_scheduler_smoke_test()`。
 
-它会做这些事：
+它现在不再只测“两个线程能不能 ABAB 轮转”，
+而是拆成 3 段：
 
-1. 初始化调度器
-2. 创建一个内核进程 `kernel-smoke`
-3. 在这个进程下创建两个线程 `sched-a` / `sched-b`
-4. 两个线程都各跑 2 轮
-5. 每轮先把自己的标记字符写进共享轨迹
-6. 再等 1 个 tick
-7. timer 用完时间片后发 reschedule 请求
-8. 安全点里把 CPU 切给另一个线程
+### 8.1 priority 烟测
 
-所以最终日志里应该出现：
+先创建 4 个线程：
+
+- 1 个 `high`
+- 2 个 `normal`
+- 1 个 `background`
+
+其中两个 `normal` 线程各跑 2 轮，
+每轮都等 1 个 tick，
+专门拿来放大“同优先级 round-robin”的轨迹。
+
+所以最终日志里应该看到：
 
 ```text
-sched_trace=ABAB
+sched_priority_trace=HABABC
 ```
 
-这行非常重要，
-因为它说明：
+这行表示：
 
-- 不是 A 一口气跑完再到 B
-- 而是 A/B 真的轮流执行了
+- `H` 先跑，说明 `high` 压过 `normal/background`
+- `A` / `B` 交替，说明同优先级里不是乱选，而是真的轮转
+- `C` 最后才跑，说明 `background` 只会在前面优先级清空后才被调度
 
-同时日志里还会看到：
+### 8.2 sleep + idle 烟测
 
-- `sched_thread_a_tid=1`
-- `sched_thread_b_tid=2`
-- `sched_thread_a_state=finished`
-- `sched_thread_b_state=finished`
-- `sched_process_state=exited`
-- `sched_total_switches=...`
-- `sched_preempt_requests=...`
+再创建两个 `normal` 线程 `A` / `B`：
+
+- 每跑一轮就先记一个字符
+- 然后调用 `scheduler_sleep_current_thread(1)`
+
+这样当两个线程都睡着时，
+ready queue 会暂时清空，
+CPU 必须落到 `idle thread`，
+等下一个 timer tick 把睡眠线程唤醒后再继续跑。
+
+所以最终日志里应该看到：
+
+```text
+sched_sleep_trace=ABAB
+sched_idle_priority=idle
+sched_idle_dispatches=2
+```
+
+这说明：
+
+- sleep 的线程真的离开了 ready queue
+- 没有普通线程可跑时，idle thread 真的顶上来了
+- timer tick 到来后，sleeping 线程又真的被唤醒了
+
+### 8.3 block + wake 烟测
+
+最后再创建两个 `normal` 线程：
+
+- waiter：先写 `B`，然后 `block`
+- waker：先等 1 个 tick，再写 `W`，再去唤醒 waiter
+
+所以最终日志里应该看到：
+
+```text
+sched_block_trace=BWb
+```
+
+这说明：
+
+- waiter 不是直接跑到底，而是真的在中途挂起了
+- 另一个线程可以通过 `scheduler_wake_thread()` 把它放回 ready queue
+- waiter 被唤醒后，会从 block 之后那一行继续跑，而不是重新从头开始
+
+最后你还会看到：
+
+- `sched_priority_pid=1`
+- `sched_sleep_pid=2`
+- `sched_block_pid=3`
+- `sched_sleeping_after=0`
+- `sched_blocked_after=0`
+- `sched_ready_after=0`
 - `sched_live_after=0`
 
-这说明第一版：
-
-- 线程创建成功了
-- 切换成功了
-- 线程退出路径也走通了
+这说明当前这版已经不仅是“能切换线程”，
+而是已经能把线程放进不同状态，再正确收回来。
 
 ---
 
@@ -438,17 +503,17 @@ sched_trace=ABAB
 2. TSS
 3. 用户栈 / 内核栈切换
 4. 每进程地址空间
-5. 真正阻塞队列和唤醒机制
+5. 让 `stdin/read(0)` / 磁盘 I/O / IPC 真正接进 blocked queue
 6. 抢占式“IRQ 里直接切栈”
 7. 锁 / 自旋锁
-8. 优先级调度
+8. 公平性策略、动态优先级、饥饿避免
 9. 多核调度
 10. 已退出线程栈的正式回收
 
 所以当前更准确的说法是：
 
 ```text
-第一版 kernel tasking skeleton
+第一版带优先级 / sleep / wake 的 kernel tasking skeleton
 ```
 
 而不是：
@@ -473,8 +538,8 @@ sched_trace=ABAB
 - shell 不再直接挂在 `kernel_main`
 - 文件描述符表可以从“全局一张”变成“每进程一张”
 - cwd 可以从“全局一个”变成“每进程一个”
-- `sleep` 可以真的把线程挂起
-- `read(0)` 可以真的阻塞当前线程
+- `sleep` 现在已经可以真的把线程挂起
+- `read(0)` 下一步就可以真正阻塞当前线程
 - 最后才是用户态程序
 
 一句话说：
@@ -506,13 +571,13 @@ make test-page-fault
 这一轮新的关键日志包括：
 
 ```text
-sched_pid=1
-sched_thread_a_tid=1
-sched_thread_b_tid=2
-sched_trace=ABAB
-sched_process_state=exited
-sched_thread_a_state=finished
-sched_thread_b_state=finished
+sched_priority_pid=1
+sched_priority_trace=HABABC
+sched_sleep_trace=ABAB
+sched_block_trace=BWb
+sched_idle_priority=idle
+sched_sleeping_after=0
+sched_blocked_after=0
 scheduler ok
 ```
 
@@ -538,15 +603,15 @@ kernel_main -> create shell thread -> scheduler_run()
 
 这会让调度器第一次接管真实交互路径。
 
-### 路线 B：补“阻塞/唤醒”而不是只有 ready/running/finished
+### 路线 B：把 blocked/wakeup 真接进 I/O
 
 比如：
 
-- `sleep(ms)` 真把当前线程挂进 timer wait 队列
 - `read(0)` 没字符时把线程挂进 keyboard wait 队列
-- 事件到来时再唤醒
+- 键盘 IRQ 到来时再唤醒等输入的线程
+- 后面磁盘 I/O 也复用这套 blocked/wakeup 形状
 
-这一步会让调度器从“会切换”推进到“会管理等待关系”。
+这一步会让调度器从“会管理 sleep/block 状态”推进到“真的被 I/O 子系统用起来”。
 
 ### 路线 C：开始准备用户态前置条件
 
@@ -563,9 +628,9 @@ kernel_main -> create shell thread -> scheduler_run()
 
 ```text
 把 shell 接进 scheduler
-+ 给线程补 blocked/wakeup
++ 让 stdin/read(0) 真的阻塞当前线程
 ```
 
 原因是：
 
-> 先把“内核自己的任务系统”做顺，再去做用户态，整体会稳得多。
+> 现在 blocked/wakeup 的骨架已经有了，最合理的是先把它接进真实输入路径，再让 shell 真跑在线程里，这样下一步做用户态时基础会扎实得多。

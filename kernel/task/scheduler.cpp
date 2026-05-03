@@ -56,10 +56,18 @@ uint8_t thread_slot_index(const SchedulerState* scheduler,
   return kInvalidReadySlot;
 }
 
+bool is_runnable_priority(ThreadPriority priority) {
+  return priority == kThreadPriorityHigh ||
+         priority == kThreadPriorityNormal ||
+         priority == kThreadPriorityBackground;
+}
+
 bool push_ready_thread(SchedulerState* scheduler,
                        ThreadControlBlock* thread) {
   if (scheduler == nullptr || thread == nullptr ||
-      scheduler->ready_count >= kSchedulerMaxThreadCount) {
+      thread->is_idle_thread ||
+      !is_runnable_priority(thread->priority) ||
+      scheduler->ready_count >= (kSchedulerMaxThreadCount - 1)) {
     return false;
   }
 
@@ -68,25 +76,34 @@ bool push_ready_thread(SchedulerState* scheduler,
     return false;
   }
 
-  scheduler->ready_queue_thread_slots[scheduler->ready_tail] = slot;
-  scheduler->ready_tail =
-      (scheduler->ready_tail + 1) % kSchedulerMaxThreadCount;
+  const uint8_t priority = static_cast<uint8_t>(thread->priority);
+  scheduler->ready_queue_thread_slots[priority][scheduler->ready_tail[priority]] =
+      slot;
+  scheduler->ready_tail[priority] =
+      (scheduler->ready_tail[priority] + 1) % kSchedulerMaxThreadCount;
+  ++scheduler->ready_count_by_priority[priority];
   ++scheduler->ready_count;
   return true;
 }
 
-ThreadControlBlock* pop_ready_thread(SchedulerState* scheduler) {
-  if (scheduler == nullptr || scheduler->ready_count == 0) {
+ThreadControlBlock* pop_ready_thread_from_priority(
+    SchedulerState* scheduler,
+    ThreadPriority priority) {
+  if (scheduler == nullptr || !is_runnable_priority(priority)) {
     return nullptr;
   }
 
-  while (scheduler->ready_count > 0) {
+  const uint8_t priority_index = static_cast<uint8_t>(priority);
+  while (scheduler->ready_count_by_priority[priority_index] > 0) {
     const uint8_t slot =
-        scheduler->ready_queue_thread_slots[scheduler->ready_head];
-    scheduler->ready_queue_thread_slots[scheduler->ready_head] =
+        scheduler->ready_queue_thread_slots[priority_index]
+                                         [scheduler->ready_head[priority_index]];
+    scheduler->ready_queue_thread_slots[priority_index]
+                                       [scheduler->ready_head[priority_index]] =
         kInvalidReadySlot;
-    scheduler->ready_head =
-        (scheduler->ready_head + 1) % kSchedulerMaxThreadCount;
+    scheduler->ready_head[priority_index] =
+        (scheduler->ready_head[priority_index] + 1) % kSchedulerMaxThreadCount;
+    --scheduler->ready_count_by_priority[priority_index];
     --scheduler->ready_count;
 
     if (slot >= kSchedulerMaxThreadCount) {
@@ -94,11 +111,33 @@ ThreadControlBlock* pop_ready_thread(SchedulerState* scheduler) {
     }
 
     ThreadControlBlock* const thread = &scheduler->threads[slot];
-    if (!thread->in_use || thread->state != kThreadStateReady) {
+    if (!thread->in_use ||
+        thread->is_idle_thread ||
+        thread->state != kThreadStateReady ||
+        thread->priority != priority) {
       continue;
     }
 
     return thread;
+  }
+
+  return nullptr;
+}
+
+ThreadControlBlock* pop_highest_ready_thread(SchedulerState* scheduler) {
+  if (scheduler == nullptr || scheduler->ready_count == 0) {
+    return nullptr;
+  }
+
+  for (uint8_t priority = static_cast<uint8_t>(kThreadPriorityHigh);
+       priority <= static_cast<uint8_t>(kThreadPriorityBackground);
+       ++priority) {
+    ThreadControlBlock* const thread =
+        pop_ready_thread_from_priority(scheduler,
+                                       static_cast<ThreadPriority>(priority));
+    if (thread != nullptr) {
+      return thread;
+    }
   }
 
   return nullptr;
@@ -109,7 +148,7 @@ ProcessControlBlock* first_free_process_slot(SchedulerState* scheduler) {
     return nullptr;
   }
 
-  for (size_t i = 0; i < kSchedulerMaxProcessCount; ++i) {
+  for (size_t i = 1; i < kSchedulerMaxProcessCount; ++i) {
     if (!scheduler->processes[i].in_use) {
       return &scheduler->processes[i];
     }
@@ -123,7 +162,7 @@ ThreadControlBlock* first_free_thread_slot(SchedulerState* scheduler) {
     return nullptr;
   }
 
-  for (size_t i = 0; i < kSchedulerMaxThreadCount; ++i) {
+  for (size_t i = 1; i < kSchedulerMaxThreadCount; ++i) {
     if (!scheduler->threads[i].in_use) {
       return &scheduler->threads[i];
     }
@@ -180,25 +219,98 @@ void mark_thread_running(SchedulerState* scheduler,
   }
 }
 
-ThreadControlBlock* switch_to_next_ready_thread(
-    SchedulerState* scheduler,
-    ThreadControlBlock* current_thread) {
-  if (scheduler == nullptr || current_thread == nullptr) {
+void update_owner_ready_state(ProcessControlBlock* owner) {
+  if (owner == nullptr) {
+    return;
+  }
+
+  if (owner->state == kProcessStateRunning) {
+    owner->state = kProcessStateReady;
+  }
+}
+
+ThreadControlBlock* select_next_runnable_thread(SchedulerState* scheduler) {
+  if (scheduler == nullptr) {
     return nullptr;
   }
 
-  ThreadControlBlock* const next_thread = pop_ready_thread(scheduler);
-  if (next_thread == nullptr) {
-    scheduler->preempt_requested = false;
-    scheduler->remaining_slice_ticks = scheduler->time_slice_ticks;
-    return nullptr;
+  ThreadControlBlock* const next_thread = pop_highest_ready_thread(scheduler);
+  if (next_thread != nullptr) {
+    return next_thread;
   }
 
-  mark_thread_running(scheduler, next_thread);
-  ++scheduler->total_switches;
-  scheduler_switch_context(&current_thread->saved_stack_pointer,
-                           next_thread->saved_stack_pointer);
-  return next_thread;
+  if (scheduler->idle_thread != nullptr && scheduler->live_thread_count > 0) {
+    return scheduler->idle_thread;
+  }
+
+  return nullptr;
+}
+
+bool wake_thread_internal(SchedulerState* scheduler,
+                          ThreadControlBlock* thread,
+                          bool request_reschedule_if_idle) {
+  if (scheduler == nullptr || thread == nullptr || !thread->in_use ||
+      thread->is_idle_thread) {
+    return false;
+  }
+
+  if (thread->state == kThreadStateSleeping) {
+    if (scheduler->sleeping_thread_count > 0) {
+      --scheduler->sleeping_thread_count;
+    }
+  } else if (thread->state == kThreadStateBlocked) {
+    if (scheduler->blocked_thread_count > 0) {
+      --scheduler->blocked_thread_count;
+    }
+  } else {
+    return false;
+  }
+
+  thread->state = kThreadStateReady;
+  thread->wake_tick = 0;
+
+  if (thread->owner != nullptr &&
+      thread->owner->state != kProcessStateRunning &&
+      thread->owner->state != kProcessStateExited) {
+    thread->owner->state = kProcessStateReady;
+  }
+
+  if (!push_ready_thread(scheduler, thread)) {
+    return false;
+  }
+
+  if (request_reschedule_if_idle &&
+      scheduler->current_thread == scheduler->idle_thread &&
+      !scheduler->preempt_requested) {
+    scheduler->preempt_requested = true;
+    ++scheduler->preempt_request_count;
+  }
+
+  return true;
+}
+
+void wake_sleeping_threads(SchedulerState* scheduler) {
+  if (scheduler == nullptr || scheduler->sleeping_thread_count == 0) {
+    return;
+  }
+
+  for (size_t i = 1; i < kSchedulerMaxThreadCount; ++i) {
+    ThreadControlBlock* const thread = &scheduler->threads[i];
+    if (!thread->in_use || thread->state != kThreadStateSleeping) {
+      continue;
+    }
+
+    if (thread->wake_tick != 0 && thread->wake_tick <= scheduler->total_ticks) {
+      (void)wake_thread_internal(scheduler, thread, true);
+    }
+  }
+}
+
+void idle_thread_entry(void*) {
+  for (;;) {
+    wait_for_interrupt();
+    (void)scheduler_yield_if_requested();
+  }
 }
 
 SchedulerState* active_scheduler() {
@@ -220,9 +332,39 @@ bool initialize_scheduler(SchedulerState* scheduler,
   scheduler->time_slice_ticks = time_slice_ticks;
   scheduler->remaining_slice_ticks = time_slice_ticks;
 
-  for (size_t i = 0; i < kSchedulerMaxThreadCount; ++i) {
-    scheduler->ready_queue_thread_slots[i] = kInvalidReadySlot;
+  for (size_t priority = 0; priority < kSchedulerPriorityCount; ++priority) {
+    for (size_t slot = 0; slot < kSchedulerMaxThreadCount; ++slot) {
+      scheduler->ready_queue_thread_slots[priority][slot] = kInvalidReadySlot;
+    }
   }
+
+  ProcessControlBlock* const idle_process = &scheduler->processes[0];
+  memory_set(idle_process, 0, sizeof(*idle_process));
+  idle_process->in_use = true;
+  idle_process->is_kernel_process = true;
+  idle_process->pid = 0;
+  idle_process->state = kProcessStateReady;
+  idle_process->live_thread_count = 1;
+  copy_name(idle_process->name, "idle-proc");
+
+  ThreadControlBlock* const idle_thread = &scheduler->threads[0];
+  memory_set(idle_thread, 0, sizeof(*idle_thread));
+  idle_thread->in_use = true;
+  idle_thread->tid = 0;
+  idle_thread->state = kThreadStateReady;
+  idle_thread->priority = kThreadPriorityIdle;
+  idle_thread->owner = idle_process;
+  idle_thread->entry = idle_thread_entry;
+  idle_thread->stack_allocation = kmalloc_aligned(
+      kSchedulerDefaultKernelThreadStackBytes, 16);
+  if (idle_thread->stack_allocation == nullptr) {
+    return false;
+  }
+  idle_thread->stack_allocation_bytes = kSchedulerDefaultKernelThreadStackBytes;
+  idle_thread->is_idle_thread = true;
+  copy_name(idle_thread->name, "idle");
+  prepare_initial_thread_stack(idle_thread);
+  scheduler->idle_thread = idle_thread;
 
   g_active_scheduler = scheduler;
   return true;
@@ -259,9 +401,10 @@ ThreadControlBlock* scheduler_create_kernel_thread(
     const char* name,
     KernelThreadEntry entry,
     void* entry_context,
-    size_t stack_bytes) {
+    size_t stack_bytes,
+    ThreadPriority priority) {
   if (!scheduler_is_ready(scheduler) || owner == nullptr || !owner->in_use ||
-      entry == nullptr) {
+      entry == nullptr || !is_runnable_priority(priority)) {
     return nullptr;
   }
 
@@ -286,11 +429,13 @@ ThreadControlBlock* scheduler_create_kernel_thread(
   thread->in_use = true;
   thread->tid = scheduler->next_tid++;
   thread->state = kThreadStateReady;
+  thread->priority = priority;
   thread->owner = owner;
   thread->entry = entry;
   thread->entry_context = entry_context;
   thread->stack_allocation = stack_allocation;
   thread->stack_allocation_bytes = stack_bytes;
+  thread->is_idle_thread = false;
   copy_name(thread->name, name);
   prepare_initial_thread_stack(thread);
 
@@ -313,7 +458,7 @@ bool scheduler_run_until_idle(SchedulerState* scheduler) {
     return false;
   }
 
-  ThreadControlBlock* const next_thread = pop_ready_thread(scheduler);
+  ThreadControlBlock* const next_thread = select_next_runnable_thread(scheduler);
   if (next_thread == nullptr) {
     return false;
   }
@@ -322,7 +467,9 @@ bool scheduler_run_until_idle(SchedulerState* scheduler) {
   ++scheduler->total_switches;
   scheduler_switch_context(&scheduler->bootstrap_stack_pointer,
                            next_thread->saved_stack_pointer);
-  return scheduler->live_thread_count == 0;
+  return scheduler->live_thread_count == 0 &&
+         scheduler->sleeping_thread_count == 0 &&
+         scheduler->blocked_thread_count == 0;
 }
 
 bool scheduler_yield_current_thread() {
@@ -336,6 +483,21 @@ bool scheduler_yield_current_thread() {
     return false;
   }
 
+  if (current_thread->is_idle_thread) {
+    ThreadControlBlock* const next_thread = pop_highest_ready_thread(scheduler);
+    if (next_thread == nullptr) {
+      scheduler->preempt_requested = false;
+      scheduler->remaining_slice_ticks = scheduler->time_slice_ticks;
+      return false;
+    }
+
+    mark_thread_running(scheduler, next_thread);
+    ++scheduler->total_switches;
+    scheduler_switch_context(&current_thread->saved_stack_pointer,
+                             next_thread->saved_stack_pointer);
+    return true;
+  }
+
   if (scheduler->ready_count == 0) {
     scheduler->preempt_requested = false;
     scheduler->remaining_slice_ticks = scheduler->time_slice_ticks;
@@ -345,23 +507,24 @@ bool scheduler_yield_current_thread() {
   current_thread->state = kThreadStateReady;
   ++current_thread->yield_count;
   ++scheduler->total_yields;
-
-  if (current_thread->owner != nullptr &&
-      current_thread->owner->state == kProcessStateRunning) {
-    current_thread->owner->state = kProcessStateReady;
-  }
+  update_owner_ready_state(current_thread->owner);
 
   if (!push_ready_thread(scheduler, current_thread)) {
     current_thread->state = kThreadStateRunning;
     return false;
   }
 
-  if (switch_to_next_ready_thread(scheduler, current_thread) == nullptr) {
+  ThreadControlBlock* const next_thread = select_next_runnable_thread(scheduler);
+  if (next_thread == nullptr) {
     current_thread->state = kThreadStateRunning;
     scheduler->current_thread = current_thread;
     return false;
   }
 
+  mark_thread_running(scheduler, next_thread);
+  ++scheduler->total_switches;
+  scheduler_switch_context(&current_thread->saved_stack_pointer,
+                           next_thread->saved_stack_pointer);
   return true;
 }
 
@@ -375,6 +538,81 @@ bool scheduler_yield_if_requested() {
   return scheduler_yield_current_thread();
 }
 
+bool scheduler_sleep_current_thread(uint64_t ticks) {
+  SchedulerState* const scheduler = active_scheduler();
+  if (!scheduler_is_ready(scheduler) || scheduler->current_thread == nullptr ||
+      scheduler->current_thread->is_idle_thread) {
+    return false;
+  }
+
+  if (ticks == 0) {
+    return scheduler_yield_current_thread();
+  }
+
+  ThreadControlBlock* const current_thread = scheduler->current_thread;
+  current_thread->state = kThreadStateSleeping;
+  current_thread->wake_tick = scheduler->total_ticks + ticks;
+  if (current_thread->wake_tick <= scheduler->total_ticks) {
+    current_thread->wake_tick = scheduler->total_ticks + 1;
+  }
+  ++scheduler->sleeping_thread_count;
+  update_owner_ready_state(current_thread->owner);
+
+  ThreadControlBlock* const next_thread = select_next_runnable_thread(scheduler);
+  if (next_thread == nullptr) {
+    current_thread->state = kThreadStateRunning;
+    current_thread->wake_tick = 0;
+    if (scheduler->sleeping_thread_count > 0) {
+      --scheduler->sleeping_thread_count;
+    }
+    return false;
+  }
+
+  mark_thread_running(scheduler, next_thread);
+  ++scheduler->total_switches;
+  scheduler_switch_context(&current_thread->saved_stack_pointer,
+                           next_thread->saved_stack_pointer);
+  return true;
+}
+
+bool scheduler_block_current_thread() {
+  SchedulerState* const scheduler = active_scheduler();
+  if (!scheduler_is_ready(scheduler) || scheduler->current_thread == nullptr ||
+      scheduler->current_thread->is_idle_thread) {
+    return false;
+  }
+
+  ThreadControlBlock* const current_thread = scheduler->current_thread;
+  current_thread->state = kThreadStateBlocked;
+  current_thread->wake_tick = 0;
+  ++scheduler->blocked_thread_count;
+  update_owner_ready_state(current_thread->owner);
+
+  ThreadControlBlock* const next_thread = select_next_runnable_thread(scheduler);
+  if (next_thread == nullptr) {
+    current_thread->state = kThreadStateRunning;
+    if (scheduler->blocked_thread_count > 0) {
+      --scheduler->blocked_thread_count;
+    }
+    return false;
+  }
+
+  mark_thread_running(scheduler, next_thread);
+  ++scheduler->total_switches;
+  scheduler_switch_context(&current_thread->saved_stack_pointer,
+                           next_thread->saved_stack_pointer);
+  return true;
+}
+
+bool scheduler_wake_thread(ThreadControlBlock* thread) {
+  SchedulerState* const scheduler = active_scheduler();
+  if (!scheduler_is_ready(scheduler)) {
+    return false;
+  }
+
+  return wake_thread_internal(scheduler, thread, true);
+}
+
 [[noreturn]] void scheduler_exit_current_thread() {
   SchedulerState* const scheduler = active_scheduler();
   if (!scheduler_is_ready(scheduler) || scheduler->current_thread == nullptr) {
@@ -385,24 +623,27 @@ bool scheduler_yield_if_requested() {
 
   ThreadControlBlock* const current_thread = scheduler->current_thread;
   current_thread->state = kThreadStateFinished;
+  current_thread->wake_tick = 0;
 
-  if (current_thread->owner != nullptr) {
-    if (current_thread->owner->live_thread_count > 0) {
-      --current_thread->owner->live_thread_count;
+  if (!current_thread->is_idle_thread) {
+    if (current_thread->owner != nullptr) {
+      if (current_thread->owner->live_thread_count > 0) {
+        --current_thread->owner->live_thread_count;
+      }
+
+      if (current_thread->owner->live_thread_count == 0) {
+        current_thread->owner->state = kProcessStateExited;
+      } else {
+        current_thread->owner->state = kProcessStateReady;
+      }
     }
 
-    if (current_thread->owner->live_thread_count == 0) {
-      current_thread->owner->state = kProcessStateExited;
-    } else {
-      current_thread->owner->state = kProcessStateReady;
+    if (scheduler->live_thread_count > 0) {
+      --scheduler->live_thread_count;
     }
   }
 
-  if (scheduler->live_thread_count > 0) {
-    --scheduler->live_thread_count;
-  }
-
-  ThreadControlBlock* const next_thread = pop_ready_thread(scheduler);
+  ThreadControlBlock* const next_thread = select_next_runnable_thread(scheduler);
   if (next_thread != nullptr) {
     mark_thread_running(scheduler, next_thread);
     ++scheduler->total_switches;
@@ -428,10 +669,19 @@ void scheduler_handle_timer_tick() {
   }
 
   ++scheduler->total_ticks;
+  wake_sleeping_threads(scheduler);
 
   ThreadControlBlock* const current_thread = scheduler->current_thread;
   if (current_thread == nullptr ||
       current_thread->state != kThreadStateRunning) {
+    return;
+  }
+
+  if (current_thread == scheduler->idle_thread) {
+    if (scheduler->ready_count > 0 && !scheduler->preempt_requested) {
+      scheduler->preempt_requested = true;
+      ++scheduler->preempt_request_count;
+    }
     return;
   }
 
@@ -458,8 +708,10 @@ void scheduler_handle_timer_tick() {
     return;
   }
 
-  scheduler->preempt_requested = true;
-  ++scheduler->preempt_request_count;
+  if (!scheduler->preempt_requested) {
+    scheduler->preempt_requested = true;
+    ++scheduler->preempt_request_count;
+  }
 }
 
 ThreadControlBlock* scheduler_current_thread(
@@ -487,6 +739,22 @@ uint32_t scheduler_live_thread_count(const SchedulerState* scheduler) {
   return scheduler->live_thread_count;
 }
 
+uint32_t scheduler_sleeping_thread_count(const SchedulerState* scheduler) {
+  if (!scheduler_is_ready(scheduler)) {
+    return 0;
+  }
+
+  return scheduler->sleeping_thread_count;
+}
+
+uint32_t scheduler_blocked_thread_count(const SchedulerState* scheduler) {
+  if (!scheduler_is_ready(scheduler)) {
+    return 0;
+  }
+
+  return scheduler->blocked_thread_count;
+}
+
 const char* scheduler_process_state_name(ProcessState state) {
   switch (state) {
     case kProcessStateFree:
@@ -510,10 +778,27 @@ const char* scheduler_thread_state_name(ThreadState state) {
       return "ready";
     case kThreadStateRunning:
       return "running";
+    case kThreadStateSleeping:
+      return "sleeping";
     case kThreadStateBlocked:
       return "blocked";
     case kThreadStateFinished:
       return "finished";
+    default:
+      return "invalid";
+  }
+}
+
+const char* scheduler_thread_priority_name(ThreadPriority priority) {
+  switch (priority) {
+    case kThreadPriorityHigh:
+      return "high";
+    case kThreadPriorityNormal:
+      return "normal";
+    case kThreadPriorityBackground:
+      return "background";
+    case kThreadPriorityIdle:
+      return "idle";
     default:
       return "invalid";
   }
