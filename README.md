@@ -125,6 +125,10 @@ make clean
 - `long mode ok`
 - `hello from os64 kernel`
 - `filesystem ok`
+- `file_layer ok`
+- `directory_layer ok`
+- `vfs_layer ok`
+- `fd_layer ok`
 - `shell ok`
 
 最后会进入最小交互 shell，
@@ -182,7 +186,13 @@ os64>
 - `stage2` 会先把一小段 `boot volume` 从启动介质读进内存
 - `BootInfo` 会把这段原始块区的位置和扇区信息交给 64 位内核
 - kernel 里现在已经有 `BootVolume -> BlockDevice -> OS64FS` 这条读路径
+- kernel 里又在 `OS64FS` 上面补了 `FileHandle` 文件句柄层
+- kernel 里还在 `OS64FS` 上面补了 `DirectoryHandle` 目录句柄层
+- kernel 里现在又在文件句柄和目录句柄上面补了第一版 `VFS`
+- kernel 里现在还在 `VFS` 上面补了第一版 `FileDescriptorTable` 文件描述符表
 - shell 里可以用 `disk` 看块设备，用 `ls` / `cat` / `stat` 看文件系统
+- 其中 `ls` / `stat` 走 `vfs_*` 接口，`cat` 进一步走 `fd_open` / `fd_read` / `fd_close`
+- 这样 shell 不再直接调用底层 `OS64FS` / `FileHandle` / `DirectoryHandle`，读文件的形状开始接近真实系统调用模型
 
 ### 一个很重要的提醒
 

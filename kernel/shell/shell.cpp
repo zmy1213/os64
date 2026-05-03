@@ -395,7 +395,7 @@ void handle_disk_command(const ShellState* shell) {
 }
 
 void handle_ls_command(const ShellState* shell, const char* arguments) {
-  if (shell == nullptr || !os64fs_is_mounted(shell->filesystem)) {
+  if (shell == nullptr || !vfs_is_mounted(shell->vfs)) {
     write_string(shell, "fs unavailable");
     write_newline(shell);
     return;
@@ -406,23 +406,29 @@ void handle_ls_command(const ShellState* shell, const char* arguments) {
     path = "/";
   }
 
-  Os64FsInode inode;
-  if (!os64fs_lookup_path(shell->filesystem, path, &inode)) {
+  VfsStat stat;
+  if (!vfs_stat(shell->vfs, path, &stat)) {
     write_string(shell, "ls path not found: ");
     write_string(shell, path);
     write_newline(shell);
     return;
   }
 
-  if (inode.type != kOs64FsTypeDirectory) {
+  if (stat.type != kVfsNodeTypeDirectory) {
     write_string(shell, "ls not a directory: ");
     write_string(shell, path);
     write_newline(shell);
     return;
   }
 
-  const uint32_t entry_count =
-      os64fs_directory_entry_count(shell->filesystem, &inode);
+  VfsDirectory handle;
+  if (!vfs_open_directory(shell->vfs, path, &handle)) {
+    write_string(shell, "ls open failed");
+    write_newline(shell);
+    return;
+  }
+
+  const uint32_t entry_count = vfs_directory_entry_count(&handle);
 
   write_string(shell, "ls_path=");
   write_string(shell, path);
@@ -433,31 +439,31 @@ void handle_ls_command(const ShellState* shell, const char* arguments) {
   write_newline(shell);
 
   for (uint32_t entry_index = 0; entry_index < entry_count; ++entry_index) {
-    Os64FsDirEntry entry;
-    Os64FsInode child_inode;
-    if (!os64fs_read_directory_entry(shell->filesystem, &inode, entry_index,
-                                     &entry) ||
-        !os64fs_read_inode(shell->filesystem, entry.inode_number,
-                           &child_inode)) {
+    VfsDirectoryEntry entry;
+    if (!vfs_read_directory(&handle, &entry)) {
       write_string(shell, "ls read failed");
       write_newline(shell);
+      (void)vfs_close_directory(&handle);
       return;
     }
 
     write_string(shell, "ls[");
     write_u64(shell, entry_index);
     write_string(shell, "]=");
-    write_string(shell, os64fs_inode_type_name(entry.type));
+    write_string(shell, vfs_node_type_name(entry.type));
     write_char(shell, ' ');
     write_bounded_string(shell, entry.name, entry.name_length);
     write_string(shell, " size=");
-    write_u64(shell, child_inode.size_bytes);
+    write_u64(shell, entry.size_bytes);
     write_newline(shell);
   }
+
+  (void)vfs_close_directory(&handle);
 }
 
 void handle_cat_command(const ShellState* shell, const char* arguments) {
-  if (shell == nullptr || !os64fs_is_mounted(shell->filesystem)) {
+  if (shell == nullptr || !vfs_is_mounted(shell->vfs) ||
+      !file_descriptor_table_is_ready(shell->fd_table)) {
     write_string(shell, "fs unavailable");
     write_newline(shell);
     return;
@@ -470,18 +476,33 @@ void handle_cat_command(const ShellState* shell, const char* arguments) {
     return;
   }
 
-  Os64FsInode inode;
-  if (!os64fs_lookup_path(shell->filesystem, path, &inode)) {
+  VfsStat stat;
+  if (!vfs_stat(shell->vfs, path, &stat)) {
     write_string(shell, "cat path not found: ");
     write_string(shell, path);
     write_newline(shell);
     return;
   }
 
-  if (inode.type != kOs64FsTypeFile) {
+  if (stat.type != kVfsNodeTypeFile) {
     write_string(shell, "cat not a file: ");
     write_string(shell, path);
     write_newline(shell);
+    return;
+  }
+
+  const int32_t fd = fd_open(shell->fd_table, path);
+  if (fd == kInvalidFileDescriptor) {
+    write_string(shell, "cat open failed");
+    write_newline(shell);
+    return;
+  }
+
+  VfsStat fd_stat_result;
+  if (!fd_stat(shell->fd_table, fd, &fd_stat_result)) {
+    write_string(shell, "cat stat failed");
+    write_newline(shell);
+    (void)fd_close(shell->fd_table, fd);
     return;
   }
 
@@ -490,36 +511,33 @@ void handle_cat_command(const ShellState* shell, const char* arguments) {
   write_newline(shell);
 
   write_string(shell, "cat_size=");
-  write_u64(shell, inode.size_bytes);
+  write_u64(shell, fd_stat_result.size_bytes);
   write_newline(shell);
 
+  // 从这里开始，shell 只拿一个小整数 fd 读文件。
+  // 这比直接持有 VfsFile 更接近真实 OS 的 `read(fd, ...)` 系统调用模型。
   uint8_t chunk[64];
-  uint32_t offset = 0;
-  while (offset < inode.size_bytes) {
-    uint32_t bytes_this_round = sizeof(chunk);
-    if (bytes_this_round > (inode.size_bytes - offset)) {
-      bytes_this_round = inode.size_bytes - offset;
-    }
-
-    if (!os64fs_read_inode_data(shell->filesystem, &inode, offset,
-                                chunk, bytes_this_round)) {
+  while (fd_tell(shell->fd_table, fd) < fd_stat_result.size_bytes) {
+    const size_t bytes_this_round =
+        fd_read(shell->fd_table, fd, chunk, sizeof(chunk));
+    if (bytes_this_round == 0) {
       write_string(shell, "cat read failed");
       write_newline(shell);
+      (void)fd_close(shell->fd_table, fd);
       return;
     }
 
-    for (uint32_t i = 0; i < bytes_this_round; ++i) {
+    for (size_t i = 0; i < bytes_this_round; ++i) {
       write_char(shell, static_cast<char>(chunk[i]));
     }
-
-    offset += bytes_this_round;
   }
 
+  (void)fd_close(shell->fd_table, fd);
   write_newline(shell);
 }
 
 void handle_stat_command(const ShellState* shell, const char* arguments) {
-  if (shell == nullptr || !os64fs_is_mounted(shell->filesystem)) {
+  if (shell == nullptr || !vfs_is_mounted(shell->vfs)) {
     write_string(shell, "fs unavailable");
     write_newline(shell);
     return;
@@ -532,8 +550,8 @@ void handle_stat_command(const ShellState* shell, const char* arguments) {
     return;
   }
 
-  Os64FsInode inode;
-  if (!os64fs_lookup_path(shell->filesystem, path, &inode)) {
+  VfsStat stat;
+  if (!vfs_stat(shell->vfs, path, &stat)) {
     write_string(shell, "stat path not found: ");
     write_string(shell, path);
     write_newline(shell);
@@ -545,24 +563,24 @@ void handle_stat_command(const ShellState* shell, const char* arguments) {
   write_newline(shell);
 
   write_string(shell, "stat_inode=");
-  write_u64(shell, inode.inode_number);
+  write_u64(shell, stat.inode_number);
   write_newline(shell);
 
   write_string(shell, "stat_type=");
-  write_string(shell, os64fs_inode_type_name(inode.type));
+  write_string(shell, vfs_node_type_name(stat.type));
   write_newline(shell);
 
   write_string(shell, "stat_size=");
-  write_u64(shell, inode.size_bytes);
+  write_u64(shell, stat.size_bytes);
   write_newline(shell);
 
   write_string(shell, "stat_links=");
-  write_u64(shell, inode.link_count);
+  write_u64(shell, stat.link_count);
   write_newline(shell);
 
   uint32_t block_count = 0;
   for (size_t block_index = 0; block_index < 4; ++block_index) {
-    if (inode.direct_blocks[block_index] != kOs64FsInvalidBlockIndex) {
+    if (stat.direct_blocks[block_index] != kVfsInvalidBlockIndex) {
       ++block_count;
     }
   }
@@ -572,14 +590,14 @@ void handle_stat_command(const ShellState* shell, const char* arguments) {
   write_newline(shell);
 
   for (size_t block_index = 0; block_index < 4; ++block_index) {
-    if (inode.direct_blocks[block_index] == kOs64FsInvalidBlockIndex) {
+    if (stat.direct_blocks[block_index] == kVfsInvalidBlockIndex) {
       continue;
     }
 
     write_string(shell, "stat_block_");
     write_u64(shell, block_index);
     write_string(shell, "=");
-    write_u64(shell, inode.direct_blocks[block_index]);
+    write_u64(shell, stat.direct_blocks[block_index]);
     write_newline(shell);
   }
 }
@@ -788,7 +806,8 @@ bool initialize_shell(ShellState* shell,
                       const KernelHeap* heap,
                       const BootVolume* boot_volume,
                       const BlockDevice* block_device,
-                      const Os64Fs* filesystem,
+                      const VfsMount* vfs,
+                      FileDescriptorTable* fd_table,
                       const ShellOutput* output) {
   if (shell == nullptr || output == nullptr || output->write_char == nullptr) {
     return false;
@@ -799,7 +818,8 @@ bool initialize_shell(ShellState* shell,
   shell->heap = heap;
   shell->boot_volume = boot_volume;
   shell->block_device = block_device;
-  shell->filesystem = filesystem;
+  shell->vfs = vfs;
+  shell->fd_table = fd_table;
   shell->output = *output;
   shell->history_count = 0;
   shell->history_next_slot = 0;

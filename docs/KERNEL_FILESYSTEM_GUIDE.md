@@ -464,19 +464,31 @@ make test-page-fault
 
 ---
 
-## 14. 下一步最合理做什么
+## 14. 读完这一篇后继续看什么
 
-最合理的不是马上做“大而全的 POSIX 文件系统”，
-而是继续把文件系统层往前补成更正式的内核子系统。
+这一篇讲到的是：
 
-比较合理的下一步有三条：
+```text
+BlockDevice
+-> OS64FS
+-> inode / directory entry / path lookup / read inode data
+```
 
-1. VFS 风格抽象
-   把 `OS64FS` 再往上包一层统一的 `FileSystem` / `VNode` 接口。
-2. 文件句柄层
-   先补 `open/read/close` 这种内核内部文件句柄接口，而不是让 shell 直接碰 inode。
-3. 可写前的准备
-   先做空闲块位图、目录创建规则、inode 分配规则，再考虑真正写入。
+下一篇继续把它往上包一层：
+
+```text
+OS64FS
+-> FileHandle
+-> file_open / file_read / file_close / file_stat
+```
+
+也就是：
+
+> 不再让 shell 直接碰 inode，而是让 shell 使用更像真实内核的文件句柄接口。
+
+继续看：
+
+[从只读文件系统到内核文件句柄层](./KERNEL_FILE_HANDLE_GUIDE.md)
 
 一句话总结这一步：
 

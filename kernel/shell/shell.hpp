@@ -5,7 +5,8 @@
 #include <stdint.h>
 
 #include "boot/boot_info.hpp"
-#include "fs/os64fs.hpp"
+#include "fs/fd.hpp"
+#include "fs/vfs.hpp"
 #include "memory/heap.hpp"
 #include "memory/page_allocator.hpp"
 #include "storage/block_device.hpp"
@@ -30,7 +31,8 @@ struct ShellState {
   const KernelHeap* heap;          // `heap` 命令会从这里拿当前堆状态。
   const BootVolume* boot_volume;   // `bootinfo` 仍然会顺手展示这段预读卷的搬运结果。
   const BlockDevice* block_device; // `disk` 命令现在看的是更通用的块设备抽象。
-  const Os64Fs* filesystem;        // `ls` / `cat` / `stat` 命令会从这里访问只读文件系统。
+  const VfsMount* vfs;             // `ls` / `stat` 这类路径查询统一从 VFS 入口访问文件系统。
+  FileDescriptorTable* fd_table;   // `cat` 先通过 fd_open 拿小整数 fd，再用 fd_read 顺序读取文件。
   ShellOutput output;              // 所有 shell 输出最终都走这个回调。
   uint16_t history_count;          // 当前 ring buffer 里实际存了多少条命令。
   uint16_t history_next_slot;      // 下一条命令应该写进哪个槽位。
@@ -51,7 +53,8 @@ bool initialize_shell(ShellState* shell,
                       const KernelHeap* heap,
                       const BootVolume* boot_volume,
                       const BlockDevice* block_device,
-                      const Os64Fs* filesystem,
+                      const VfsMount* vfs,
+                      FileDescriptorTable* fd_table,
                       const ShellOutput* output);
 
 // 打印最小提示符，让用户知道 shell 已经在等输入了。

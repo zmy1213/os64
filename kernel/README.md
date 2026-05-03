@@ -15,7 +15,15 @@ kernel/
 │   └── kernel_main.cpp
 ├── fs/
 │   ├── os64fs.hpp
-│   └── os64fs.cpp
+│   ├── os64fs.cpp
+│   ├── file.hpp
+│   ├── file.cpp
+│   ├── directory.hpp
+│   ├── directory.cpp
+│   ├── vfs.hpp
+│   ├── vfs.cpp
+│   ├── fd.hpp
+│   └── fd.cpp
 ├── interrupts/
 │   ├── interrupts.hpp
 │   ├── interrupts.cpp
@@ -83,6 +91,10 @@ kernel/
 - 堆测试
 - boot volume / 原始块设备测试
 - 只读文件系统挂载和路径读取测试
+- 文件句柄 open/read/close/stat 测试
+- 目录句柄 open/read/rewind/close 测试
+- VFS mount/stat/open/read/close 测试
+- 文件描述符表 fd_open/fd_read/fd_close 测试
 - 定时器中断测试
 - 基于 tick 的最小等待 / sleep 测试
 - 键盘 IRQ + 字符缓冲区测试
@@ -156,10 +168,18 @@ kernel/
 
 - `os64fs.cpp/.hpp`
   负责只读 `OS64FS v1` 的挂载、路径查找、目录遍历和文件读取。
+- `file.cpp/.hpp`
+  在 `OS64FS` 上面提供第一版文件句柄接口，包括 `file_open`、`file_read`、`file_close` 和 `file_stat`。
+- `directory.cpp/.hpp`
+  在 `OS64FS` 上面提供第一版目录句柄接口，包括 `directory_open`、`directory_read`、`directory_rewind` 和 `directory_close`。
+- `vfs.cpp/.hpp`
+  在文件句柄和目录句柄上面提供第一版 VFS 入口，包括 `vfs_stat`、`vfs_open_file`、`vfs_open_directory` 等接口。
+- `fd.cpp/.hpp`
+  在 VFS 上面提供第一版文件描述符表，包括 `fd_open`、`fd_read`、`fd_seek`、`fd_stat` 和 `fd_close`。
 
 一句话理解：
 
-> `fs/` 管“原始块数据怎样被解释成目录、文件和路径”。
+> `fs/` 管“原始块数据怎样被解释成目录、文件和路径，并把底层 inode / 目录项逐层包成 VFS 和 fd 这种更接近真实 OS 的访问入口”。
 
 ---
 
@@ -169,7 +189,7 @@ kernel/
 
 - `shell.cpp/.hpp`
   负责提示符、命令解析、内建命令执行，以及第一版交互循环。
-  现在已经能直接通过 `ls` / `cat` / `stat` 观察文件系统。
+  现在已经能通过 `ls` / `cat` / `stat` 观察文件系统，其中 `ls` / `stat` 走 VFS，`cat` 进一步走 fd 表。
 
 一句话理解：
 

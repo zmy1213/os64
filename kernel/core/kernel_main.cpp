@@ -3,7 +3,11 @@
 
 #include "boot/boot_info.hpp"
 #include "console/console.hpp"
+#include "fs/directory.hpp"
+#include "fs/fd.hpp"
+#include "fs/file.hpp"
 #include "fs/os64fs.hpp"
+#include "fs/vfs.hpp"
 #include "interrupts/interrupts.hpp"
 #include "interrupts/keyboard.hpp"
 #include "interrupts/pic.hpp"
@@ -207,7 +211,9 @@ KernelHeap g_kernel_heap;                     // 第一版内核堆状态也先�
 ShellState g_shell;                           // 最小 shell 的状态也先放在全局对象里，后面交互循环会一直复用。
 BootVolume g_boot_volume;                     // 这一轮新增的启动卷状态，表示 stage2 预读进来的那段扇区数据。
 BlockDevice g_boot_block_device;             // 再往上一层，把 boot volume 包成通用块设备接口。
-Os64Fs g_os64fs;                             // 第一版只读文件系统状态也先做成全局对象，方便 shell 直接观察。
+Os64Fs g_os64fs;                             // 第一版只读文件系统状态也先做成全局对象。
+VfsMount g_vfs;                              // VFS 根挂载点，shell 以后从这里而不是直接从 OS64FS 进入。
+FileDescriptorTable g_fd_table;              // 第一版全局 fd 表；以后有进程后会变成每个进程一张表。
 uint64_t g_kernel_object_ctor_count = 0;      // 对象层测试里一共成功调用过多少次构造函数。
 uint64_t g_kernel_object_dtor_count = 0;      // 对象层测试里一共成功调用过多少次析构函数。
 
@@ -983,6 +989,399 @@ bool run_filesystem_smoke_test(const BlockDevice* device,
          strings_equal(guide_text, kOs64FsExpectedGuide);
 }
 
+// OS64FS 是“底层文件系统格式层”，它关心 inode、direct block、目录项。
+// FileHandle 是“上层打开文件层”，它关心 open/read/close/stat。
+// 这两个层次分开后，shell 以后就不需要直接碰磁盘 inode 格式。
+bool run_file_handle_smoke_test(const Os64Fs* filesystem) {
+  if (!os64fs_is_mounted(filesystem)) {
+    return false;
+  }
+
+  FileHandle readme_handle;
+  if (!file_open(filesystem, "readme.txt", &readme_handle)) {
+    return false;
+  }
+
+  serial_write_string("file_open ok");
+  serial_write_crlf();
+
+  FileStat readme_stat;
+  if (!file_handle_stat(&readme_handle, &readme_stat) ||
+      readme_stat.type != kOs64FsTypeFile) {
+    (void)file_close(&readme_handle);
+    return false;
+  }
+
+  uint8_t first_chunk[8];
+  const size_t first_read =
+      file_read(&readme_handle, first_chunk, sizeof(first_chunk));
+  if (first_read != sizeof(first_chunk) ||
+      !file_seek(&readme_handle, 0) ||
+      file_tell(&readme_handle) != 0) {
+    (void)file_close(&readme_handle);
+    return false;
+  }
+
+  const size_t expected_readme_length = string_length(kOs64FsExpectedReadme);
+  char readme_text[256];
+  if (expected_readme_length >= sizeof(readme_text)) {
+    (void)file_close(&readme_handle);
+    return false;
+  }
+
+  size_t total_read = 0;
+  while (total_read < expected_readme_length) {
+    const size_t bytes_read =
+        file_read(&readme_handle, readme_text + total_read, 13);
+    if (bytes_read == 0) {
+      (void)file_close(&readme_handle);
+      return false;
+    }
+
+    total_read += bytes_read;
+  }
+
+  readme_text[total_read] = '\0';
+
+  uint8_t eof_byte = 0;
+  const size_t eof_read = file_read(&readme_handle, &eof_byte, 1);
+
+  FileStat guide_stat;
+  FileStat docs_stat;
+  const bool stat_ok =
+      file_stat(filesystem, "/docs/guide.txt", &guide_stat) &&
+      file_stat(filesystem, "docs", &docs_stat);
+
+  const bool close_ok = file_close(&readme_handle);
+
+  serial_write_string("file_read_total=");
+  serial_write_u64(total_read);
+  serial_write_crlf();
+
+  serial_write_string("file_eof_read=");
+  serial_write_u64(eof_read);
+  serial_write_crlf();
+
+  serial_write_string("file_stat_inode=");
+  serial_write_u64(stat_ok ? guide_stat.inode_number : 0);
+  serial_write_crlf();
+
+  const bool ok =
+      close_ok &&
+      stat_ok &&
+      total_read == expected_readme_length &&
+      eof_read == 0 &&
+      readme_stat.size_bytes == expected_readme_length &&
+      strings_equal(readme_text, kOs64FsExpectedReadme) &&
+      guide_stat.inode_number == 5 &&
+      guide_stat.type == kOs64FsTypeFile &&
+      guide_stat.direct_blocks[0] == 4 &&
+      guide_stat.direct_blocks[1] == 5 &&
+      docs_stat.type == kOs64FsTypeDirectory;
+
+  if (ok) {
+    serial_write_string("file_layer ok");
+    serial_write_crlf();
+  }
+
+  return ok;
+}
+
+// DirectoryHandle 是目录版的 FileHandle。
+// 这一层把“读目录项”的动作从 shell 里拿出来，
+// 以后 `ls` 就不需要直接知道 Os64FsDirEntry 的底层布局。
+bool run_directory_handle_smoke_test(const Os64Fs* filesystem) {
+  if (!os64fs_is_mounted(filesystem)) {
+    return false;
+  }
+
+  DirectoryHandle root_handle;
+  if (!directory_open(filesystem, "/", &root_handle)) {
+    return false;
+  }
+
+  serial_write_string("directory_open ok");
+  serial_write_crlf();
+
+  const uint32_t root_entry_count =
+      directory_entry_count(&root_handle);
+
+  serial_write_string("directory_root_entries=");
+  serial_write_u64(root_entry_count);
+  serial_write_crlf();
+
+  DirectoryEntry readme_entry;
+  DirectoryEntry notes_entry;
+  DirectoryEntry docs_entry;
+  const bool root_read_ok =
+      directory_read(&root_handle, &readme_entry) &&
+      directory_read(&root_handle, &notes_entry) &&
+      directory_read(&root_handle, &docs_entry);
+
+  const uint32_t root_read_count = directory_tell(&root_handle);
+  const bool root_eof_ok =
+      root_read_ok &&
+      !directory_read(&root_handle, &docs_entry) &&
+      directory_tell(&root_handle) == root_read_count;
+
+  const bool rewind_ok =
+      directory_rewind(&root_handle) &&
+      directory_tell(&root_handle) == 0;
+
+  serial_write_string("directory_read_count=");
+  serial_write_u64(root_read_count);
+  serial_write_crlf();
+
+  serial_write_string("directory_rewind_index=");
+  serial_write_u64(directory_tell(&root_handle));
+  serial_write_crlf();
+
+  const bool close_root_ok = directory_close(&root_handle);
+
+  DirectoryHandle docs_handle;
+  DirectoryEntry guide_entry;
+  const bool docs_open_ok =
+      directory_open(filesystem, "docs", &docs_handle);
+  const bool docs_read_ok =
+      docs_open_ok &&
+      directory_entry_count(&docs_handle) == 1 &&
+      directory_read(&docs_handle, &guide_entry);
+  const bool close_docs_ok =
+      docs_open_ok ? directory_close(&docs_handle) : false;
+
+  serial_write_string("directory_docs_first_inode=");
+  serial_write_u64(docs_read_ok ? guide_entry.inode_number : 0);
+  serial_write_crlf();
+
+  const bool ok =
+      root_entry_count == 3 &&
+      root_read_ok &&
+      root_eof_ok &&
+      rewind_ok &&
+      close_root_ok &&
+      docs_read_ok &&
+      close_docs_ok &&
+      readme_entry.inode_number == 2 &&
+      readme_entry.type == kOs64FsTypeFile &&
+      strings_equal(readme_entry.name, "readme.txt") &&
+      notes_entry.inode_number == 3 &&
+      notes_entry.type == kOs64FsTypeFile &&
+      strings_equal(notes_entry.name, "notes.txt") &&
+      docs_entry.inode_number == 4 &&
+      docs_entry.type == kOs64FsTypeDirectory &&
+      strings_equal(docs_entry.name, "docs") &&
+      guide_entry.inode_number == 5 &&
+      guide_entry.type == kOs64FsTypeFile &&
+      strings_equal(guide_entry.name, "guide.txt");
+
+  if (ok) {
+    serial_write_string("directory_layer ok");
+    serial_write_crlf();
+  }
+
+  return ok;
+}
+
+// VFS 是“具体文件系统”之上的统一入口。
+// 这一版 VFS 只挂载一个 OS64FS，但 shell 以后已经可以先依赖 vfs_* 接口。
+bool run_vfs_smoke_test(VfsMount* mount, const Os64Fs* filesystem) {
+  if (mount == nullptr || !initialize_vfs(mount, filesystem) ||
+      !vfs_is_mounted(mount)) {
+    return false;
+  }
+
+  serial_write_string("vfs_mount ok");
+  serial_write_crlf();
+
+  VfsStat readme_stat;
+  VfsStat guide_stat;
+  VfsStat docs_stat;
+  const bool stat_ok =
+      vfs_stat(mount, "readme.txt", &readme_stat) &&
+      vfs_stat(mount, "/docs/guide.txt", &guide_stat) &&
+      vfs_stat(mount, "docs", &docs_stat);
+
+  serial_write_string("vfs_stat_inode=");
+  serial_write_u64(stat_ok ? guide_stat.inode_number : 0);
+  serial_write_crlf();
+
+  VfsFile readme_file;
+  if (!stat_ok ||
+      readme_stat.type != kVfsNodeTypeFile ||
+      guide_stat.type != kVfsNodeTypeFile ||
+      docs_stat.type != kVfsNodeTypeDirectory ||
+      !vfs_open_file(mount, "readme.txt", &readme_file)) {
+    return false;
+  }
+
+  const size_t expected_readme_length = string_length(kOs64FsExpectedReadme);
+  char readme_text[256];
+  if (expected_readme_length >= sizeof(readme_text)) {
+    (void)vfs_close_file(&readme_file);
+    return false;
+  }
+
+  size_t total_read = 0;
+  while (total_read < expected_readme_length) {
+    const size_t bytes_read =
+        vfs_read_file(&readme_file, readme_text + total_read, 17);
+    if (bytes_read == 0) {
+      (void)vfs_close_file(&readme_file);
+      return false;
+    }
+
+    total_read += bytes_read;
+  }
+  readme_text[total_read] = '\0';
+
+  uint8_t eof_byte = 0;
+  const size_t eof_read = vfs_read_file(&readme_file, &eof_byte, 1);
+  const bool close_file_ok = vfs_close_file(&readme_file);
+
+  serial_write_string("vfs_file_read_total=");
+  serial_write_u64(total_read);
+  serial_write_crlf();
+
+  VfsDirectory root_directory;
+  if (!vfs_open_directory(mount, "/", &root_directory)) {
+    return false;
+  }
+
+  const uint32_t root_entry_count =
+      vfs_directory_entry_count(&root_directory);
+  VfsDirectoryEntry first_entry;
+  const bool first_entry_ok =
+      vfs_read_directory(&root_directory, &first_entry);
+  const bool close_directory_ok = vfs_close_directory(&root_directory);
+
+  serial_write_string("vfs_directory_entries=");
+  serial_write_u64(root_entry_count);
+  serial_write_crlf();
+
+  serial_write_string("vfs_directory_first_inode=");
+  serial_write_u64(first_entry_ok ? first_entry.inode_number : 0);
+  serial_write_crlf();
+
+  const bool ok =
+      close_file_ok &&
+      close_directory_ok &&
+      total_read == expected_readme_length &&
+      eof_read == 0 &&
+      strings_equal(readme_text, kOs64FsExpectedReadme) &&
+      guide_stat.inode_number == 5 &&
+      guide_stat.direct_blocks[0] == 4 &&
+      guide_stat.direct_blocks[1] == 5 &&
+      docs_stat.type == kVfsNodeTypeDirectory &&
+      root_entry_count == 3 &&
+      first_entry_ok &&
+      first_entry.inode_number == 2 &&
+      first_entry.type == kVfsNodeTypeFile &&
+      strings_equal(first_entry.name, "readme.txt");
+
+  if (ok) {
+    serial_write_string("vfs_layer ok");
+    serial_write_crlf();
+  }
+
+  return ok;
+}
+
+// fd 是“文件描述符”的缩写。
+// 上层以后不需要直接保存 VfsFile，而是保存一个小整数：
+// fd_open("readme.txt") -> 0
+// fd_read(0, ...)       -> 从 0 号槽位背后的文件读取
+// 这就是后面系统调用 read/write/open/close 的基础形状。
+bool run_file_descriptor_smoke_test(FileDescriptorTable* table,
+                                    const VfsMount* vfs) {
+  if (table == nullptr ||
+      !initialize_file_descriptor_table(table, vfs) ||
+      !file_descriptor_table_is_ready(table)) {
+    return false;
+  }
+
+  serial_write_string("fd_table ok");
+  serial_write_crlf();
+
+  const int32_t readme_fd = fd_open(table, "readme.txt");
+  if (readme_fd == kInvalidFileDescriptor) {
+    return false;
+  }
+
+  serial_write_string("fd_open=");
+  serial_write_u64(static_cast<uint64_t>(readme_fd));
+  serial_write_crlf();
+
+  VfsStat readme_stat;
+  if (!fd_stat(table, readme_fd, &readme_stat) ||
+      readme_stat.type != kVfsNodeTypeFile) {
+    (void)fd_close(table, readme_fd);
+    return false;
+  }
+
+  uint8_t first_chunk[8];
+  const size_t first_read =
+      fd_read(table, readme_fd, first_chunk, sizeof(first_chunk));
+  if (first_read != sizeof(first_chunk) ||
+      !fd_seek(table, readme_fd, 0) ||
+      fd_tell(table, readme_fd) != 0) {
+    (void)fd_close(table, readme_fd);
+    return false;
+  }
+
+  const size_t expected_readme_length = string_length(kOs64FsExpectedReadme);
+  char readme_text[256];
+  if (expected_readme_length >= sizeof(readme_text)) {
+    (void)fd_close(table, readme_fd);
+    return false;
+  }
+
+  size_t total_read = 0;
+  while (total_read < expected_readme_length) {
+    const size_t bytes_read =
+        fd_read(table, readme_fd, readme_text + total_read, 11);
+    if (bytes_read == 0) {
+      (void)fd_close(table, readme_fd);
+      return false;
+    }
+
+    total_read += bytes_read;
+  }
+  readme_text[total_read] = '\0';
+
+  uint8_t eof_byte = 0;
+  const size_t eof_read = fd_read(table, readme_fd, &eof_byte, 1);
+  const bool close_ok = fd_close(table, readme_fd);
+  const uint32_t open_count_after_close = fd_open_count(table);
+
+  serial_write_string("fd_read_total=");
+  serial_write_u64(total_read);
+  serial_write_crlf();
+
+  serial_write_string("fd_eof_read=");
+  serial_write_u64(eof_read);
+  serial_write_crlf();
+
+  serial_write_string("fd_open_count=");
+  serial_write_u64(open_count_after_close);
+  serial_write_crlf();
+
+  const bool ok =
+      readme_fd == 0 &&
+      close_ok &&
+      open_count_after_close == 0 &&
+      total_read == expected_readme_length &&
+      eof_read == 0 &&
+      readme_stat.size_bytes == expected_readme_length &&
+      strings_equal(readme_text, kOs64FsExpectedReadme);
+
+  if (ok) {
+    serial_write_string("fd_layer ok");
+    serial_write_crlf();
+  }
+
+  return ok;
+}
+
 bool run_timer_smoke_test() {
   // 先初始化 PIC，让外部硬件中断有地方可去，并避开 CPU 异常向量区。
   if (!initialize_pic()) {
@@ -1364,11 +1763,12 @@ bool inject_scancode_sequence(const char* log_prefix,
 bool run_shell_smoke_test(const BootInfo* boot_info,
                           const BootVolume* boot_volume,
                           const BlockDevice* block_device,
-                          const Os64Fs* filesystem) {
+                          const VfsMount* vfs,
+                          FileDescriptorTable* fd_table) {
   initialize_console(kShellTestStartRow, kShellTextColor);
 
   if (!initialize_shell(&g_shell, boot_info, &g_page_allocator, &g_kernel_heap,
-                        boot_volume, block_device, filesystem,
+                        boot_volume, block_device, vfs, fd_table,
                         &kShellOutput)) {
     return false;
   }
@@ -1527,6 +1927,26 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
     return;
   }
 
+  if (!run_file_handle_smoke_test(&g_os64fs)) {
+    write_status_line(14, "file layer bad");
+    return;
+  }
+
+  if (!run_directory_handle_smoke_test(&g_os64fs)) {
+    write_status_line(14, "directory layer bad");
+    return;
+  }
+
+  if (!run_vfs_smoke_test(&g_vfs, &g_os64fs)) {
+    write_status_line(14, "vfs bad");
+    return;
+  }
+
+  if (!run_file_descriptor_smoke_test(&g_fd_table, &g_vfs)) {
+    write_status_line(14, "fd layer bad");
+    return;
+  }
+
   write_status_line(14, "filesystem ok");
 
   if (!run_timer_smoke_test()) {
@@ -1551,7 +1971,7 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
   write_status_line(17, "console input ok");
 
   if (!run_shell_smoke_test(boot_info, &g_boot_volume,
-                            &g_boot_block_device, &g_os64fs)) {
+                            &g_boot_block_device, &g_vfs, &g_fd_table)) {
     write_status_line(18, "shell bad");
     return;
   }

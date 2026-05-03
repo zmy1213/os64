@@ -48,6 +48,14 @@
    这一步开始进入“存储”方向，但先不硬写控制器驱动，而是先把 stage2 预读的连续扇区区间变成内核里的原始块设备入口。
 22. [从原始块设备到第一版只读文件系统](./KERNEL_FILESYSTEM_GUIDE.md)
    再继续往前，把“只能按扇区读”提升成“能挂载、能走路径、能列目录、能读文件”的第一版只读文件系统。
+23. [从只读文件系统到内核文件句柄层](./KERNEL_FILE_HANDLE_GUIDE.md)
+   再继续往前，把“shell 直接碰 inode”改成“open/read/close/stat 文件句柄接口”，为后面的 VFS 和文件描述符打基础。
+24. [从文件句柄到目录句柄](./KERNEL_DIRECTORY_HANDLE_GUIDE.md)
+   再继续往前，把 `ls` 也从“直接读 OS64FS 目录项”改成 `directory_open/read/close`，为 VFS 的目录接口打基础。
+25. [从文件/目录句柄到第一版 VFS](./KERNEL_VFS_GUIDE.md)
+   再继续往前，把 `ls` / `cat` / `stat` 统一收口到 `vfs_*` 接口，让 shell 不再直接依赖具体文件系统访问层。
+26. [从第一版 VFS 到文件描述符表](./KERNEL_FILE_DESCRIPTOR_GUIDE.md)
+   再继续往前，把 `cat` 从“直接拿 VFS 文件对象”升级成“先拿 fd 小整数，再用 fd_read/fd_close 操作打开文件”。
 
 一句话记忆这个顺序：
 
@@ -74,4 +82,8 @@ stage1
 -> kernel object allocator + formal memory subsystem
 -> raw boot volume + block device entry
 -> first read-only filesystem
+-> kernel file handle layer
+-> kernel directory handle layer
+-> first VFS layer
+-> file descriptor table
 ```

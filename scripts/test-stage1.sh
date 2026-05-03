@@ -101,6 +101,29 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "os64fs_parent_lookup_inode=3" "$SERIAL_LOG" \
   && grep -q "os64fs_readme=os64fs readme: the 64-bit kernel now mounts a real read-only filesystem." "$SERIAL_LOG" \
   && grep -q "os64fs_guide=os64fs guide: stage2 only preloads raw sectors." "$SERIAL_LOG" \
+  && grep -q "file_open ok" "$SERIAL_LOG" \
+  && grep -q "file_read_total=72" "$SERIAL_LOG" \
+  && grep -q "file_eof_read=0" "$SERIAL_LOG" \
+  && grep -q "file_stat_inode=5" "$SERIAL_LOG" \
+  && grep -q "file_layer ok" "$SERIAL_LOG" \
+  && grep -q "directory_open ok" "$SERIAL_LOG" \
+  && grep -q "directory_root_entries=3" "$SERIAL_LOG" \
+  && grep -q "directory_read_count=3" "$SERIAL_LOG" \
+  && grep -q "directory_rewind_index=0" "$SERIAL_LOG" \
+  && grep -q "directory_docs_first_inode=5" "$SERIAL_LOG" \
+  && grep -q "directory_layer ok" "$SERIAL_LOG" \
+  && grep -q "vfs_mount ok" "$SERIAL_LOG" \
+  && grep -q "vfs_stat_inode=5" "$SERIAL_LOG" \
+  && grep -q "vfs_file_read_total=72" "$SERIAL_LOG" \
+  && grep -q "vfs_directory_entries=3" "$SERIAL_LOG" \
+  && grep -q "vfs_directory_first_inode=2" "$SERIAL_LOG" \
+  && grep -q "vfs_layer ok" "$SERIAL_LOG" \
+  && grep -q "fd_table ok" "$SERIAL_LOG" \
+  && grep -q "fd_open=0" "$SERIAL_LOG" \
+  && grep -q "fd_read_total=72" "$SERIAL_LOG" \
+  && grep -q "fd_eof_read=0" "$SERIAL_LOG" \
+  && grep -q "fd_open_count=0" "$SERIAL_LOG" \
+  && grep -q "fd_layer ok" "$SERIAL_LOG" \
   && grep -q "filesystem ok" "$SERIAL_LOG" \
   && grep -q "pic ok" "$SERIAL_LOG" \
   && grep -q "pit ok" "$SERIAL_LOG" \
@@ -253,7 +276,7 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "shell_result=unknown" "$SERIAL_LOG" \
   && grep -q "unknown command: bad" "$SERIAL_LOG" \
   && grep -q "shell ok" "$SERIAL_LOG"; then
-  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->kmemory->boot-volume->filesystem->pic->pit->timer->sleep->keyboard->char-input->console-line->shell serial test passed"
+  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->kmemory->boot-volume->filesystem->file-layer->directory-layer->vfs->fd->pic->pit->timer->sleep->keyboard->char-input->console-line->shell serial test passed"
   cat "$SERIAL_LOG"
   exit 0
 fi
