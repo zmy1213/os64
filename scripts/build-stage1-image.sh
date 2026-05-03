@@ -10,6 +10,7 @@ KERNEL_INCLUDE_DIR="$ROOT_DIR/kernel"
 KERNEL_ENTRY_SRC="$ROOT_DIR/kernel/boot/entry64.asm"
 KERNEL_INTERRUPT_STUBS_SRC="$ROOT_DIR/kernel/interrupts/interrupt_stubs.asm"
 KERNEL_TASK_CONTEXT_SRC="$ROOT_DIR/kernel/task/context_switch.asm"
+USER_HELLO_SRC="$ROOT_DIR/user/hello.asm"
 KERNEL_MAIN_SRC="$ROOT_DIR/kernel/core/kernel_main.cpp"
 KERNEL_CONSOLE_SRC="$ROOT_DIR/kernel/console/console.cpp"
 KERNEL_SHELL_SRC="$ROOT_DIR/kernel/shell/shell.cpp"
@@ -38,6 +39,7 @@ STAGE2_BIN="$BUILD_DIR/stage2.bin"
 KERNEL_ENTRY_OBJ="$BUILD_DIR/entry64.o"
 KERNEL_INTERRUPT_STUBS_OBJ="$BUILD_DIR/interrupt_stubs.o"
 KERNEL_TASK_CONTEXT_OBJ="$BUILD_DIR/context_switch.o"
+USER_HELLO_BIN="$BUILD_DIR/hello.bin"
 KERNEL_MAIN_OBJ="$BUILD_DIR/kernel_main.o"
 KERNEL_CONSOLE_OBJ="$BUILD_DIR/console.o"
 KERNEL_SHELL_OBJ="$BUILD_DIR/shell.o"
@@ -77,7 +79,7 @@ BOOT_VOLUME_LOAD_OFFSET=0x0000
 BOOT_VOLUME_BYTES=$((BOOT_VOLUME_SECTORS * 512))
 OS64FS_VOLUME_NAME="os64-root"
 OS64FS_SIGNATURE="OS64FSV1"
-OS64FS_INODE_COUNT=6
+OS64FS_INODE_COUNT=7
 OS64FS_INODE_SIZE=32
 OS64FS_INODE_TABLE_START_SECTOR=1
 OS64FS_DATA_START_SECTOR=2
@@ -174,6 +176,9 @@ nasm -f elf64 "$KERNEL_INTERRUPT_STUBS_SRC" -o "$KERNEL_INTERRUPT_STUBS_OBJ"
 
 echo "[4/34] assembling context_switch.asm"
 nasm -f elf64 "$KERNEL_TASK_CONTEXT_SRC" -o "$KERNEL_TASK_CONTEXT_OBJ"
+
+echo "[extra] assembling user/hello.asm"
+nasm -f bin "$USER_HELLO_SRC" -o "$USER_HELLO_BIN"
 
 # Compile the kernel with a freestanding x86_64-elf target so the host OS ABI does not leak in.
 echo "[5/34] compiling kernel_main.cpp"
@@ -617,8 +622,9 @@ max_kernel_sectors="$((image_total_sectors - (KERNEL_START_SECTOR - 1) - BOOT_VO
 os64fs_readme_length="${#OS64FS_README}"
 os64fs_notes_length="${#OS64FS_NOTES}"
 os64fs_guide_length="${#OS64FS_GUIDE}"
+os64fs_hello_length="$(wc -c < "$USER_HELLO_BIN" | tr -d ' ')"
 os64fs_root_dir_bytes=$((3 * 32))
-os64fs_docs_dir_bytes=$((1 * 32))
+os64fs_docs_dir_bytes=$((2 * 32))
 os64fs_inode_table_offset=$((OS64FS_INODE_TABLE_START_SECTOR * 512))
 os64fs_data_offset=$((OS64FS_DATA_START_SECTOR * 512))
 os64fs_root_dir_offset=$((os64fs_data_offset + 0 * OS64FS_DATA_BLOCK_SIZE))
@@ -626,6 +632,7 @@ os64fs_readme_offset=$((os64fs_data_offset + 1 * OS64FS_DATA_BLOCK_SIZE))
 os64fs_notes_offset=$((os64fs_data_offset + 2 * OS64FS_DATA_BLOCK_SIZE))
 os64fs_docs_dir_offset=$((os64fs_data_offset + 3 * OS64FS_DATA_BLOCK_SIZE))
 os64fs_guide_offset=$((os64fs_data_offset + 4 * OS64FS_DATA_BLOCK_SIZE))
+os64fs_hello_offset=$((os64fs_data_offset + 6 * OS64FS_DATA_BLOCK_SIZE))
 
 if [ "$kernel_sectors" -le 0 ] || [ "$kernel_sectors" -gt "$max_kernel_sectors" ]; then
   # stage2 现在已经是“每轮只读 1 个扇区”的 CHS 循环，
@@ -638,7 +645,9 @@ fi
 if [ "$os64fs_readme_length" -gt "$OS64FS_DATA_BLOCK_SIZE" ] || \
    [ "$os64fs_notes_length" -gt "$OS64FS_DATA_BLOCK_SIZE" ] || \
    [ "$os64fs_guide_length" -le "$OS64FS_DATA_BLOCK_SIZE" ] || \
-   [ "$os64fs_guide_length" -gt $((OS64FS_DATA_BLOCK_SIZE * 2)) ]; then
+   [ "$os64fs_guide_length" -gt $((OS64FS_DATA_BLOCK_SIZE * 2)) ] || \
+   [ "$os64fs_hello_length" -le 0 ] || \
+   [ "$os64fs_hello_length" -gt "$OS64FS_DATA_BLOCK_SIZE" ]; then
   echo "os64fs file sizes do not match the planned data block layout" >&2
   exit 1
 fi
@@ -663,15 +672,18 @@ write_inode $((os64fs_inode_table_offset + 2 * OS64FS_INODE_SIZE)) 2 1 1 "$os64f
 write_inode $((os64fs_inode_table_offset + 3 * OS64FS_INODE_SIZE)) 3 1 1 "$os64fs_notes_length" 2 "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK"
 write_inode $((os64fs_inode_table_offset + 4 * OS64FS_INODE_SIZE)) 4 2 1 "$os64fs_docs_dir_bytes" 3 "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK"
 write_inode $((os64fs_inode_table_offset + 5 * OS64FS_INODE_SIZE)) 5 1 1 "$os64fs_guide_length" 4 5 "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK"
+write_inode $((os64fs_inode_table_offset + 6 * OS64FS_INODE_SIZE)) 6 1 1 "$os64fs_hello_length" 6 "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK"
 
 write_dir_entry "$os64fs_root_dir_offset" 2 1 "readme.txt"
 write_dir_entry $((os64fs_root_dir_offset + 32)) 3 1 "notes.txt"
 write_dir_entry $((os64fs_root_dir_offset + 64)) 4 2 "docs"
 write_dir_entry "$os64fs_docs_dir_offset" 5 1 "guide.txt"
+write_dir_entry $((os64fs_docs_dir_offset + 32)) 6 1 "hello.bin"
 
 printf '%s' "$OS64FS_README" | dd of="$BOOT_VOLUME_BIN" bs=1 seek="$os64fs_readme_offset" conv=notrunc status=none
 printf '%s' "$OS64FS_NOTES" | dd of="$BOOT_VOLUME_BIN" bs=1 seek="$os64fs_notes_offset" conv=notrunc status=none
 printf '%s' "$OS64FS_GUIDE" | dd of="$BOOT_VOLUME_BIN" bs=1 seek="$os64fs_guide_offset" conv=notrunc status=none
+dd if="$USER_HELLO_BIN" of="$BOOT_VOLUME_BIN" bs=1 seek="$os64fs_hello_offset" conv=notrunc status=none
 
 # Stage2 needs to know how many sectors to read and what fixed address the kernel expects.
 echo "[30/34] generating kernel metadata for stage2"

@@ -41,6 +41,19 @@ serial_log_has_expected_markers() {
     && grep -q "user_mode_return_cpl=3" "$serial_log" \
     && grep -q "user_mode_return_flags=0x0000000000000003" "$serial_log" \
     && grep -q "user mode ok" "$serial_log" \
+    && grep -q "user_file_program_path=/docs/hello.bin" "$serial_log" \
+    && grep -q "user_file_program_inode=6" "$serial_log" \
+    && grep -q "user_file_program_root=0x" "$serial_log" \
+    && grep -q "user_file_program_code_phys=0x" "$serial_log" \
+    && grep -q "user_file_program_stack_phys=0x" "$serial_log" \
+    && grep -q "user_file_program_entry=0x0000000000400000" "$serial_log" \
+    && grep -q "user_file_program_stack_top=0x0000000000800000" "$serial_log" \
+    && grep -q "user_file_program_size=" "$serial_log" \
+    && grep -q "user_file_program=hello from fs" "$serial_log" \
+    && grep -q "user_file_program_return_cs=0x0000000000000043" "$serial_log" \
+    && grep -q "user_file_program_return_cpl=3" "$serial_log" \
+    && grep -q "user_file_program_return_flags=0x0000000000000020" "$serial_log" \
+    && grep -q "user_file_program ok" "$serial_log" \
     && grep -q "user_thread_pid=5" "$serial_log" \
     && grep -q "user_thread_tid=11" "$serial_log" \
     && grep -q "user_thread_kernel_cwd_before=/docs" "$serial_log" \

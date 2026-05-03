@@ -118,11 +118,12 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "boot volume ok" "$SERIAL_LOG" \
   && grep -q "os64fs_signature=OS64FSV1" "$SERIAL_LOG" \
   && grep -q "os64fs_volume_name=os64-root" "$SERIAL_LOG" \
-  && grep -q "os64fs_inode_count=6" "$SERIAL_LOG" \
+  && grep -q "os64fs_inode_count=7" "$SERIAL_LOG" \
   && grep -q "os64fs_data_block_size=128" "$SERIAL_LOG" \
   && grep -q "os64fs_root_entries=3" "$SERIAL_LOG" \
-  && grep -q "os64fs_docs_entries=1" "$SERIAL_LOG" \
+  && grep -q "os64fs_docs_entries=2" "$SERIAL_LOG" \
   && grep -q "os64fs_parent_lookup_inode=3" "$SERIAL_LOG" \
+  && grep -q "os64fs_hello_inode=6" "$SERIAL_LOG" \
   && grep -q "os64fs_readme=os64fs readme: the 64-bit kernel now mounts a real read-only filesystem." "$SERIAL_LOG" \
   && grep -q "os64fs_guide=os64fs guide: stage2 only preloads raw sectors." "$SERIAL_LOG" \
   && grep -q "file_open ok" "$SERIAL_LOG" \
@@ -135,6 +136,7 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "directory_read_count=3" "$SERIAL_LOG" \
   && grep -q "directory_rewind_index=0" "$SERIAL_LOG" \
   && grep -q "directory_docs_first_inode=5" "$SERIAL_LOG" \
+  && grep -q "directory_docs_second_inode=6" "$SERIAL_LOG" \
   && grep -q "directory_layer ok" "$SERIAL_LOG" \
   && grep -q "vfs_mount ok" "$SERIAL_LOG" \
   && grep -q "vfs_stat_inode=5" "$SERIAL_LOG" \
@@ -152,7 +154,7 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "sys_cwd=/" "$SERIAL_LOG" \
   && grep -q "sys_root_entries=3" "$SERIAL_LOG" \
   && grep -q "sys_cwd_after_cd=/docs" "$SERIAL_LOG" \
-  && grep -q "sys_listdir_count=1" "$SERIAL_LOG" \
+  && grep -q "sys_listdir_count=2" "$SERIAL_LOG" \
   && grep -q "sys_path_stat_inode=5" "$SERIAL_LOG" \
   && grep -q "sys_write_stdout_payload=hello sys_write" "$SERIAL_LOG" \
   && grep -q "sys_write_stderr_payload=error sys_write" "$SERIAL_LOG" \
@@ -168,7 +170,7 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "syscall_layer ok" "$SERIAL_LOG" \
   && grep -q "int80_cwd=/" "$SERIAL_LOG" \
   && grep -q "int80_cwd_after_cd=/docs" "$SERIAL_LOG" \
-  && grep -q "int80_listdir_count=1" "$SERIAL_LOG" \
+  && grep -q "int80_listdir_count=2" "$SERIAL_LOG" \
   && grep -q "int80_path_stat_inode=5" "$SERIAL_LOG" \
   && grep -q "int80_write_stdout_payload=hello int80_write" "$SERIAL_LOG" \
   && grep -q "int80_write_stderr_payload=error int80_write" "$SERIAL_LOG" \
@@ -196,6 +198,19 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "user_mode_return_cpl=3" "$SERIAL_LOG" \
   && grep -q "user_mode_return_flags=0x0000000000000003" "$SERIAL_LOG" \
   && grep -q "user mode ok" "$SERIAL_LOG" \
+  && grep -q "user_file_program_path=/docs/hello.bin" "$SERIAL_LOG" \
+  && grep -q "user_file_program_inode=6" "$SERIAL_LOG" \
+  && grep -q "user_file_program_root=0x" "$SERIAL_LOG" \
+  && grep -q "user_file_program_code_phys=0x" "$SERIAL_LOG" \
+  && grep -q "user_file_program_stack_phys=0x" "$SERIAL_LOG" \
+  && grep -q "user_file_program_entry=0x0000000000400000" "$SERIAL_LOG" \
+  && grep -q "user_file_program_stack_top=0x0000000000800000" "$SERIAL_LOG" \
+  && grep -q "user_file_program_size=" "$SERIAL_LOG" \
+  && grep -q "user_file_program=hello from fs" "$SERIAL_LOG" \
+  && grep -q "user_file_program_return_cs=0x0000000000000043" "$SERIAL_LOG" \
+  && grep -q "user_file_program_return_cpl=3" "$SERIAL_LOG" \
+  && grep -q "user_file_program_return_flags=0x0000000000000020" "$SERIAL_LOG" \
+  && grep -q "user_file_program ok" "$SERIAL_LOG" \
   && grep -q "filesystem ok" "$SERIAL_LOG" \
   && grep -q "pic ok" "$SERIAL_LOG" \
   && grep -q "pit ok" "$SERIAL_LOG" \
@@ -370,8 +385,9 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "shell_line=ls docs" "$SERIAL_LOG" \
   && grep -q "ls_path=docs" "$SERIAL_LOG" \
   && grep -q "ls_resolved_path=/docs" "$SERIAL_LOG" \
-  && grep -q "ls_entry_count=1" "$SERIAL_LOG" \
+  && grep -q "ls_entry_count=2" "$SERIAL_LOG" \
   && grep -q "ls\\[0\\]=file guide.txt size=" "$SERIAL_LOG" \
+  && grep -q "ls\\[1\\]=file hello.bin size=" "$SERIAL_LOG" \
   && grep -q "shell_line=cat readme.txt" "$SERIAL_LOG" \
   && grep -q "cat_path=readme.txt" "$SERIAL_LOG" \
   && grep -q "cat_resolved_path=/readme.txt" "$SERIAL_LOG" \

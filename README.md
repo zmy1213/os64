@@ -138,6 +138,8 @@ make clean
 - `tss ok`
 - `address_space ok`
 - `user mode ok`
+- `user_file_program=hello from fs`
+- `user_file_program ok`
 - `filesystem ok`
 - `file_layer ok`
 - `directory_layer ok`
@@ -158,6 +160,7 @@ make clean
 - `user_thread_helper_stack_base=0x...`
 - `user_thread_helper_resume_root=0x...`
 - `user_thread_stdin_done_flag=1`
+- `ls[1]=file hello.bin size=87`
 - `shell ok`
 - `shell_process_pid=6`
 - `shell_thread_tid=13`
