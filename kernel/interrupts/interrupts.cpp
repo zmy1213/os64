@@ -10,6 +10,7 @@ namespace {
 constexpr uint16_t kIdtEntryCount = 256;       // x86_64 IDT 固定有 256 个向量槽位。
 constexpr uint16_t kKernelCodeSelector = 0x18; // 这个值对应 stage2 里 GDT 的 64 位代码段。
 constexpr uint8_t kInterruptGateType = 0x8E;   // P=1, DPL=0, Type=1110，表示内核态中断门。
+constexpr uint8_t kUserInterruptGateType = 0xEE;  // P=1, DPL=3, Type=1110，允许以后 ring 3 也能显式触发。
 constexpr const char* kExceptionNames[kCpuExceptionCount] = {
     "divide error",                    // 0
     "debug",                           // 1
@@ -62,10 +63,12 @@ struct IdtPointer {
 
 extern "C" uintptr_t isr_stub_table[kCpuExceptionCount];
 extern "C" uintptr_t irq_stub_table[kHardwareIrqCount];
+extern "C" void syscall_interrupt_stub();
 
 IdtEntry g_idt[kIdtEntryCount];        // 把整张 IDT 先放在内核自己的静态内存里。
 
-void set_idt_gate(uint8_t vector, void (*handler)()) {
+void set_idt_gate(uint8_t vector, void (*handler)(),
+                  uint8_t type_attributes = kInterruptGateType) {
   const uint64_t handler_address =
       reinterpret_cast<uint64_t>(handler);
 
@@ -73,7 +76,7 @@ void set_idt_gate(uint8_t vector, void (*handler)()) {
       static_cast<uint16_t>(handler_address & 0xFFFF);
   g_idt[vector].selector = kKernelCodeSelector;
   g_idt[vector].ist = 0;
-  g_idt[vector].type_attributes = kInterruptGateType;
+  g_idt[vector].type_attributes = type_attributes;
   g_idt[vector].offset_mid =
       static_cast<uint16_t>((handler_address >> 16) & 0xFFFF);
   g_idt[vector].offset_high =
@@ -100,6 +103,12 @@ bool initialize_idt() {
     set_idt_gate(static_cast<uint8_t>(kPicMasterVectorBase + irq),
                  reinterpret_cast<void (*)()>(irq_stub_table[irq]));
   }
+
+  // 第一版真正的 syscall 入口先走 `int 0x80`。
+  // 这里先把门权限放成 DPL=3，这样以后真的有 ring 3 时可以继续沿用。
+  set_idt_gate(kSyscallInterruptVector,
+               syscall_interrupt_stub,
+               kUserInterruptGateType);
 
   IdtPointer idt_pointer{};
   idt_pointer.limit = static_cast<uint16_t>(sizeof(g_idt) - 1);

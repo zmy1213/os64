@@ -338,6 +338,34 @@ void shell_set_output_color(uint8_t color) {
   console_set_color(color);
 }
 
+size_t syscall_output_write(int32_t fd,
+                            const void* buffer,
+                            size_t bytes_to_write,
+                            void* context) {
+  (void)fd;
+  (void)context;
+
+  if (buffer == nullptr) {
+    return 0;
+  }
+
+  const char* text = static_cast<const char*>(buffer);
+  for (size_t i = 0; i < bytes_to_write; ++i) {
+    if (console_is_initialized()) {
+      console_write_char(text[i]);
+    }
+
+    if (text[i] == '\n') {
+      serial_write_crlf();
+      continue;
+    }
+
+    serial_write_char(text[i]);
+  }
+
+  return bytes_to_write;
+}
+
 size_t shell_history_provider_count(const void* context) {
   return shell_history_entry_count(static_cast<const ShellState*>(context));
 }
@@ -401,6 +429,16 @@ void serial_write_u64(uint64_t value) {
   while (count > 0) {
     serial_write_char(digits[--count]);
   }
+}
+
+void serial_write_i64(int64_t value) {
+  if (value < 0) {
+    serial_write_char('-');
+    serial_write_u64(static_cast<uint64_t>(-(value + 1)) + 1);
+    return;
+  }
+
+  serial_write_u64(static_cast<uint64_t>(value));
 }
 
 bool is_aligned(uint64_t value, uint64_t alignment) {
@@ -1399,6 +1437,24 @@ bool run_file_descriptor_smoke_test(FileDescriptorTable* table,
   return ok;
 }
 
+int64_t invoke_int80_syscall(uint64_t syscall_number,
+                             uint64_t argument0 = 0,
+                             uint64_t argument1 = 0,
+                             uint64_t argument2 = 0,
+                             uint64_t argument3 = 0) {
+  int64_t result;
+  asm volatile(
+      "int $0x80"
+      : "=a"(result)
+      : "a"(syscall_number),
+        "D"(argument0),
+        "S"(argument1),
+        "d"(argument2),
+        "c"(argument3)
+      : "cc", "memory");
+  return result;
+}
+
 // syscall 这一层先不碰 CPU 的 `syscall` 指令。
 // 它的目标是把 open/read/stat/seek/close 收口成一组“像系统调用”的内核入口：
 // 上层只拿 fd 和错误码，底层仍然由 fd 表、VFS、OS64FS 一层层执行真实工作。
@@ -1406,6 +1462,7 @@ bool run_syscall_smoke_test(SyscallContext* context,
                             FileDescriptorTable* fd_table) {
   if (context == nullptr ||
       !initialize_syscall_context(context, fd_table) ||
+      !install_syscall_write_handler(context, syscall_output_write, nullptr) ||
       !syscall_context_is_ready(context)) {
     return false;
   }
@@ -1466,6 +1523,28 @@ bool run_syscall_smoke_test(SyscallContext* context,
   serial_write_u64(guide_path_stat.inode_number);
   serial_write_crlf();
 
+  const char* const kSysWriteStdoutMessage = "hello sys_write\n";
+  const size_t sys_write_stdout_length =
+      string_length(kSysWriteStdoutMessage);
+  serial_write_string("sys_write_stdout_payload=");
+  const int32_t stdout_write =
+      sys_write(context, kSyscallStandardOutputFd,
+                kSysWriteStdoutMessage, sys_write_stdout_length);
+  if (stdout_write < 0) {
+    return false;
+  }
+
+  const char* const kSysWriteStderrMessage = "error sys_write\n";
+  const size_t sys_write_stderr_length =
+      string_length(kSysWriteStderrMessage);
+  serial_write_string("sys_write_stderr_payload=");
+  const int32_t stderr_write =
+      sys_write(context, kSyscallStandardErrorFd,
+                kSysWriteStderrMessage, sys_write_stderr_length);
+  if (stderr_write < 0) {
+    return false;
+  }
+
   const int32_t guide_fd = sys_open(context, "guide.txt");
   if (guide_fd < 0) {
     return false;
@@ -1474,6 +1553,10 @@ bool run_syscall_smoke_test(SyscallContext* context,
   serial_write_string("sys_open=");
   serial_write_u64(static_cast<uint64_t>(guide_fd));
   serial_write_crlf();
+
+  const int32_t file_write_status =
+      sys_write(context, guide_fd,
+                kSysWriteStdoutMessage, sys_write_stdout_length);
 
   VfsStat guide_stat;
   if (sys_stat(context, guide_fd, &guide_stat) != kSyscallOk ||
@@ -1516,6 +1599,25 @@ bool run_syscall_smoke_test(SyscallContext* context,
 
   const SyscallStatus close_status = sys_close(context, guide_fd);
   const uint32_t open_count_after_close = fd_open_count(fd_table);
+  const int32_t bad_fd_write_status =
+      sys_write(context, 99,
+                kSysWriteStdoutMessage, sys_write_stdout_length);
+
+  serial_write_string("sys_write_stdout_bytes=");
+  serial_write_i64(stdout_write);
+  serial_write_crlf();
+
+  serial_write_string("sys_write_stderr_bytes=");
+  serial_write_i64(stderr_write);
+  serial_write_crlf();
+
+  serial_write_string("sys_write_file_status=");
+  serial_write_i64(file_write_status);
+  serial_write_crlf();
+
+  serial_write_string("sys_write_bad_fd=");
+  serial_write_i64(bad_fd_write_status);
+  serial_write_crlf();
 
   serial_write_string("sys_read_total=");
   serial_write_u64(total_read);
@@ -1530,7 +1632,11 @@ bool run_syscall_smoke_test(SyscallContext* context,
   serial_write_crlf();
 
   const bool ok =
-      guide_fd == 0 &&
+      stdout_write == static_cast<int32_t>(sys_write_stdout_length) &&
+      stderr_write == static_cast<int32_t>(sys_write_stderr_length) &&
+      guide_fd == kSyscallFirstFileFd &&
+      file_write_status == kSyscallUnsupported &&
+      bad_fd_write_status == kSyscallBadFileDescriptor &&
       strings_equal(cwd, "/") &&
       root_entry_count == 3 &&
       strings_equal(cwd_after_cd, "/docs") &&
@@ -1550,6 +1656,267 @@ bool run_syscall_smoke_test(SyscallContext* context,
 
   if (ok) {
     serial_write_string("syscall_layer ok");
+    serial_write_crlf();
+  }
+
+  return ok;
+}
+
+// 这一步开始让 CPU 真正打一趟 `int 0x80`，而不是只在 C++ 里直接调用 `sys_*`。
+// 这样我们能验证：
+// 1. IDT 里 0x80 号门已经连上
+// 2. 汇编 stub 确实把寄存器保存并交给了 C++
+// 3. 返回值也真的能从内核写回 RAX 再带出来
+bool run_int80_syscall_smoke_test(SyscallContext* context,
+                                  FileDescriptorTable* fd_table) {
+  if (context == nullptr ||
+      fd_table == nullptr ||
+      !initialize_syscall_context(context, fd_table) ||
+      !install_syscall_write_handler(context, syscall_output_write, nullptr) ||
+      !install_syscall_dispatch_context(context) ||
+      !syscall_dispatch_is_ready()) {
+    return false;
+  }
+
+  char cwd[kSyscallPathCapacity];
+  const int64_t cwd_length =
+      invoke_int80_syscall(kSyscallNumberGetCwd,
+                           reinterpret_cast<uint64_t>(cwd),
+                           sizeof(cwd));
+  if (cwd_length < 0) {
+    return false;
+  }
+
+  serial_write_string("int80_cwd=");
+  serial_write_string(cwd);
+  serial_write_crlf();
+
+  const int64_t chdir_status =
+      invoke_int80_syscall(kSyscallNumberChdir,
+                           reinterpret_cast<uint64_t>("docs"));
+  if (chdir_status != kSyscallOk) {
+    return false;
+  }
+
+  char cwd_after_cd[kSyscallPathCapacity];
+  const int64_t cwd_after_cd_length =
+      invoke_int80_syscall(kSyscallNumberGetCwd,
+                           reinterpret_cast<uint64_t>(cwd_after_cd),
+                           sizeof(cwd_after_cd));
+  if (cwd_after_cd_length < 0) {
+    return false;
+  }
+
+  serial_write_string("int80_cwd_after_cd=");
+  serial_write_string(cwd_after_cd);
+  serial_write_crlf();
+
+  VfsDirectoryEntry directory_entries[4];
+  const int64_t directory_entry_count =
+      invoke_int80_syscall(kSyscallNumberListDir,
+                           reinterpret_cast<uint64_t>("."),
+                           reinterpret_cast<uint64_t>(directory_entries),
+                           sizeof(directory_entries) /
+                               sizeof(directory_entries[0]));
+  if (directory_entry_count < 0) {
+    return false;
+  }
+
+  serial_write_string("int80_listdir_count=");
+  serial_write_u64(static_cast<uint64_t>(directory_entry_count));
+  serial_write_crlf();
+
+  VfsStat guide_path_stat;
+  const int64_t path_stat_status =
+      invoke_int80_syscall(kSyscallNumberStatPath,
+                           reinterpret_cast<uint64_t>("guide.txt"),
+                           reinterpret_cast<uint64_t>(&guide_path_stat));
+  if (path_stat_status != kSyscallOk) {
+    return false;
+  }
+
+  serial_write_string("int80_path_stat_inode=");
+  serial_write_u64(guide_path_stat.inode_number);
+  serial_write_crlf();
+
+  const char* const kInt80WriteStdoutMessage = "hello int80_write\n";
+  const size_t int80_write_stdout_length =
+      string_length(kInt80WriteStdoutMessage);
+  serial_write_string("int80_write_stdout_payload=");
+  const int64_t stdout_write =
+      invoke_int80_syscall(kSyscallNumberWrite,
+                           static_cast<uint64_t>(kSyscallStandardOutputFd),
+                           reinterpret_cast<uint64_t>(kInt80WriteStdoutMessage),
+                           int80_write_stdout_length);
+  if (stdout_write < 0) {
+    return false;
+  }
+
+  const char* const kInt80WriteStderrMessage = "error int80_write\n";
+  const size_t int80_write_stderr_length =
+      string_length(kInt80WriteStderrMessage);
+  serial_write_string("int80_write_stderr_payload=");
+  const int64_t stderr_write =
+      invoke_int80_syscall(kSyscallNumberWrite,
+                           static_cast<uint64_t>(kSyscallStandardErrorFd),
+                           reinterpret_cast<uint64_t>(kInt80WriteStderrMessage),
+                           int80_write_stderr_length);
+  if (stderr_write < 0) {
+    return false;
+  }
+
+  const int64_t guide_fd =
+      invoke_int80_syscall(kSyscallNumberOpen,
+                           reinterpret_cast<uint64_t>("guide.txt"));
+  if (guide_fd < 0) {
+    return false;
+  }
+
+  serial_write_string("int80_open=");
+  serial_write_u64(static_cast<uint64_t>(guide_fd));
+  serial_write_crlf();
+
+  const int64_t file_write_status =
+      invoke_int80_syscall(kSyscallNumberWrite,
+                           static_cast<uint64_t>(guide_fd),
+                           reinterpret_cast<uint64_t>(kInt80WriteStdoutMessage),
+                           int80_write_stdout_length);
+
+  VfsStat guide_fd_stat;
+  const int64_t fd_stat_status =
+      invoke_int80_syscall(kSyscallNumberStat,
+                           static_cast<uint64_t>(guide_fd),
+                           reinterpret_cast<uint64_t>(&guide_fd_stat));
+  if (fd_stat_status != kSyscallOk) {
+    (void)invoke_int80_syscall(kSyscallNumberClose,
+                               static_cast<uint64_t>(guide_fd));
+    return false;
+  }
+
+  serial_write_string("int80_fd_stat_inode=");
+  serial_write_u64(guide_fd_stat.inode_number);
+  serial_write_crlf();
+
+  const size_t expected_guide_length = string_length(kOs64FsExpectedGuide);
+  char guide_text[256];
+  if (expected_guide_length >= sizeof(guide_text)) {
+    (void)invoke_int80_syscall(kSyscallNumberClose,
+                               static_cast<uint64_t>(guide_fd));
+    return false;
+  }
+
+  size_t total_read = 0;
+  while (total_read < expected_guide_length) {
+    const int64_t bytes_read =
+        invoke_int80_syscall(kSyscallNumberRead,
+                             static_cast<uint64_t>(guide_fd),
+                             reinterpret_cast<uint64_t>(guide_text + total_read),
+                             17);
+    if (bytes_read <= 0) {
+      (void)invoke_int80_syscall(kSyscallNumberClose,
+                                 static_cast<uint64_t>(guide_fd));
+      return false;
+    }
+
+    total_read += static_cast<size_t>(bytes_read);
+  }
+  guide_text[total_read] = '\0';
+
+  uint8_t eof_byte = 0;
+  const int64_t eof_read =
+      invoke_int80_syscall(kSyscallNumberRead,
+                           static_cast<uint64_t>(guide_fd),
+                           reinterpret_cast<uint64_t>(&eof_byte),
+                           1);
+
+  const int64_t seek_status =
+      invoke_int80_syscall(kSyscallNumberSeek,
+                           static_cast<uint64_t>(guide_fd),
+                           0);
+
+  char prefix[8];
+  const int64_t prefix_read =
+      seek_status == kSyscallOk
+          ? invoke_int80_syscall(kSyscallNumberRead,
+                                 static_cast<uint64_t>(guide_fd),
+                                 reinterpret_cast<uint64_t>(prefix),
+                                 sizeof(prefix))
+          : -1;
+
+  const int64_t close_status =
+      invoke_int80_syscall(kSyscallNumberClose,
+                           static_cast<uint64_t>(guide_fd));
+  const uint32_t open_count_after_close = fd_open_count(fd_table);
+  const int64_t bad_fd_write_status =
+      invoke_int80_syscall(kSyscallNumberWrite,
+                           99,
+                           reinterpret_cast<uint64_t>(kInt80WriteStdoutMessage),
+                           int80_write_stdout_length);
+
+  serial_write_string("int80_write_stdout_bytes=");
+  serial_write_i64(stdout_write);
+  serial_write_crlf();
+
+  serial_write_string("int80_write_stderr_bytes=");
+  serial_write_i64(stderr_write);
+  serial_write_crlf();
+
+  serial_write_string("int80_write_file_status=");
+  serial_write_i64(file_write_status);
+  serial_write_crlf();
+
+  serial_write_string("int80_write_bad_fd=");
+  serial_write_i64(bad_fd_write_status);
+  serial_write_crlf();
+
+  serial_write_string("int80_read_total=");
+  serial_write_u64(total_read);
+  serial_write_crlf();
+
+  serial_write_string("int80_eof_read=");
+  serial_write_u64(static_cast<uint64_t>(eof_read));
+  serial_write_crlf();
+
+  serial_write_string("int80_open_count=");
+  serial_write_u64(open_count_after_close);
+  serial_write_crlf();
+
+  const int64_t bad_syscall_result = invoke_int80_syscall(99);
+
+  serial_write_string("int80_bad_result=0x");
+  serial_write_hex64(static_cast<uint64_t>(bad_syscall_result));
+  serial_write_crlf();
+
+  const bool ok =
+      cwd_length == 1 &&
+      strings_equal(cwd, "/") &&
+      chdir_status == kSyscallOk &&
+      cwd_after_cd_length == 5 &&
+      strings_equal(cwd_after_cd, "/docs") &&
+      directory_entry_count == 1 &&
+      strings_equal(directory_entries[0].name, "guide.txt") &&
+      path_stat_status == kSyscallOk &&
+      stdout_write == static_cast<int64_t>(int80_write_stdout_length) &&
+      stderr_write == static_cast<int64_t>(int80_write_stderr_length) &&
+      guide_path_stat.inode_number == 5 &&
+      guide_fd == kSyscallFirstFileFd &&
+      file_write_status == kSyscallUnsupported &&
+      fd_stat_status == kSyscallOk &&
+      guide_fd_stat.inode_number == 5 &&
+      guide_fd_stat.size_bytes == expected_guide_length &&
+      total_read == expected_guide_length &&
+      eof_read == 0 &&
+      seek_status == kSyscallOk &&
+      prefix_read == static_cast<int64_t>(sizeof(prefix)) &&
+      bounded_text_equals(prefix, "os64fs g", sizeof(prefix)) &&
+      close_status == kSyscallOk &&
+      open_count_after_close == 0 &&
+      bad_fd_write_status == kSyscallBadFileDescriptor &&
+      bad_syscall_result == kSyscallInvalidArgument &&
+      strings_equal(guide_text, kOs64FsExpectedGuide);
+
+  if (ok) {
+    serial_write_string("int80_syscall ok");
     serial_write_crlf();
   }
 
@@ -2137,6 +2504,11 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 
   if (!run_syscall_smoke_test(&g_syscall_context, &g_fd_table)) {
     write_status_line(14, "syscall layer bad");
+    return;
+  }
+
+  if (!run_int80_syscall_smoke_test(&g_syscall_context, &g_fd_table)) {
+    write_status_line(14, "int80 syscall bad");
     return;
   }
 

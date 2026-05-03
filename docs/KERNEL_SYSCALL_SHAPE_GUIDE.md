@@ -402,7 +402,7 @@ run_syscall_smoke_test
 
 ```text
 syscall_context ok
-sys_open=0
+sys_open=3
 sys_stat_inode=5
 sys_read_total=193
 sys_eof_read=0
@@ -413,7 +413,7 @@ syscall_layer ok
 这些日志分别证明：
 
 - syscall 上下文初始化成功
-- `open` 返回了第一个 fd：0
+- `open` 对外已经返回第一个“普通文件 fd”：3
 - `stat` 看到的是 `/docs/guide.txt` 的 inode 5
 - `read` 读完了 193 字节的 guide 文本
 - 文件读完以后再读会返回 EOF 0
@@ -490,7 +490,7 @@ sys_read(fd)
 sys_getcwd
 sys_chdir
 sys_listdir
-sys_write 的设计占位
+sys_write
 ```
 
 第二条是开始准备真正用户态：
@@ -515,8 +515,23 @@ syscall/sysret 或 int 0x80 入口
 
 > 先把内核服务边界稳定下来，再让用户程序进入内核，调试成本会低很多。
 
-继续阅读：
+这一步后来继续推进成了：
+
+```text
+公开 syscall fd 0/1/2 + 第一版 sys_write
+```
+
+也就是：
+
+- `0 = stdin`
+- `1 = stdout`
+- `2 = stderr`
+- `3+ = 普通文件`
+
+对应继续阅读：
 
 ```text
 docs/KERNEL_SYSCALL_CWD_GUIDE.md
+docs/KERNEL_INT80_SYSCALL_GUIDE.md
+docs/KERNEL_SYSCALL_WRITE_GUIDE.md
 ```

@@ -5,6 +5,7 @@
 namespace {
 
 constexpr size_t kMaxSyscallPositiveResult = 2147483647U;
+SyscallContext* g_active_syscall_context = nullptr;
 
 bool is_space_char(char ch) {
   return ch == ' ' || ch == '\t';
@@ -161,6 +162,112 @@ bool syscall_fd_is_open(SyscallContext* context, int32_t fd) {
          fd_is_open(context->fd_table, fd);
 }
 
+bool syscall_fd_is_reserved(int32_t fd) {
+  return fd >= kSyscallStandardInputFd &&
+         fd < kSyscallFirstFileFd;
+}
+
+bool syscall_fd_is_output(int32_t fd) {
+  return fd == kSyscallStandardOutputFd ||
+         fd == kSyscallStandardErrorFd;
+}
+
+bool syscall_fd_is_file(int32_t fd) {
+  return fd >= kSyscallFirstFileFd;
+}
+
+int32_t table_fd_to_syscall_fd(int32_t table_fd) {
+  if (table_fd < 0) {
+    return table_fd;
+  }
+
+  return table_fd + kSyscallFirstFileFd;
+}
+
+int32_t syscall_fd_to_table_fd(int32_t syscall_fd) {
+  if (!syscall_fd_is_file(syscall_fd)) {
+    return kInvalidFileDescriptor;
+  }
+
+  return syscall_fd - kSyscallFirstFileFd;
+}
+
+bool syscall_write_handler_is_ready(const SyscallContext* context) {
+  return context != nullptr && context->write_handler != nullptr;
+}
+
+uint64_t encode_syscall_result(int64_t value) {
+  return static_cast<uint64_t>(value);
+}
+
+int64_t syscall_status_result(SyscallStatus status) {
+  return static_cast<int64_t>(status);
+}
+
+int64_t dispatch_syscall_registers(uint64_t syscall_number,
+                                   uint64_t argument0,
+                                   uint64_t argument1,
+                                   uint64_t argument2,
+                                   uint64_t argument3) {
+  SyscallContext* context = g_active_syscall_context;
+  if (!syscall_context_is_ready(context)) {
+    return syscall_status_result(kSyscallInvalidArgument);
+  }
+
+  switch (syscall_number) {
+    case kSyscallNumberGetCwd:
+      return static_cast<int64_t>(
+          sys_getcwd(context,
+                     reinterpret_cast<char*>(argument0),
+                     static_cast<size_t>(argument1)));
+    case kSyscallNumberChdir:
+      return syscall_status_result(
+          sys_chdir(context, reinterpret_cast<const char*>(argument0)));
+    case kSyscallNumberOpen:
+      return static_cast<int64_t>(
+          sys_open(context, reinterpret_cast<const char*>(argument0)));
+    case kSyscallNumberRead:
+      return static_cast<int64_t>(
+          sys_read(context,
+                   static_cast<int32_t>(argument0),
+                   reinterpret_cast<void*>(argument1),
+                   static_cast<size_t>(argument2)));
+    case kSyscallNumberWrite:
+      return static_cast<int64_t>(
+          sys_write(context,
+                    static_cast<int32_t>(argument0),
+                    reinterpret_cast<const void*>(argument1),
+                    static_cast<size_t>(argument2)));
+    case kSyscallNumberClose:
+      return syscall_status_result(
+          sys_close(context, static_cast<int32_t>(argument0)));
+    case kSyscallNumberSeek:
+      return syscall_status_result(
+          sys_seek(context,
+                   static_cast<int32_t>(argument0),
+                   static_cast<uint32_t>(argument1)));
+    case kSyscallNumberStat:
+      return syscall_status_result(
+          sys_stat(context,
+                   static_cast<int32_t>(argument0),
+                   reinterpret_cast<VfsStat*>(argument1)));
+    case kSyscallNumberStatPath:
+      return syscall_status_result(
+          sys_stat_path(context,
+                        reinterpret_cast<const char*>(argument0),
+                        reinterpret_cast<VfsStat*>(argument1)));
+    case kSyscallNumberListDir:
+      return static_cast<int64_t>(
+          sys_listdir(context,
+                      reinterpret_cast<const char*>(argument0),
+                      reinterpret_cast<VfsDirectoryEntry*>(argument1),
+                      static_cast<size_t>(argument2)));
+    default:
+      (void)argument3;
+      return syscall_status_result(kSyscallInvalidArgument);
+  }
+}
+
 SyscallStatus stat_path_internal(SyscallContext* context, const char* path,
                                  VfsStat* out_stat, char* resolved_path,
                                  size_t resolved_capacity) {
@@ -213,6 +320,31 @@ bool initialize_syscall_context(SyscallContext* context,
 bool syscall_context_is_ready(const SyscallContext* context) {
   return context != nullptr &&
          file_descriptor_table_is_ready(context->fd_table);
+}
+
+bool install_syscall_write_handler(SyscallContext* context,
+                                   SyscallWriteHandler handler,
+                                   void* write_context) {
+  if (!syscall_context_is_ready(context) || handler == nullptr) {
+    return false;
+  }
+
+  context->write_handler = handler;
+  context->write_context = write_context;
+  return true;
+}
+
+bool install_syscall_dispatch_context(SyscallContext* context) {
+  if (!syscall_context_is_ready(context)) {
+    return false;
+  }
+
+  g_active_syscall_context = context;
+  return true;
+}
+
+bool syscall_dispatch_is_ready() {
+  return syscall_context_is_ready(g_active_syscall_context);
 }
 
 const char* syscall_current_working_directory(const SyscallContext* context) {
@@ -353,7 +485,7 @@ int32_t sys_open(SyscallContext* context, const char* path) {
     return kSyscallIoError;
   }
 
-  return fd;
+  return table_fd_to_syscall_fd(fd);
 }
 
 int32_t sys_read(SyscallContext* context, int32_t fd,
@@ -370,17 +502,65 @@ int32_t sys_read(SyscallContext* context, int32_t fd,
     return kSyscallInvalidArgument;
   }
 
-  if (!fd_is_open(context->fd_table, fd)) {
+  if (syscall_fd_is_reserved(fd)) {
+    return kSyscallUnsupported;
+  }
+
+  const int32_t table_fd = syscall_fd_to_table_fd(fd);
+  if (!syscall_fd_is_open(context, table_fd)) {
     return kSyscallBadFileDescriptor;
   }
 
   const size_t bytes_read =
-      fd_read(context->fd_table, fd, buffer, bytes_to_read);
+      fd_read(context->fd_table, table_fd, buffer, bytes_to_read);
   if (bytes_read > kMaxSyscallPositiveResult) {
     return kSyscallIoError;
   }
 
   return static_cast<int32_t>(bytes_read);
+}
+
+int32_t sys_write(SyscallContext* context, int32_t fd,
+                  const void* buffer, size_t bytes_to_write) {
+  if (!syscall_context_is_ready(context)) {
+    return kSyscallInvalidArgument;
+  }
+
+  if (bytes_to_write == 0) {
+    return 0;
+  }
+
+  if (buffer == nullptr || bytes_to_write > kMaxSyscallPositiveResult) {
+    return kSyscallInvalidArgument;
+  }
+
+  if (syscall_fd_is_output(fd)) {
+    if (!syscall_write_handler_is_ready(context)) {
+      return kSyscallUnsupported;
+    }
+
+    const size_t bytes_written =
+        context->write_handler(fd, buffer, bytes_to_write,
+                               context->write_context);
+    if (bytes_written > kMaxSyscallPositiveResult) {
+      return kSyscallIoError;
+    }
+
+    return static_cast<int32_t>(bytes_written);
+  }
+
+  if (fd == kSyscallStandardInputFd) {
+    return kSyscallUnsupported;
+  }
+
+  const int32_t table_fd = syscall_fd_to_table_fd(fd);
+  if (!syscall_fd_is_open(context, table_fd)) {
+    return kSyscallBadFileDescriptor;
+  }
+
+  // 现在底层文件系统仍然是只读 OS64FS，所以先明确返回“不支持写”，
+  // 不假装成功，也不把未来的可写文件系统设计锁死。
+  return kSyscallUnsupported;
 }
 
 SyscallStatus sys_stat_path(SyscallContext* context, const char* path,
@@ -445,11 +625,16 @@ SyscallStatus sys_close(SyscallContext* context, int32_t fd) {
     return kSyscallInvalidArgument;
   }
 
-  if (!syscall_fd_is_open(context, fd)) {
+  if (syscall_fd_is_reserved(fd)) {
+    return kSyscallUnsupported;
+  }
+
+  const int32_t table_fd = syscall_fd_to_table_fd(fd);
+  if (!syscall_fd_is_open(context, table_fd)) {
     return kSyscallBadFileDescriptor;
   }
 
-  return fd_close(context->fd_table, fd) ? kSyscallOk : kSyscallIoError;
+  return fd_close(context->fd_table, table_fd) ? kSyscallOk : kSyscallIoError;
 }
 
 SyscallStatus sys_seek(SyscallContext* context, int32_t fd, uint32_t offset) {
@@ -457,11 +642,18 @@ SyscallStatus sys_seek(SyscallContext* context, int32_t fd, uint32_t offset) {
     return kSyscallInvalidArgument;
   }
 
-  if (!syscall_fd_is_open(context, fd)) {
+  if (syscall_fd_is_reserved(fd)) {
+    return kSyscallUnsupported;
+  }
+
+  const int32_t table_fd = syscall_fd_to_table_fd(fd);
+  if (!syscall_fd_is_open(context, table_fd)) {
     return kSyscallBadFileDescriptor;
   }
 
-  return fd_seek(context->fd_table, fd, offset) ? kSyscallOk : kSyscallIoError;
+  return fd_seek(context->fd_table, table_fd, offset)
+             ? kSyscallOk
+             : kSyscallIoError;
 }
 
 SyscallStatus sys_stat(SyscallContext* context, int32_t fd,
@@ -470,10 +662,29 @@ SyscallStatus sys_stat(SyscallContext* context, int32_t fd,
     return kSyscallInvalidArgument;
   }
 
-  if (!syscall_fd_is_open(context, fd)) {
+  if (syscall_fd_is_reserved(fd)) {
+    return kSyscallUnsupported;
+  }
+
+  const int32_t table_fd = syscall_fd_to_table_fd(fd);
+  if (!syscall_fd_is_open(context, table_fd)) {
     return kSyscallBadFileDescriptor;
   }
 
-  return fd_stat(context->fd_table, fd, out_stat) ? kSyscallOk
-                                                  : kSyscallIoError;
+  return fd_stat(context->fd_table, table_fd, out_stat)
+             ? kSyscallOk
+             : kSyscallIoError;
+}
+
+extern "C" void kernel_handle_syscall(SyscallInterruptFrame* frame) {
+  if (frame == nullptr) {
+    return;
+  }
+
+  frame->rax = encode_syscall_result(
+      dispatch_syscall_registers(frame->rax,
+                                 frame->rdi,
+                                 frame->rsi,
+                                 frame->rdx,
+                                 frame->rcx));
 }

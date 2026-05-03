@@ -8,6 +8,7 @@ constexpr uint8_t kCpuExceptionCount = 32;   // CPU 保留给异常/陷阱的前
 constexpr uint8_t kHardwareIrqCount = 16;    // 传统 PIC 一共管理 16 路硬件 IRQ。
 constexpr uint8_t kPicMasterVectorBase = 32; // PIC 重映射后，主片 IRQ0~7 从 32 开始。
 constexpr uint8_t kPicSlaveVectorBase = 40;  // 从片 IRQ8~15 从 40 开始。
+constexpr uint8_t kSyscallInterruptVector = 0x80;  // 第一版软中断 syscall 先约定走 `int 0x80`。
 
 // 这是我们约定给 C++ 异常处理函数看的最小中断栈帧。
 // 现在先只关心：

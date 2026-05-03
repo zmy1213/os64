@@ -141,6 +141,7 @@ make clean
 - `vfs_layer ok`
 - `fd_layer ok`
 - `syscall_layer ok`
+- `int80_syscall ok`
 - `shell ok`
 
 最后会进入最小交互 shell，
@@ -208,6 +209,9 @@ os64>
 - `SyscallContext` 现在已经不只记 fd 表，也开始记 `cwd`
 - kernel 里现在已经有 `sys_open` / `sys_read` / `sys_stat` / `sys_seek` / `sys_close`
 - kernel 里现在又补了 `sys_getcwd` / `sys_chdir` / `sys_stat_path` / `sys_listdir`
+- kernel 里现在还补了第一版 `int 0x80` 软中断入口，会把寄存器参数转进现有 `sys_*` 分发器
+- kernel 里现在又把公开 syscall fd 先整理成 `0/1/2 = stdin/stdout/stderr`、`3+ = 普通文件`
+- kernel 里现在已经补了第一版 `sys_write`，能先把 `stdout/stderr` 写到当前控制台输出路径
 - shell 里可以用 `disk` 看块设备，用 `pwd` / `cd` 管当前目录，用 `ls` / `cat` / `stat` 看文件系统
 - shell 会先把相对路径按 cwd 解析成绝对路径，例如 `cd docs` 后 `cat guide.txt` 会解析成 `/docs/guide.txt`
 - 现在 `pwd` / `cd` / `ls` / `cat` / `stat` 这些路径命令都已经开始改成通过 `SyscallContext + sys_*` 这层工作

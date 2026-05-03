@@ -4,9 +4,11 @@ section .text
 
 global isr_stub_table
 global irq_stub_table
+global syscall_interrupt_stub
 
 extern kernel_handle_exception
 extern kernel_handle_irq
+extern kernel_handle_syscall
 
 %macro ISR_NO_ERROR 1
 isr_stub_%1:
@@ -171,6 +173,45 @@ irq_stub_table:
     dq irq_stub_15
 
 section .text
+
+syscall_interrupt_stub:
+    push 0                          ; 软中断没有 CPU 自动错误码，先补一个 0。
+    push 128                        ; 再把向量号 0x80 也压进去，方便日志和后续统一扩展。
+    push rax                        ; 从这里开始把通用寄存器全部保存起来。
+    push rcx                        ; 当前 ABI 里第 4 个参数先约定放在 RCX。
+    push rdx
+    push rbx
+    push rbp
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
+    mov rdi, rsp                    ; 第 1 个参数：整个 syscall 寄存器帧的起始地址。
+    cld
+    call kernel_handle_syscall
+    pop r15                         ; 处理完后按相反顺序恢复寄存器。
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rbp
+    pop rbx
+    pop rdx
+    pop rcx
+    pop rax
+    add rsp, 16                     ; 丢掉手工补的 error_code 和 vector。
+    iretq                           ; 回到触发 `int 0x80` 的下一条指令继续执行。
 
 isr_common:
     mov rdi, rsp                    ; 第 1 个参数：指向我们约定的 InterruptFrame。

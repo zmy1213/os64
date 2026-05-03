@@ -17,6 +17,10 @@ struct ConsoleHistoryProvider {
 // 而是告诉控制台：前面这些行可能已经被状态日志占用，你从哪一行开始作为自己的输入/输出区域。
 void initialize_console(uint16_t start_row, uint8_t color);
 
+// 有些更早期的子系统会在 console 正式初始化前就起来。
+// 这个查询接口让它们能决定：现在要不要真的往 VGA 控制台写。
+bool console_is_initialized();
+
 // 往最小控制台写 1 个字符。
 // 这一轮只支持：
 // - 普通可打印字符

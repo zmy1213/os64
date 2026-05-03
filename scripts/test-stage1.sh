@@ -140,12 +140,35 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "sys_cwd_after_cd=/docs" "$SERIAL_LOG" \
   && grep -q "sys_listdir_count=1" "$SERIAL_LOG" \
   && grep -q "sys_path_stat_inode=5" "$SERIAL_LOG" \
-  && grep -q "sys_open=0" "$SERIAL_LOG" \
+  && grep -q "sys_write_stdout_payload=hello sys_write" "$SERIAL_LOG" \
+  && grep -q "sys_write_stderr_payload=error sys_write" "$SERIAL_LOG" \
+  && grep -q "sys_open=3" "$SERIAL_LOG" \
+  && grep -q "sys_write_stdout_bytes=16" "$SERIAL_LOG" \
+  && grep -q "sys_write_stderr_bytes=16" "$SERIAL_LOG" \
+  && grep -q "sys_write_file_status=-6" "$SERIAL_LOG" \
+  && grep -q "sys_write_bad_fd=-4" "$SERIAL_LOG" \
   && grep -q "sys_stat_inode=5" "$SERIAL_LOG" \
   && grep -q "sys_read_total=193" "$SERIAL_LOG" \
   && grep -q "sys_eof_read=0" "$SERIAL_LOG" \
   && grep -q "sys_open_count=0" "$SERIAL_LOG" \
   && grep -q "syscall_layer ok" "$SERIAL_LOG" \
+  && grep -q "int80_cwd=/" "$SERIAL_LOG" \
+  && grep -q "int80_cwd_after_cd=/docs" "$SERIAL_LOG" \
+  && grep -q "int80_listdir_count=1" "$SERIAL_LOG" \
+  && grep -q "int80_path_stat_inode=5" "$SERIAL_LOG" \
+  && grep -q "int80_write_stdout_payload=hello int80_write" "$SERIAL_LOG" \
+  && grep -q "int80_write_stderr_payload=error int80_write" "$SERIAL_LOG" \
+  && grep -q "int80_open=3" "$SERIAL_LOG" \
+  && grep -q "int80_fd_stat_inode=5" "$SERIAL_LOG" \
+  && grep -q "int80_write_stdout_bytes=18" "$SERIAL_LOG" \
+  && grep -q "int80_write_stderr_bytes=18" "$SERIAL_LOG" \
+  && grep -q "int80_write_file_status=-6" "$SERIAL_LOG" \
+  && grep -q "int80_write_bad_fd=-4" "$SERIAL_LOG" \
+  && grep -q "int80_read_total=193" "$SERIAL_LOG" \
+  && grep -q "int80_eof_read=0" "$SERIAL_LOG" \
+  && grep -q "int80_open_count=0" "$SERIAL_LOG" \
+  && grep -q "int80_bad_result=0xFFFFFFFFFFFFFFFF" "$SERIAL_LOG" \
+  && grep -q "int80_syscall ok" "$SERIAL_LOG" \
   && grep -q "filesystem ok" "$SERIAL_LOG" \
   && grep -q "pic ok" "$SERIAL_LOG" \
   && grep -q "pit ok" "$SERIAL_LOG" \

@@ -98,7 +98,8 @@ kernel/
 - 目录句柄 open/read/rewind/close 测试
 - VFS mount/stat/open/read/close 测试
 - 文件描述符表 fd_open/fd_read/fd_close 测试
-- 系统调用外观 sys_open/sys_read/sys_close 测试
+- 系统调用外观 sys_open/sys_read/sys_write/sys_close 测试
+- 第一版 `int 0x80` 软中断 syscall 烟测
 - 定时器中断测试
 - 基于 tick 的最小等待 / sleep 测试
 - 键盘 IRQ + 字符缓冲区测试
@@ -222,12 +223,12 @@ kernel/
 这里放第一版系统调用外观：
 
 - `syscall.cpp/.hpp`
-  现在先提供 `SyscallContext`，以及 `sys_open`、`sys_read`、`sys_stat`、`sys_seek`、`sys_close`，再往前补了 `sys_getcwd`、`sys_chdir`、`sys_stat_path`、`sys_listdir`。
-  它还不是 CPU 的 `syscall` 指令入口，而是先把“上层通过 fd、cwd、路径、错误码访问内核服务”的形状定下来。
+  现在先提供 `SyscallContext`，以及 `sys_open`、`sys_read`、`sys_write`、`sys_stat`、`sys_seek`、`sys_close`，再往前补了 `sys_getcwd`、`sys_chdir`、`sys_stat_path`、`sys_listdir`。
+  它先把“上层通过 fd、cwd、路径、错误码访问内核服务”的形状定下来，后来又往前补了第一版 `int 0x80` 软中断分发器，以及公开 syscall fd `0/1/2 = stdin/stdout/stderr`、`3+ = 普通文件` 这层边界翻译。
 
 一句话理解：
 
-> `syscall/` 管“以后用户程序请求内核服务时，先看到什么统一入口，以及这些调用共享哪些上下文状态”。
+> `syscall/` 管“以后用户程序请求内核服务时，先看到什么统一入口，这些调用共享哪些上下文状态，以及第一版 CPU 软中断入口怎么把寄存器转进这些服务”。
 
 ---
 

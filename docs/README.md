@@ -62,6 +62,10 @@
    再继续往前，把 `open/read/stat/seek/close` 收口成 `sys_*` 入口，为后面的用户态和真正 syscall 指令铺路。
 29. [从第一版系统调用形状到 syscall 上下文里的 cwd](./KERNEL_SYSCALL_CWD_GUIDE.md)
    再继续往前，把 `cwd` 从 shell 私有状态抬进 `SyscallContext`，并补上 `sys_getcwd` / `sys_chdir` / `sys_stat_path` / `sys_listdir`。
+30. [从 syscall 上下文到第一版 `int 0x80` 软中断入口](./KERNEL_INT80_SYSCALL_GUIDE.md)
+   再继续往前，让 CPU 真正执行一次 `int 0x80`，把寄存器打进 IDT 的软中断门，再由 C++ 分发器转到现有 `sys_*`。
+31. [从第一版 `int 0x80` 到公开 fd + `sys_write`](./KERNEL_SYSCALL_WRITE_GUIDE.md)
+   再继续往前，把公开 syscall fd 先整理成 `0/1/2 = stdin/stdout/stderr`、`3+ = 普通文件`，并补上第一版 `sys_write` 输出路径。
 
 一句话记忆这个顺序：
 
@@ -95,4 +99,6 @@ stage1
 -> shell cwd + relative paths
 -> first syscall facade
 -> cwd inside syscall context
+-> first int 0x80 syscall gate
+-> public syscall fd 0/1/2 + first sys_write
 ```

@@ -355,7 +355,7 @@ sys_root_entries=3
 sys_cwd_after_cd=/docs
 sys_listdir_count=1
 sys_path_stat_inode=5
-sys_open=0
+sys_open=3
 ```
 
 这些日志分别在证明：
@@ -366,6 +366,29 @@ sys_open=0
 - 在 `/docs` 里列目录只会看到 1 个 `guide.txt`
 - `sys_stat_path("guide.txt")` 已经能按相对路径找到 inode 5
 - `sys_open("guide.txt")` 也已经能按相对路径打开文件
+
+这里现在之所以是：
+
+```text
+sys_open=3
+```
+
+不是因为 fd 层变了，
+而是因为后来 syscall 对外又预留了：
+
+```text
+0 = stdin
+1 = stdout
+2 = stderr
+3+ = 普通文件
+```
+
+也就是说：
+
+```text
+内部 fd 表里的第一个普通文件槽位还是 0
+但 syscall 边界对外会把它映射成 3
+```
 
 这说明：
 
@@ -527,25 +550,32 @@ sys_getcwd / sys_chdir / sys_listdir 这几个名字
 
 ---
 
-## 11. 下一步最合理做什么
+## 11. 这一步后来继续推进到了哪里
 
-下一步最稳的方向不是马上跳去完整用户态，
-而是继续把 syscall 边界补扎实：
-
-```text
-sys_write 的设计占位
-目录 fd / readdir 形状
-更统一的 path-based / fd-based stat 设计
-```
-
-再下一步才是：
+这一步后来没有直接跳去完整用户态，
+而是先补上了：
 
 ```text
-ring 3
-最小用户程序
-真正的 syscall 入口
+第一版 int 0x80 软中断 syscall 入口
 ```
 
-原因还是同一句话：
+也就是：
 
-> 先把“用户要向内核请求什么”讲清楚，再让 CPU 真正切进内核，调试会轻很多。
+- CPU 真正执行一次 `int 0x80`
+- IDT 里的 0x80 号门接住它
+- 汇编 stub 保存寄存器
+- C++ 分发器再转到现有 `sys_*`
+
+这一轮后来又继续往前补了：
+
+```text
+第一版 int 0x80 软中断 syscall 入口
+公开 syscall fd 0/1/2 + 第一版 sys_write
+```
+
+对应继续阅读：
+
+```text
+docs/KERNEL_INT80_SYSCALL_GUIDE.md
+docs/KERNEL_SYSCALL_WRITE_GUIDE.md
+```
