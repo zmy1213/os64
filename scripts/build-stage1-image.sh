@@ -564,6 +564,8 @@ echo "[25/31] generating kernel.bin"
 kernel_size="$(wc -c < "$KERNEL_BIN" | tr -d ' ')"
 kernel_sectors="$(((kernel_size + 511) / 512))"
 boot_volume_start_sector="$((KERNEL_START_SECTOR + kernel_sectors))"
+image_total_sectors="$((IMAGE_SIZE / 512))"
+max_kernel_sectors="$((image_total_sectors - (KERNEL_START_SECTOR - 1) - BOOT_VOLUME_SECTORS))"
 os64fs_readme_length="${#OS64FS_README}"
 os64fs_notes_length="${#OS64FS_NOTES}"
 os64fs_guide_length="${#OS64FS_GUIDE}"
@@ -577,8 +579,11 @@ os64fs_notes_offset=$((os64fs_data_offset + 2 * OS64FS_DATA_BLOCK_SIZE))
 os64fs_docs_dir_offset=$((os64fs_data_offset + 3 * OS64FS_DATA_BLOCK_SIZE))
 os64fs_guide_offset=$((os64fs_data_offset + 4 * OS64FS_DATA_BLOCK_SIZE))
 
-if [ "$kernel_sectors" -le 0 ] || [ "$kernel_sectors" -gt 127 ]; then
-  echo "kernel.bin must occupy between 1 and 127 sectors in this CHS-only round, got $kernel_sectors sectors" >&2
+if [ "$kernel_sectors" -le 0 ] || [ "$kernel_sectors" -gt "$max_kernel_sectors" ]; then
+  # stage2 现在已经是“每轮只读 1 个扇区”的 CHS 循环，
+  # 而且装载推进也已经处理了跨 64 KiB 时的 segment 进位，
+  # 所以这里不再限制成 127 扇区，而是只要求“内核 + boot volume 还能装进整张软盘镜像”。
+  echo "kernel.bin must occupy between 1 and $max_kernel_sectors sectors so the boot volume still fits in the floppy image, got $kernel_sectors sectors" >&2
   exit 1
 fi
 

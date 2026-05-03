@@ -1413,7 +1413,60 @@ bool run_syscall_smoke_test(SyscallContext* context,
   serial_write_string("syscall_context ok");
   serial_write_crlf();
 
-  const int32_t guide_fd = sys_open(context, "/docs/guide.txt");
+  char cwd[kSyscallPathCapacity];
+  if (sys_getcwd(context, cwd, sizeof(cwd)) < 0) {
+    return false;
+  }
+
+  serial_write_string("sys_cwd=");
+  serial_write_string(cwd);
+  serial_write_crlf();
+
+  const int32_t root_entry_count =
+      sys_listdir(context, ".", nullptr, 0);
+  if (root_entry_count < 0) {
+    return false;
+  }
+
+  serial_write_string("sys_root_entries=");
+  serial_write_u64(static_cast<uint64_t>(root_entry_count));
+  serial_write_crlf();
+
+  if (sys_chdir(context, "docs") != kSyscallOk) {
+    return false;
+  }
+
+  char cwd_after_cd[kSyscallPathCapacity];
+  if (sys_getcwd(context, cwd_after_cd, sizeof(cwd_after_cd)) < 0) {
+    return false;
+  }
+
+  serial_write_string("sys_cwd_after_cd=");
+  serial_write_string(cwd_after_cd);
+  serial_write_crlf();
+
+  VfsDirectoryEntry directory_entries[4];
+  const int32_t directory_entry_count =
+      sys_listdir(context, ".", directory_entries,
+                  sizeof(directory_entries) / sizeof(directory_entries[0]));
+  if (directory_entry_count < 0) {
+    return false;
+  }
+
+  serial_write_string("sys_listdir_count=");
+  serial_write_u64(static_cast<uint64_t>(directory_entry_count));
+  serial_write_crlf();
+
+  VfsStat guide_path_stat;
+  if (sys_stat_path(context, "guide.txt", &guide_path_stat) != kSyscallOk) {
+    return false;
+  }
+
+  serial_write_string("sys_path_stat_inode=");
+  serial_write_u64(guide_path_stat.inode_number);
+  serial_write_crlf();
+
+  const int32_t guide_fd = sys_open(context, "guide.txt");
   if (guide_fd < 0) {
     return false;
   }
@@ -1478,6 +1531,12 @@ bool run_syscall_smoke_test(SyscallContext* context,
 
   const bool ok =
       guide_fd == 0 &&
+      strings_equal(cwd, "/") &&
+      root_entry_count == 3 &&
+      strings_equal(cwd_after_cd, "/docs") &&
+      directory_entry_count == 1 &&
+      strings_equal(directory_entries[0].name, "guide.txt") &&
+      guide_path_stat.inode_number == 5 &&
       guide_stat.inode_number == 5 &&
       guide_stat.size_bytes == expected_guide_length &&
       total_read == expected_guide_length &&
@@ -1893,12 +1952,11 @@ bool inject_scancode_sequence(const char* log_prefix,
 bool run_shell_smoke_test(const BootInfo* boot_info,
                           const BootVolume* boot_volume,
                           const BlockDevice* block_device,
-                          const VfsMount* vfs,
-                          FileDescriptorTable* fd_table) {
+                          SyscallContext* syscall_context) {
   initialize_console(kShellTestStartRow, kShellTextColor);
 
   if (!initialize_shell(&g_shell, boot_info, &g_page_allocator, &g_kernel_heap,
-                        boot_volume, block_device, vfs, fd_table,
+                        boot_volume, block_device, syscall_context,
                         &kShellOutput)) {
     return false;
   }
@@ -2106,7 +2164,7 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
   write_status_line(17, "console input ok");
 
   if (!run_shell_smoke_test(boot_info, &g_boot_volume,
-                            &g_boot_block_device, &g_vfs, &g_fd_table)) {
+                            &g_boot_block_device, &g_syscall_context)) {
     write_status_line(18, "shell bad");
     return;
   }

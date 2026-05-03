@@ -222,12 +222,12 @@ kernel/
 这里放第一版系统调用外观：
 
 - `syscall.cpp/.hpp`
-  现在先提供 `SyscallContext`，以及 `sys_open`、`sys_read`、`sys_stat`、`sys_seek`、`sys_close`。
-  它还不是 CPU 的 `syscall` 指令入口，而是先把“上层通过 fd 和错误码访问内核服务”的形状定下来。
+  现在先提供 `SyscallContext`，以及 `sys_open`、`sys_read`、`sys_stat`、`sys_seek`、`sys_close`，再往前补了 `sys_getcwd`、`sys_chdir`、`sys_stat_path`、`sys_listdir`。
+  它还不是 CPU 的 `syscall` 指令入口，而是先把“上层通过 fd、cwd、路径、错误码访问内核服务”的形状定下来。
 
 一句话理解：
 
-> `syscall/` 管“以后用户程序请求内核服务时，先看到什么统一入口”。
+> `syscall/` 管“以后用户程序请求内核服务时，先看到什么统一入口，以及这些调用共享哪些上下文状态”。
 
 ---
 

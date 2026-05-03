@@ -104,6 +104,17 @@ make test-page-fault
 
 这几个测试都会自动构建镜像、启动 QEMU、抓串口日志，再检查关键输出。
 
+现在异常测试和正常启动测试都不再靠固定 `sleep 2` / `sleep 3` 盲等。
+
+原因是内核功能越来越多以后，
+镜像体积和启动自测链都会变长；
+这时固定等待时间很容易把“还在正常启动”误判成“测试失败”。
+
+所以现在测试脚本会在一个有限超时窗口里轮询串口日志：
+
+- 关键里程碑一旦已经出现，就提前收尾
+- 如果直到超时都没出现，才真正判失败
+
 ### 第六步：清理构建产物
 
 如果你想删掉 `build/` 重新来，
@@ -193,11 +204,14 @@ os64>
 - kernel 里还在 `OS64FS` 上面补了 `DirectoryHandle` 目录句柄层
 - kernel 里现在又在文件句柄和目录句柄上面补了第一版 `VFS`
 - kernel 里现在还在 `VFS` 上面补了第一版 `FileDescriptorTable` 文件描述符表
-- kernel 里现在又在 fd 表上面补了第一版 `SyscallContext` 和 `sys_open` / `sys_read` / `sys_stat` / `sys_seek` / `sys_close`
+- kernel 里现在又在 fd 表上面补了第一版 `SyscallContext`
+- `SyscallContext` 现在已经不只记 fd 表，也开始记 `cwd`
+- kernel 里现在已经有 `sys_open` / `sys_read` / `sys_stat` / `sys_seek` / `sys_close`
+- kernel 里现在又补了 `sys_getcwd` / `sys_chdir` / `sys_stat_path` / `sys_listdir`
 - shell 里可以用 `disk` 看块设备，用 `pwd` / `cd` 管当前目录，用 `ls` / `cat` / `stat` 看文件系统
-- 其中 `ls` / `stat` 走 `vfs_*` 接口，`cat` 进一步走 `fd_open` / `fd_read` / `fd_close`
 - shell 会先把相对路径按 cwd 解析成绝对路径，例如 `cd docs` 后 `cat guide.txt` 会解析成 `/docs/guide.txt`
-- 这样 shell 不再直接调用底层 `OS64FS` / `FileHandle` / `DirectoryHandle`，内核也开始有一层更接近真实系统调用模型的 `sys_*` 入口
+- 现在 `pwd` / `cd` / `ls` / `cat` / `stat` 这些路径命令都已经开始改成通过 `SyscallContext + sys_*` 这层工作
+- 这样 cwd 不再只是 shell 私有变量，而开始变成更像“进程上下文”的内核状态
 
 ### 一个很重要的提醒
 

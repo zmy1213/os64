@@ -8,6 +8,8 @@
 
 namespace {
 
+constexpr size_t kShellListDirCapacity = 8;  // 当前教学文件系统很小，先用固定数组装目录项，保持实现简单可预测。
+
 struct CpuidResult {
   uint32_t eax;
   uint32_t ebx;
@@ -104,10 +106,6 @@ bool is_space_char(char ch) {
   return ch == ' ' || ch == '\t';
 }
 
-bool is_path_separator(char ch) {
-  return ch == '/';
-}
-
 const char* skip_spaces(const char* text) {
   if (text == nullptr) {
     return nullptr;
@@ -144,178 +142,6 @@ const char* trim_trailing_spaces(const char* begin, const char* end) {
   }
 
   return end;
-}
-
-const char* skip_path_separators(const char* cursor, const char* end) {
-  while (cursor < end && is_path_separator(*cursor)) {
-    ++cursor;
-  }
-
-  return cursor;
-}
-
-size_t path_component_length(const char* begin, const char* end) {
-  size_t length = 0;
-  while ((begin + length) < end &&
-         !is_path_separator(begin[length])) {
-    ++length;
-  }
-
-  return length;
-}
-
-bool path_component_is_dot(const char* component, size_t length) {
-  return component != nullptr && length == 1 && component[0] == '.';
-}
-
-bool path_component_is_dot_dot(const char* component, size_t length) {
-  return component != nullptr &&
-         length == 2 &&
-         component[0] == '.' &&
-         component[1] == '.';
-}
-
-bool copy_string(char* destination, size_t capacity, const char* source) {
-  if (destination == nullptr || source == nullptr || capacity == 0) {
-    return false;
-  }
-
-  const size_t length = string_length(source);
-  if (length >= capacity) {
-    return false;
-  }
-
-  for (size_t i = 0; i < length; ++i) {
-    destination[i] = source[i];
-  }
-  destination[length] = '\0';
-  return true;
-}
-
-bool set_root_path(char* path, size_t capacity) {
-  if (path == nullptr || capacity < 2) {
-    return false;
-  }
-
-  path[0] = '/';
-  path[1] = '\0';
-  return true;
-}
-
-bool append_path_component(char* path,
-                           size_t capacity,
-                           const char* component,
-                           size_t component_length) {
-  if (path == nullptr || component == nullptr || capacity == 0 ||
-      component_length == 0) {
-    return false;
-  }
-
-  size_t current_length = string_length(path);
-  const bool path_is_root =
-      current_length == 1 && path[0] == '/';
-  const size_t slash_bytes = path_is_root ? 0 : 1;
-  if (current_length + slash_bytes + component_length >= capacity) {
-    return false;
-  }
-
-  if (!path_is_root) {
-    path[current_length++] = '/';
-  }
-
-  for (size_t i = 0; i < component_length; ++i) {
-    path[current_length + i] = component[i];
-  }
-
-  path[current_length + component_length] = '\0';
-  return true;
-}
-
-void pop_path_component(char* path) {
-  if (path == nullptr) {
-    return;
-  }
-
-  const size_t length = string_length(path);
-  if (length <= 1) {
-    (void)set_root_path(path, kShellPathCapacity);
-    return;
-  }
-
-  size_t index = length;
-  while (index > 1 && path[index - 1] != '/') {
-    --index;
-  }
-
-  if (index <= 1) {
-    (void)set_root_path(path, kShellPathCapacity);
-    return;
-  }
-
-  path[index - 1] = '\0';
-}
-
-bool resolve_shell_path(const ShellState* shell,
-                        const char* raw_path,
-                        char* out_path,
-                        size_t capacity) {
-  if (shell == nullptr || out_path == nullptr || capacity < 2) {
-    return false;
-  }
-
-  const char* begin = skip_spaces(raw_path);
-  if (begin == nullptr || begin[0] == '\0') {
-    return copy_string(out_path, capacity,
-                       shell->current_working_directory);
-  }
-
-  const char* end = begin + string_length(begin);
-  end = trim_trailing_spaces(begin, end);
-  if (end <= begin) {
-    return copy_string(out_path, capacity,
-                       shell->current_working_directory);
-  }
-
-  const bool absolute = is_path_separator(begin[0]);
-  if (absolute) {
-    if (!set_root_path(out_path, capacity)) {
-      return false;
-    }
-  } else if (!copy_string(out_path, capacity,
-                          shell->current_working_directory)) {
-    return false;
-  }
-
-  const char* cursor =
-      absolute ? skip_path_separators(begin, end) : begin;
-  while (cursor < end) {
-    const size_t component_length =
-        path_component_length(cursor, end);
-    if (component_length == 0) {
-      cursor = skip_path_separators(cursor, end);
-      continue;
-    }
-
-    if (path_component_is_dot(cursor, component_length)) {
-      cursor = skip_path_separators(cursor + component_length, end);
-      continue;
-    }
-
-    if (path_component_is_dot_dot(cursor, component_length)) {
-      pop_path_component(out_path);
-      cursor = skip_path_separators(cursor + component_length, end);
-      continue;
-    }
-
-    if (!append_path_component(out_path, capacity, cursor,
-                               component_length)) {
-      return false;
-    }
-
-    cursor = skip_path_separators(cursor + component_length, end);
-  }
-
-  return true;
 }
 
 bool is_boot_info_valid(const BootInfo* boot_info) {
@@ -575,85 +401,92 @@ void handle_disk_command(const ShellState* shell) {
 }
 
 void handle_pwd_command(const ShellState* shell) {
-  if (shell == nullptr) {
+  if (shell == nullptr || !syscall_context_is_ready(shell->syscall_context)) {
+    return;
+  }
+
+  char cwd[kSyscallPathCapacity];
+  if (sys_getcwd(shell->syscall_context, cwd, sizeof(cwd)) < 0) {
+    write_string(shell, "pwd unavailable");
+    write_newline(shell);
     return;
   }
 
   write_string(shell, "pwd_path=");
-  write_string(shell, shell->current_working_directory);
+  write_string(shell, cwd);
   write_newline(shell);
 }
 
 void handle_cd_command(ShellState* shell, const char* arguments) {
-  if (shell == nullptr || !vfs_is_mounted(shell->vfs)) {
+  if (shell == nullptr || !syscall_context_is_ready(shell->syscall_context)) {
     write_string(shell, "fs unavailable");
     write_newline(shell);
     return;
   }
 
-  char resolved_path[kShellPathCapacity];
   const char* path = skip_spaces(arguments);
   if (path == nullptr || path[0] == '\0') {
     path = "/";
   }
 
-  if (!resolve_shell_path(shell, path, resolved_path,
-                          sizeof(resolved_path))) {
-    write_string(shell, "cd path too long");
-    write_newline(shell);
-    return;
-  }
-
-  VfsStat stat;
-  if (!vfs_stat(shell->vfs, resolved_path, &stat)) {
+  char cwd[kSyscallPathCapacity];
+  const SyscallStatus status =
+      sys_chdir(shell->syscall_context, path);
+  if (status == kSyscallNotFound) {
     write_string(shell, "cd path not found: ");
     write_string(shell, path);
     write_newline(shell);
     return;
   }
 
-  if (stat.type != kVfsNodeTypeDirectory) {
+  if (status == kSyscallNotFile) {
     write_string(shell, "cd not a directory: ");
     write_string(shell, path);
     write_newline(shell);
     return;
   }
 
-  if (!copy_string(shell->current_working_directory,
-                   sizeof(shell->current_working_directory),
-                   resolved_path)) {
-    write_string(shell, "cd update failed");
+  if (status != kSyscallOk ||
+      sys_getcwd(shell->syscall_context, cwd, sizeof(cwd)) < 0) {
+    write_string(shell, "cd path too long");
     write_newline(shell);
     return;
   }
 
   write_string(shell, "cwd_path=");
-  write_string(shell, shell->current_working_directory);
+  write_string(shell, cwd);
   write_newline(shell);
 }
 
 void handle_ls_command(const ShellState* shell, const char* arguments) {
-  if (shell == nullptr || !vfs_is_mounted(shell->vfs)) {
+  if (shell == nullptr || !syscall_context_is_ready(shell->syscall_context)) {
     write_string(shell, "fs unavailable");
     write_newline(shell);
     return;
   }
 
   const char* path = skip_spaces(arguments);
-  char resolved_path[kShellPathCapacity];
+  char implicit_path[kSyscallPathCapacity];
   if (path == nullptr || path[0] == '\0') {
-    path = shell->current_working_directory;
+    if (sys_getcwd(shell->syscall_context, implicit_path,
+                   sizeof(implicit_path)) < 0) {
+      write_string(shell, "ls unavailable");
+      write_newline(shell);
+      return;
+    }
+    path = implicit_path;
   }
 
-  if (!resolve_shell_path(shell, path, resolved_path,
-                          sizeof(resolved_path))) {
+  char resolved_path[kSyscallPathCapacity];
+  if (!syscall_resolve_path(shell->syscall_context, path, resolved_path,
+                            sizeof(resolved_path))) {
     write_string(shell, "ls path too long");
     write_newline(shell);
     return;
   }
 
   VfsStat stat;
-  if (!vfs_stat(shell->vfs, resolved_path, &stat)) {
+  if (sys_stat_path(shell->syscall_context, path, &stat) != kSyscallOk) {
     write_string(shell, "ls path not found: ");
     write_string(shell, path);
     write_newline(shell);
@@ -667,14 +500,24 @@ void handle_ls_command(const ShellState* shell, const char* arguments) {
     return;
   }
 
-  VfsDirectory handle;
-  if (!vfs_open_directory(shell->vfs, resolved_path, &handle)) {
+  const int32_t entry_count =
+      sys_listdir(shell->syscall_context, path, nullptr, 0);
+  if (entry_count < 0 ||
+      static_cast<size_t>(entry_count) > kShellListDirCapacity) {
     write_string(shell, "ls open failed");
     write_newline(shell);
     return;
   }
 
-  const uint32_t entry_count = vfs_directory_entry_count(&handle);
+  VfsDirectoryEntry entries[kShellListDirCapacity];
+  const int32_t copied_count =
+      sys_listdir(shell->syscall_context, path, entries,
+                  static_cast<size_t>(entry_count));
+  if (copied_count != entry_count) {
+    write_string(shell, "ls read failed");
+    write_newline(shell);
+    return;
+  }
 
   write_string(shell, "ls_path=");
   write_string(shell, path);
@@ -685,20 +528,14 @@ void handle_ls_command(const ShellState* shell, const char* arguments) {
   write_newline(shell);
 
   write_string(shell, "ls_entry_count=");
-  write_u64(shell, entry_count);
+  write_u64(shell, static_cast<uint64_t>(entry_count));
   write_newline(shell);
 
-  for (uint32_t entry_index = 0; entry_index < entry_count; ++entry_index) {
-    VfsDirectoryEntry entry;
-    if (!vfs_read_directory(&handle, &entry)) {
-      write_string(shell, "ls read failed");
-      write_newline(shell);
-      (void)vfs_close_directory(&handle);
-      return;
-    }
-
+  for (int32_t entry_index = 0; entry_index < entry_count; ++entry_index) {
+    const VfsDirectoryEntry& entry =
+        entries[static_cast<size_t>(entry_index)];
     write_string(shell, "ls[");
-    write_u64(shell, entry_index);
+    write_u64(shell, static_cast<uint64_t>(entry_index));
     write_string(shell, "]=");
     write_string(shell, vfs_node_type_name(entry.type));
     write_char(shell, ' ');
@@ -707,13 +544,10 @@ void handle_ls_command(const ShellState* shell, const char* arguments) {
     write_u64(shell, entry.size_bytes);
     write_newline(shell);
   }
-
-  (void)vfs_close_directory(&handle);
 }
 
 void handle_cat_command(const ShellState* shell, const char* arguments) {
-  if (shell == nullptr || !vfs_is_mounted(shell->vfs) ||
-      !file_descriptor_table_is_ready(shell->fd_table)) {
+  if (shell == nullptr || !syscall_context_is_ready(shell->syscall_context)) {
     write_string(shell, "fs unavailable");
     write_newline(shell);
     return;
@@ -726,41 +560,40 @@ void handle_cat_command(const ShellState* shell, const char* arguments) {
     return;
   }
 
-  char resolved_path[kShellPathCapacity];
-  if (!resolve_shell_path(shell, path, resolved_path,
-                          sizeof(resolved_path))) {
+  char resolved_path[kSyscallPathCapacity];
+  if (!syscall_resolve_path(shell->syscall_context, path, resolved_path,
+                            sizeof(resolved_path))) {
     write_string(shell, "cat path too long");
     write_newline(shell);
     return;
   }
 
-  VfsStat stat;
-  if (!vfs_stat(shell->vfs, resolved_path, &stat)) {
+  const int32_t fd = sys_open(shell->syscall_context, path);
+  if (fd == kSyscallNotFound) {
     write_string(shell, "cat path not found: ");
     write_string(shell, path);
     write_newline(shell);
     return;
   }
 
-  if (stat.type != kVfsNodeTypeFile) {
+  if (fd == kSyscallNotFile) {
     write_string(shell, "cat not a file: ");
     write_string(shell, path);
     write_newline(shell);
     return;
   }
 
-  const int32_t fd = fd_open(shell->fd_table, resolved_path);
-  if (fd == kInvalidFileDescriptor) {
+  if (fd < 0) {
     write_string(shell, "cat open failed");
     write_newline(shell);
     return;
   }
 
   VfsStat fd_stat_result;
-  if (!fd_stat(shell->fd_table, fd, &fd_stat_result)) {
+  if (sys_stat(shell->syscall_context, fd, &fd_stat_result) != kSyscallOk) {
     write_string(shell, "cat stat failed");
     write_newline(shell);
-    (void)fd_close(shell->fd_table, fd);
+    (void)sys_close(shell->syscall_context, fd);
     return;
   }
 
@@ -776,30 +609,30 @@ void handle_cat_command(const ShellState* shell, const char* arguments) {
   write_u64(shell, fd_stat_result.size_bytes);
   write_newline(shell);
 
-  // 从这里开始，shell 只拿一个小整数 fd 读文件。
-  // 这比直接持有 VfsFile 更接近真实 OS 的 `read(fd, ...)` 系统调用模型。
   uint8_t chunk[64];
-  while (fd_tell(shell->fd_table, fd) < fd_stat_result.size_bytes) {
-    const size_t bytes_this_round =
-        fd_read(shell->fd_table, fd, chunk, sizeof(chunk));
-    if (bytes_this_round == 0) {
+  uint32_t total_read = 0;
+  while (total_read < fd_stat_result.size_bytes) {
+    const int32_t bytes_this_round =
+        sys_read(shell->syscall_context, fd, chunk, sizeof(chunk));
+    if (bytes_this_round <= 0) {
       write_string(shell, "cat read failed");
       write_newline(shell);
-      (void)fd_close(shell->fd_table, fd);
+      (void)sys_close(shell->syscall_context, fd);
       return;
     }
 
-    for (size_t i = 0; i < bytes_this_round; ++i) {
+    total_read += static_cast<uint32_t>(bytes_this_round);
+    for (int32_t i = 0; i < bytes_this_round; ++i) {
       write_char(shell, static_cast<char>(chunk[i]));
     }
   }
 
-  (void)fd_close(shell->fd_table, fd);
+  (void)sys_close(shell->syscall_context, fd);
   write_newline(shell);
 }
 
 void handle_stat_command(const ShellState* shell, const char* arguments) {
-  if (shell == nullptr || !vfs_is_mounted(shell->vfs)) {
+  if (shell == nullptr || !syscall_context_is_ready(shell->syscall_context)) {
     write_string(shell, "fs unavailable");
     write_newline(shell);
     return;
@@ -812,16 +645,16 @@ void handle_stat_command(const ShellState* shell, const char* arguments) {
     return;
   }
 
-  char resolved_path[kShellPathCapacity];
-  if (!resolve_shell_path(shell, path, resolved_path,
-                          sizeof(resolved_path))) {
+  char resolved_path[kSyscallPathCapacity];
+  if (!syscall_resolve_path(shell->syscall_context, path, resolved_path,
+                            sizeof(resolved_path))) {
     write_string(shell, "stat path too long");
     write_newline(shell);
     return;
   }
 
   VfsStat stat;
-  if (!vfs_stat(shell->vfs, resolved_path, &stat)) {
+  if (sys_stat_path(shell->syscall_context, path, &stat) != kSyscallOk) {
     write_string(shell, "stat path not found: ");
     write_string(shell, path);
     write_newline(shell);
@@ -1080,10 +913,10 @@ bool initialize_shell(ShellState* shell,
                       const KernelHeap* heap,
                       const BootVolume* boot_volume,
                       const BlockDevice* block_device,
-                      const VfsMount* vfs,
-                      FileDescriptorTable* fd_table,
+                      SyscallContext* syscall_context,
                       const ShellOutput* output) {
-  if (shell == nullptr || output == nullptr || output->write_char == nullptr) {
+  if (shell == nullptr || output == nullptr || output->write_char == nullptr ||
+      !syscall_context_is_ready(syscall_context)) {
     return false;
   }
 
@@ -1092,8 +925,7 @@ bool initialize_shell(ShellState* shell,
   shell->heap = heap;
   shell->boot_volume = boot_volume;
   shell->block_device = block_device;
-  shell->vfs = vfs;
-  shell->fd_table = fd_table;
+  shell->syscall_context = syscall_context;
   shell->output = *output;
   shell->history_count = 0;
   shell->history_next_slot = 0;
@@ -1101,13 +933,7 @@ bool initialize_shell(ShellState* shell,
   memory_set(shell->history_sequence_numbers, 0,
              sizeof(shell->history_sequence_numbers));
   memory_set(shell->history_entries, 0, sizeof(shell->history_entries));
-  memory_set(shell->current_working_directory, 0,
-             sizeof(shell->current_working_directory));
-  if (!set_root_path(shell->current_working_directory,
-                     sizeof(shell->current_working_directory))) {
-    return false;
-  }
-  return true;
+  return sys_chdir(shell->syscall_context, "/") == kSyscallOk;
 }
 
 void shell_print_prompt(const ShellState* shell) {

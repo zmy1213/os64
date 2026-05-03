@@ -7,6 +7,15 @@ BUILD_DIR="$ROOT_DIR/build"
 DISK_IMG="$BUILD_DIR/disk.img"
 SERIAL_LOG="$BUILD_DIR/stage1-stage2.serial.log"
 QEMU_BIN="${QEMU_BIN:-/opt/homebrew/bin/qemu-system-x86_64}"
+source "$ROOT_DIR/scripts/qemu-test-lib.sh"
+
+serial_log_is_ready_to_stop() {
+  local serial_log="$1"
+
+  # `shell ok` 说明整条正常启动自测链已经走完。
+  # 这里轮询时只看一个足够靠后的里程碑，最后真正判成功时仍然会跑下面那整套全量断言。
+  grep -q "shell ok" "$serial_log"
+}
 
 # Always start from a fresh serial log so old output cannot mask failures.
 rm -f "$SERIAL_LOG"
@@ -24,13 +33,14 @@ rm -f "$SERIAL_LOG"
 qemu_pid="$!"
 trap 'kill "$qemu_pid" 2>/dev/null || true; wait "$qemu_pid" 2>/dev/null || true' EXIT
 
-# Give BIOS and the two boot stages enough time to print their milestones.
-sleep 2
+# 现在不再固定 `sleep 2`。
+# 原因是随着内核不断变大，“2 秒一定够”这个假设会越来越脆弱。
+if ! wait_for_serial_markers "$SERIAL_LOG" "$qemu_pid" 80 serial_log_is_ready_to_stop; then
+  :
+fi
 
-# 如果来得及走到 bootloader/kernel 的 debug-exit 路径，QEMU 会自己退出；
-# 如果没有退出，这里再兜底强制停止，避免测试卡死。
-kill "$qemu_pid" 2>/dev/null || true
-wait "$qemu_pid" 2>/dev/null || true
+# 正常启动测试本身不会让 kernel_main 返回，所以拿到足够日志后主动收尾。
+stop_qemu_if_running "$qemu_pid"
 
 # A missing log means the serial device was never set up correctly.
 if ! [ -f "$SERIAL_LOG" ]; then
@@ -125,6 +135,11 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "fd_open_count=0" "$SERIAL_LOG" \
   && grep -q "fd_layer ok" "$SERIAL_LOG" \
   && grep -q "syscall_context ok" "$SERIAL_LOG" \
+  && grep -q "sys_cwd=/" "$SERIAL_LOG" \
+  && grep -q "sys_root_entries=3" "$SERIAL_LOG" \
+  && grep -q "sys_cwd_after_cd=/docs" "$SERIAL_LOG" \
+  && grep -q "sys_listdir_count=1" "$SERIAL_LOG" \
+  && grep -q "sys_path_stat_inode=5" "$SERIAL_LOG" \
   && grep -q "sys_open=0" "$SERIAL_LOG" \
   && grep -q "sys_stat_inode=5" "$SERIAL_LOG" \
   && grep -q "sys_read_total=193" "$SERIAL_LOG" \

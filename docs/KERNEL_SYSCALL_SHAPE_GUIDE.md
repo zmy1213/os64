@@ -514,3 +514,9 @@ syscall/sysret 或 int 0x80 入口
 原因是：
 
 > 先把内核服务边界稳定下来，再让用户程序进入内核，调试成本会低很多。
+
+继续阅读：
+
+```text
+docs/KERNEL_SYSCALL_CWD_GUIDE.md
+```
