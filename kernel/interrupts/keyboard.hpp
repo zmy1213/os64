@@ -50,6 +50,12 @@ uint64_t keyboard_dropped_char_count();
 // 这一轮开始，方向键 / Home / End / Delete 也会走这条路径。
 bool keyboard_try_read_input_event(KeyboardInputEvent* out_event);
 
+// 如果当前还没有任何可读输入事件，并且当前代码正跑在线程上下文里，
+// 这个接口会把当前线程挂进 keyboard 的“通用输入事件等待队列”。
+// 这样像 console 行编辑这种既关心字符、也关心方向键/删除键的路径，
+// 就不用退回到“每个 timer tick 都醒一次”的旧 hlt 等待方式。
+bool keyboard_wait_for_input_event();
+
 // 尝试从键盘字符缓冲区里拿出 1 个字符。
 // 成功时返回 true，并把字符写进 out_char；没有字符时返回 false。
 // 它现在主要给旧测试和只关心字符的调用方兼容使用。

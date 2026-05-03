@@ -583,54 +583,44 @@ scheduler ok
 
 ---
 
-## 13. 下一步最合理做什么
+## 13. 这一步做完以后，下一步最合理是什么
 
-现在最合理的下一步通常有 3 条：
+上面当时建议的两件事：
 
-### 路线 A：把 shell 真的变成调度线程
+- 把 shell 接进 scheduler
+- 把 console/shell 的输入等待改成真正 block
 
-也就是不再让：
+现在已经在下一篇里真正实现了：
 
-```text
-kernel_main -> shell_run_forever()
-```
+- [从第一版 `process/thread/scheduler` 到“shell 真正跑进调度器”](./KERNEL_SCHEDULER_SHELL_GUIDE.md)
 
-而是改成：
+所以现在再往前，最合理的重点就从“先把交互路径挂进线程模型”变成：
 
-```text
-kernel_main -> create shell thread -> scheduler_run()
-```
-
-这会让调度器第一次接管真实交互路径。
-
-### 路线 B：把剩下的交互输入也接进 blocked/wakeup
-
-比如：
-
-- `console_read_line_with_history()` 不再自己 `hlt` + 轮询
-- shell 读命令行时也真的 block 当前线程
-- 后面磁盘 I/O 继续复用这套 blocked/wakeup 形状
-
-这一步会让调度器从“已经接进 stdin”推进到“整个交互输入链都真正靠线程等待关系工作”。
-
-### 路线 C：开始准备用户态前置条件
+### 路线 A：开始补用户态切换前置条件
 
 比如：
 
 - TSS
-- ring 3 栈切换
-- 每进程地址空间骨架
+- ring 3 / ring 0 栈切换
+- 用户态返回路径
 
-但这条路一定要在 A/B 做到一定程度以后再走，
-不然调试复杂度会陡增。
+### 路线 B：把地址空间真正做成“每进程一份”
 
-我建议下一步优先做：
+比如：
 
-```text
-把 shell 接进 scheduler
-+ 把 console/shell 的输入等待也改成真正 block
-```
+- `ProcessControlBlock` 里挂独立页表根
+- 内核高地址共享、用户低地址独立
+- `fork/exec` 之前先把“创建空用户地址空间”走通
 
-原因是：
+### 路线 C：把抢占和同步补完整
 
-> 现在 `stdin/read(0)` 这条阻塞链已经打通了，最合理的是继续把 shell 和 console 也接进调度器，这样用户能看到的整条交互路径就都建立在线程模型上了。
+比如：
+
+- 真正从 timer IRQ 触发内核抢占
+- 自旋锁
+- 关中断临界区
+- 线程等待队列抽象
+
+一句话说：
+
+> 现在 shell 和 console 已经真正站到 scheduler 这条线上了，下一步就该开始把“只有内核线程的教学内核”继续推进成“能切用户态、能管每进程地址空间”的系统。

@@ -135,6 +135,9 @@ make clean
 - `paging ok`
 - `long mode ok`
 - `hello from os64 kernel`
+- `tss ok`
+- `address_space ok`
+- `user mode ok`
 - `filesystem ok`
 - `file_layer ok`
 - `directory_layer ok`
@@ -143,7 +146,11 @@ make clean
 - `syscall_layer ok`
 - `int80_syscall ok`
 - `scheduler ok`
+- `user thread ok`
 - `shell ok`
+- `shell_process_pid=6`
+- `shell_thread_tid=12`
+- `shell_thread_started_tid=12`
 
 调度器这一轮启动时还会额外打印 3 组关键自测日志：
 
@@ -158,6 +165,8 @@ make clean
 - block + wake 链路
 
 最后会进入最小交互 shell，
+而且现在这个 shell 已经不是 `kernel_main` 直接死循环跑出来的，
+而是一个真正交给 scheduler 管理的内核线程，
 提示符是：
 
 ```text
@@ -232,6 +241,13 @@ os64>
 - 线程现在已经有 `ready/running/sleeping/blocked/finished` 这些状态，`idle thread` 也已经补上
 - `PIT IRQ0` 现在不只会记全局 tick，也会给当前线程记账，并在时间片用完时发出第一版 reschedule 请求
 - 当前调度模型还不是“完整抢占式内核”：真正切换先放在 `timer_wait_ticks` / `console_read_line_with_history` / `sys_read(stdin)` 这种安全点里完成
+- kernel 里现在已经第一次真正进入 ring 3：内核会克隆一份用户地址空间、映射 1 页用户代码和 1 页用户栈、用 `iretq` 落进用户态，再让用户代码用 `int 0x80` 调回现有 syscall 路径
+- 这一步现在还只是教学型 smoke test，不是完整用户进程模型；它主要证明 `ring 0 -> ring 3 -> ring 0` 的链路已经打通
+- kernel 里现在又往前走了一步：这次用户态不再只是 `kernel_main` 自己手工调一次，而是已经能作为第一版 `user thread` 挂进 scheduler，由 scheduler 切它进 ring 3，再在 `exit` 后正式把线程回收到 `finished`
+- 这一步里专门避开了一个很典型的坑：user thread 的 kernel-resume 栈现在先放在 low identity-mapped 页上，避免切到 cloned user root 之后当前内核栈突然失去映射
+- kernel 里现在又把 `FileDescriptorTable + SyscallContext` 正式挂进 `ProcessControlBlock`，让“每进程自己的 cwd/fd/syscall 视图”第一次真正落地
+- `int 0x80` 分发现在如果正跑在线程上下文里，会优先取“当前线程所属进程”的 `syscall_context`，不再先信任全局默认上下文
+- ring 3 smoke program 现在不只会打印一句话，还会 `getcwd()` 并用相对路径 `open("readme.txt")`；scheduler 版 smoke 还会故意把默认内核 cwd 设成 `/docs`，借此证明用户进程看到的仍然是它自己的 `/`
 - shell 里可以用 `disk` 看块设备，用 `pwd` / `cd` 管当前目录，用 `ls` / `cat` / `stat` 看文件系统
 - shell 会先把相对路径按 cwd 解析成绝对路径，例如 `cd docs` 后 `cat guide.txt` 会解析成 `/docs/guide.txt`
 - 现在 `pwd` / `cd` / `ls` / `cat` / `stat` 这些路径命令都已经开始改成通过 `SyscallContext + sys_*` 这层工作

@@ -35,6 +35,8 @@ kernel/
 │   ├── keyboard.hpp
 │   └── keyboard.cpp
 ├── memory/
+│   ├── address_space.hpp
+│   ├── address_space.cpp
 │   ├── page_allocator.hpp
 │   ├── page_allocator.cpp
 │   ├── paging.hpp
@@ -109,10 +111,12 @@ kernel/
 - 键盘 IRQ + 字符缓冲区测试
 - 第一版 `stdin/read(0)` 键盘字符流烟测
 - 第一版 `process/thread/scheduler` + priority/sleep/block/wake 烟测
+- 第一次真正 `iretq` 进入 ring 3，再由用户态 `int 0x80` 打回内核的 smoke test
+- 第一版 scheduler-managed user thread：由调度器把一条 user thread 真正切进 ring 3，并在 `exit` 后正式回收线程
 - 控制台回显 + 最小行输入测试
 - 最小 shell 命令测试
 - shell 当前工作目录 `pwd` / `cd` / 相对路径测试
-- 正常启动后的最小交互 shell 循环
+- 正常启动后创建 `kernel-shell` 进程和 `shell-main` 线程，再把真实交互 shell 交给 scheduler
 - 异常测试入口
 
 一句话理解：
@@ -141,7 +145,7 @@ kernel/
 - `interrupt_stubs.asm`
   真正离 CPU 最近的汇编入口。
 - `interrupts.cpp/.hpp`
-  IDT、异常名字表、开关中断、通用 trap/IRQ 接入逻辑。
+  IDT、异常名字表、kernel-side GDT/TSS 初始化、ring 3 可用段描述符、开关中断、通用 trap/IRQ 接入逻辑。
 - `pic.cpp/.hpp`
   初始化 8259A PIC，把硬件 IRQ 重映射到 32~47，并在 IRQ 结束后发 EOI。
 - `pit.cpp/.hpp`
@@ -163,6 +167,8 @@ kernel/
   从 E820 usable 区域里分物理页。
 - `paging.*`
   管页表和虚拟地址映射。
+- `address_space.*`
+  在页表接口之上再包一层“进程视角的地址空间对象”，让 PCB 开始真的携带自己的页表根和用户区布局。
 - `heap.*`
   在页表和物理页之上，提供更像“分配器”的堆接口。
 - `kmemory.*`
@@ -170,7 +176,7 @@ kernel/
 
 一句话理解：
 
-> `memory/` 管“物理内存怎么拿、虚拟地址怎么映射、堆内存怎么分，以及对象怎么落到堆上”。
+> `memory/` 管“物理内存怎么拿、虚拟地址怎么映射、每进程页表根怎么组织、堆内存怎么分，以及对象怎么落到堆上”。
 
 ---
 
@@ -200,7 +206,7 @@ kernel/
 这里放最小 shell 模块：
 
 - `shell.cpp/.hpp`
-  负责提示符、命令解析、内建命令执行，以及第一版交互循环。
+  负责提示符、命令解析、内建命令执行，以及第一版交互循环；现在又把“一轮真实交互”抽成 `shell_run_once()`，让 smoke test 和真实 scheduler 线程复用同一条路径。
   现在已经能通过 `pwd` / `cd` 管当前目录，通过 `ls` / `cat` / `stat` 观察文件系统，其中 `ls` / `stat` 走 VFS，`cat` 进一步走 fd 表。
 
 一句话理解：
@@ -230,7 +236,7 @@ kernel/
 
 - `syscall.cpp/.hpp`
   现在先提供 `SyscallContext`，以及 `sys_open`、`sys_read`、`sys_write`、`sys_stat`、`sys_seek`、`sys_close`，再往前补了 `sys_getcwd`、`sys_chdir`、`sys_stat_path`、`sys_listdir`。
-  它先把“上层通过 fd、cwd、路径、错误码访问内核服务”的形状定下来，后来又往前补了第一版 `int 0x80` 软中断分发器，以及公开 syscall fd `0/1/2 = stdin/stdout/stderr`、`3+ = 普通文件` 这层边界翻译；现在 `sys_read(0)` 也已经能从键盘字符流读输入。
+  它先把“上层通过 fd、cwd、路径、错误码访问内核服务”的形状定下来，后来又往前补了第一版 `int 0x80` 软中断分发器，以及公开 syscall fd `0/1/2 = stdin/stdout/stderr`、`3+ = 普通文件` 这层边界翻译；现在 `sys_read(0)` 也已经能从键盘字符流读输入，第一版用户态 `exit` 也会从这里接回内核 smoke test。这一步继续往前后，`int 0x80` 分发在有当前线程时也会优先取“当前线程所属进程”的 `SyscallContext`，而不是只看全局默认上下文。
 
 一句话理解：
 
@@ -243,9 +249,9 @@ kernel/
 这里放第一版任务系统模块：
 
 - `scheduler.cpp/.hpp`
-  现在先放 `ProcessControlBlock`、`ThreadControlBlock`、`SchedulerState`，以及分优先级 ready queue、idle thread、`sleep/block/wake` 骨架、线程创建/退出、时间片请求和协作式切换入口。
+  现在先放 `ProcessControlBlock`、`ThreadControlBlock`、`SchedulerState`，以及分优先级 ready queue、idle thread、`sleep/block/wake` 骨架、线程创建/退出、时间片请求和协作式切换入口；正常启动时的 `shell-main` 线程也已经真的挂到这层来运行。这一步里它又开始区分 `kernel thread` 和 `user thread`，并补了第一版 `user process` / `user thread` 创建入口；后来又继续把每进程自己的 `FileDescriptorTable + SyscallContext` 正式挂进 `ProcessControlBlock`。
 - `context_switch.asm`
-  这是第一版真正的线程上下文切换汇编。当前先只保存 callee-saved 寄存器和 `RSP`，刚好够这轮 kernel thread 骨架使用。
+  这是第一版真正的线程上下文切换汇编。当前先保存 kernel thread 需要的 callee-saved 寄存器和 `RSP`；这一步里它还额外承载了第一次 `iretq` 进入 ring 3、以及从用户态 `exit` 接回内核的入口/返回器，现在这条路径已经开始被真正的 user thread 复用。
 
 一句话理解：
 

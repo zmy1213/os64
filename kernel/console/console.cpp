@@ -12,6 +12,8 @@ constexpr uintptr_t kVgaBase = 0xB8000; // VGA 文本缓冲区物理地址。
 constexpr size_t kConsoleEditorDraftCapacity = 128;  // 当前 shell/console 的行缓冲都很小，这个固定草稿槽位已经够用。
 
 uint16_t g_console_start_row = 0;       // 控制台自己的显示区域从哪一行开始。
+uint16_t g_console_start_column = 0;    // 控制台正文从哪一列开始。
+uint16_t g_console_end_column = kVgaColumns;  // 控制台正文可写到哪一列之前；右边界是开区间。
 uint16_t g_console_row = 0;             // 当前光标所在行。
 uint16_t g_console_column = 0;          // 当前光标所在列。
 uint8_t g_console_color = 0x07;         // 当前字符颜色，默认改成浅灰字黑底，比纯白更柔和。
@@ -65,27 +67,28 @@ void put_visible_char(char ch) {
       vga_cell(ch, g_console_color);
 
   ++g_console_column;
-  if (g_console_column >= kVgaColumns) {
-    g_console_column = 0;
+  if (g_console_column >= g_console_end_column) {
+    g_console_column = g_console_start_column;
     ++g_console_row;
     scroll_if_needed();
   }
 }
 
 void newline() {
-  g_console_column = 0;
+  g_console_column = g_console_start_column;
   ++g_console_row;
   scroll_if_needed();
 }
 
 void backspace() {
-  if (g_console_row == g_console_start_row && g_console_column == 0) {
+  if (g_console_row == g_console_start_row &&
+      g_console_column == g_console_start_column) {
     return;  // 已经退到控制台区域最开始了，就不要再往前删了。
   }
 
-  if (g_console_column == 0) {
+  if (g_console_column == g_console_start_column) {
     --g_console_row;
-    g_console_column = static_cast<uint16_t>(kVgaColumns - 1);
+    g_console_column = static_cast<uint16_t>(g_console_end_column - 1);
   } else {
     --g_console_column;
   }
@@ -174,6 +177,29 @@ size_t history_entry_count(const ConsoleHistoryProvider* history) {
 
 }  // namespace
 
+void console_set_viewport(uint16_t start_column, uint16_t end_column) {
+  if (start_column >= kVgaColumns) {
+    start_column = 0;
+  }
+
+  if (end_column > kVgaColumns) {
+    end_column = kVgaColumns;
+  }
+
+  if (end_column <= start_column) {
+    start_column = 0;
+    end_column = kVgaColumns;
+  }
+
+  g_console_start_column = start_column;
+  g_console_end_column = end_column;
+
+  if (g_console_column < g_console_start_column ||
+      g_console_column >= g_console_end_column) {
+    g_console_column = g_console_start_column;
+  }
+}
+
 void initialize_console(uint16_t start_row, uint8_t color) {
   if (start_row >= kVgaRows) {
     start_row = static_cast<uint16_t>(kVgaRows - 1);
@@ -181,7 +207,7 @@ void initialize_console(uint16_t start_row, uint8_t color) {
 
   g_console_start_row = start_row;
   g_console_row = start_row;
-  g_console_column = 0;
+  g_console_column = g_console_start_column;
   g_console_color = color;
 
   for (uint16_t row = start_row; row < kVgaRows; ++row) {
@@ -233,7 +259,7 @@ void console_clear() {
   }
 
   g_console_row = g_console_start_row;
-  g_console_column = 0;
+  g_console_column = g_console_start_column;
 }
 
 size_t console_read_line(char* buffer, size_t capacity) {
@@ -265,8 +291,17 @@ size_t console_read_line_with_history(char* buffer,
     event.character = '\0';
 
     while (!keyboard_try_read_input_event(&event)) {
-      // 这一轮先用最直接的阻塞方式：
-      // 没有字符就 `hlt` 睡眠，等下一次中断把 CPU 唤醒后再试。
+      // 如果当前已经跑在线程上下文里，就优先走真正的 block/wake 链路：
+      // - 先把线程挂进 keyboard input wait queue
+      // - 再由下一次键盘 IRQ 把它唤醒
+      //
+      // 这样 shell 在“等输入”时会进入 blocked，而不是被错误记成一直占着 CPU。
+      if (keyboard_wait_for_input_event()) {
+        continue;
+      }
+
+      // 如果当前还没有线程上下文，或者暂时不能真正 block，
+      // 再退回到旧的 `hlt` 等待路径。
       wait_for_interrupt();
 
       // 如果 timer 已经把时间片用尽的请求挂起来了，

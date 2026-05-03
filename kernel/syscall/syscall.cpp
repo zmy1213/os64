@@ -8,7 +8,10 @@
 namespace {
 
 constexpr size_t kMaxSyscallPositiveResult = 2147483647U;
-SyscallContext* g_active_syscall_context = nullptr;
+SyscallContext* g_active_syscall_context = nullptr;  // 早期 boot/smoke 还会显式安装一份“当前内核上下文”；真正在线程里跑时，会优先改成取当前进程自己的 syscall_context。
+
+extern "C" bool kernel_user_mode_exit_is_armed();
+extern "C" [[noreturn]] void kernel_handle_user_mode_exit(uint64_t return_value);
 
 bool is_space_char(char ch) {
   return ch == ' ' || ch == '\t';
@@ -246,12 +249,23 @@ int32_t read_stdin_stream(void* buffer, size_t bytes_to_read) {
   }
 }
 
+SyscallContext* current_dispatch_context() {
+  ThreadControlBlock* const current_thread = scheduler_active_thread();
+  if (current_thread != nullptr &&
+      current_thread->owner != nullptr &&
+      syscall_context_is_ready(&current_thread->owner->syscall_context)) {
+    return &current_thread->owner->syscall_context;
+  }
+
+  return g_active_syscall_context;
+}
+
 int64_t dispatch_syscall_registers(uint64_t syscall_number,
                                    uint64_t argument0,
                                    uint64_t argument1,
                                    uint64_t argument2,
                                    uint64_t argument3) {
-  SyscallContext* context = g_active_syscall_context;
+  SyscallContext* context = current_dispatch_context();
   if (!syscall_context_is_ready(context)) {
     return syscall_status_result(kSyscallInvalidArgument);
   }
@@ -280,6 +294,11 @@ int64_t dispatch_syscall_registers(uint64_t syscall_number,
                     static_cast<int32_t>(argument0),
                     reinterpret_cast<const void*>(argument1),
                     static_cast<size_t>(argument2)));
+    case kSyscallNumberExit:
+      if (!kernel_user_mode_exit_is_armed()) {
+        return syscall_status_result(kSyscallUnsupported);
+      }
+      kernel_handle_user_mode_exit(argument0);
     case kSyscallNumberClose:
       return syscall_status_result(
           sys_close(context, static_cast<int32_t>(argument0)));
@@ -386,7 +405,7 @@ bool install_syscall_dispatch_context(SyscallContext* context) {
 }
 
 bool syscall_dispatch_is_ready() {
-  return syscall_context_is_ready(g_active_syscall_context);
+  return syscall_context_is_ready(current_dispatch_context());
 }
 
 const char* syscall_current_working_directory(const SyscallContext* context) {

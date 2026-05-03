@@ -70,6 +70,18 @@
    再继续往前，把键盘字符缓冲真正接成 `stdin`，让 `read(0, ...)` 和 `int 0x80` 版本都能读到第一版标准输入；后来又继续补到“没字符时线程会 block，键盘 IRQ 到来再 wake”。
 33. [从第一版 `stdin/read(0)` 到第一版 `process/thread/scheduler`](./KERNEL_TASKING_GUIDE.md)
    再继续往前，把“整个系统只有一条内核主线在跑”推进成“内核已经有可调度线程、独立线程栈、分优先级的 ready queue、sleep/block/wake 状态和 idle thread”。
+34. [从第一版 `process/thread/scheduler` 到“shell 真正跑进调度器”](./KERNEL_SCHEDULER_SHELL_GUIDE.md)
+   再继续往前，把“已经存在的调度器骨架”真正接到交互路径上：shell 不再由 `kernel_main` 直接跑，console 等输入时也优先走 keyboard wait queue -> block -> IRQ 唤醒。
+35. [从“shell 真正跑进调度器”到第一版 `TSS`](./KERNEL_TSS_GUIDE.md)
+   再继续往前，把 long mode 里真正还缺的 `TSS` 补上：内核自己安装一份 GDT、准备 `RSP0` 和 double-fault `IST1`、用 `ltr` 装载 task register，为以后 ring 3 / 内核栈切换铺路。
+36. [从第一版 `TSS` 到“每进程地址空间骨架”](./KERNEL_ADDRESS_SPACE_GUIDE.md)
+   再继续往前，把“以后用户态到底活在哪份页表里”这件事先立住：支持克隆当前页表根、为新地址空间额外挂用户页，并把地址空间对象挂进 PCB。
+37. [从“每进程地址空间骨架”到“第一次真正进入用户态”](./KERNEL_USER_MODE_GUIDE.md)
+   再继续往前，第一次真正准备用户代码页、用户栈页和 `iretq` 入口帧，真的落进 ring 3，再让用户代码用 `int 0x80` 打回内核。
+38. [从“第一次真正进入用户态”到“第一版 scheduler-managed user thread”](./KERNEL_USER_THREAD_GUIDE.md)
+   再继续往前，把那次 `kernel_main` 亲自做的一次性 user mode smoke，升级成真正挂在 scheduler 下面的一条 user thread，并让 `exit` 正式回到调度器。
+39. [从“第一版 scheduler-managed user thread”到“每进程 syscall context / fd 视图”](./KERNEL_PROCESS_SYSCALL_CONTEXT_GUIDE.md)
+   再继续往前，把还挂在全局变量上的 syscall/fd 视图真正挂进 PCB，让 ring 3 代码通过“当前线程所属进程”拿到自己的 cwd、相对路径和文件句柄视图。
 
 一句话记忆这个顺序：
 
@@ -108,4 +120,10 @@ stage1
 -> first stdin/read(0) from keyboard char stream
 -> stdin block/wakeup on keyboard IRQ
 -> first process/thread/scheduler skeleton with priority + sleep/wake
+-> shell as a real scheduler-managed kernel thread
+-> first kernel-owned GDT + TSS + RSP0/IST1
+-> first per-process address-space skeleton + cloned page-table root
+-> first real ring 3 entry via iretq + int 0x80 back to kernel
+-> first scheduler-managed user thread with exit back to scheduler
+-> first per-process syscall context and fd view for user processes
 ```

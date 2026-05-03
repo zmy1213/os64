@@ -17,6 +17,10 @@ struct ConsoleHistoryProvider {
 // 而是告诉控制台：前面这些行可能已经被状态日志占用，你从哪一行开始作为自己的输入/输出区域。
 void initialize_console(uint16_t start_row, uint8_t color);
 
+// 配置控制台真正可写的列范围，右边界是开区间。
+// 例如 [2, 78) 表示左右各留 2 列空白，这样文字不会直接贴到屏幕边缘。
+void console_set_viewport(uint16_t start_column, uint16_t end_column);
+
 // 有些更早期的子系统会在 console 正式初始化前就起来。
 // 这个查询接口让它们能决定：现在要不要真的往 VGA 控制台写。
 bool console_is_initialized();

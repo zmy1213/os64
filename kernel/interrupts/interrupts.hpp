@@ -23,6 +23,18 @@ struct InterruptFrame {
   uint64_t rflags;       // 当时的标志寄存器值。
 };
 
+// 第一版 kernel-side TSS 初始化：
+// - 安装一份内核自己的 GDT
+// - 给 64 位 TSS 描述符分配槽位
+// - 设置 RSP0 和 double-fault IST
+// - 用 `ltr` 把 TSS 真正装进 task register
+bool initialize_tss();
+bool tss_is_ready();
+uint16_t tss_task_register_selector();
+uint64_t tss_kernel_rsp0();
+uint64_t tss_double_fault_ist1();
+uint16_t tss_io_map_base();
+
 bool initialize_idt();
 const char* exception_name(uint64_t vector);
 

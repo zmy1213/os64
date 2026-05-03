@@ -15,6 +15,7 @@ KERNEL_CONSOLE_SRC="$ROOT_DIR/kernel/console/console.cpp"
 KERNEL_SHELL_SRC="$ROOT_DIR/kernel/shell/shell.cpp"
 KERNEL_PAGE_ALLOCATOR_SRC="$ROOT_DIR/kernel/memory/page_allocator.cpp"
 KERNEL_PAGING_SRC="$ROOT_DIR/kernel/memory/paging.cpp"
+KERNEL_ADDRESS_SPACE_SRC="$ROOT_DIR/kernel/memory/address_space.cpp"
 KERNEL_RUNTIME_SRC="$ROOT_DIR/kernel/runtime/runtime.cpp"
 KERNEL_INTERRUPTS_SRC="$ROOT_DIR/kernel/interrupts/interrupts.cpp"
 KERNEL_PIC_SRC="$ROOT_DIR/kernel/interrupts/pic.cpp"
@@ -42,6 +43,7 @@ KERNEL_CONSOLE_OBJ="$BUILD_DIR/console.o"
 KERNEL_SHELL_OBJ="$BUILD_DIR/shell.o"
 KERNEL_PAGE_ALLOCATOR_OBJ="$BUILD_DIR/page_allocator.o"
 KERNEL_PAGING_OBJ="$BUILD_DIR/paging.o"
+KERNEL_ADDRESS_SPACE_OBJ="$BUILD_DIR/address_space.o"
 KERNEL_RUNTIME_OBJ="$BUILD_DIR/runtime.o"
 KERNEL_INTERRUPTS_OBJ="$BUILD_DIR/interrupts.o"
 KERNEL_PIC_OBJ="$BUILD_DIR/pic.o"
@@ -153,7 +155,7 @@ write_dir_entry() {
 }
 
 # Stage1 must remain a single 512-byte BIOS boot sector.
-echo "[1/33] assembling stage1"
+echo "[1/34] assembling stage1"
 nasm -f bin "$STAGE1_SRC" -o "$STAGE1_BIN"
 
 size="$(wc -c < "$STAGE1_BIN" | tr -d ' ')"
@@ -164,17 +166,17 @@ fi
 
 # 现在内核不再只是一份入口汇编和一份 C++ 文件，
 # 但整体仍然保持“没有宿主 libc、没有第三方运行时”的最小 freestanding 形态。
-echo "[2/33] assembling kernel entry"
+echo "[2/34] assembling kernel entry"
 nasm -f elf64 "$KERNEL_ENTRY_SRC" -o "$KERNEL_ENTRY_OBJ"
 
-echo "[3/33] assembling interrupt_stubs.asm"
+echo "[3/34] assembling interrupt_stubs.asm"
 nasm -f elf64 "$KERNEL_INTERRUPT_STUBS_SRC" -o "$KERNEL_INTERRUPT_STUBS_OBJ"
 
-echo "[4/33] assembling context_switch.asm"
+echo "[4/34] assembling context_switch.asm"
 nasm -f elf64 "$KERNEL_TASK_CONTEXT_SRC" -o "$KERNEL_TASK_CONTEXT_OBJ"
 
 # Compile the kernel with a freestanding x86_64-elf target so the host OS ABI does not leak in.
-echo "[5/33] compiling kernel_main.cpp"
+echo "[5/34] compiling kernel_main.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -192,7 +194,7 @@ echo "[5/33] compiling kernel_main.cpp"
   -c "$KERNEL_MAIN_SRC" \
   -o "$KERNEL_MAIN_OBJ"
 
-echo "[6/33] compiling console.cpp"
+echo "[6/34] compiling console.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -210,7 +212,7 @@ echo "[6/33] compiling console.cpp"
   -c "$KERNEL_CONSOLE_SRC" \
   -o "$KERNEL_CONSOLE_OBJ"
 
-echo "[7/33] compiling shell.cpp"
+echo "[7/34] compiling shell.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -228,7 +230,7 @@ echo "[7/33] compiling shell.cpp"
   -c "$KERNEL_SHELL_SRC" \
   -o "$KERNEL_SHELL_OBJ"
 
-echo "[8/33] compiling page_allocator.cpp"
+echo "[8/34] compiling page_allocator.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -246,7 +248,7 @@ echo "[8/33] compiling page_allocator.cpp"
   -c "$KERNEL_PAGE_ALLOCATOR_SRC" \
   -o "$KERNEL_PAGE_ALLOCATOR_OBJ"
 
-echo "[9/33] compiling paging.cpp"
+echo "[9/34] compiling paging.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -264,7 +266,25 @@ echo "[9/33] compiling paging.cpp"
   -c "$KERNEL_PAGING_SRC" \
   -o "$KERNEL_PAGING_OBJ"
 
-echo "[10/33] compiling runtime.cpp"
+echo "[10/34] compiling address_space.cpp"
+"$CLANGXX_BIN" \
+  --target=x86_64-elf \
+  -I "$KERNEL_INCLUDE_DIR" \
+  -ffreestanding \
+  -fno-exceptions \
+  -fno-rtti \
+  -fno-stack-protector \
+  -fno-pic \
+  -mno-red-zone \
+  -mcmodel=kernel \
+  -O0 \
+  -Wall \
+  -Wextra \
+  $KERNEL_EXTRA_CXXFLAGS \
+  -c "$KERNEL_ADDRESS_SPACE_SRC" \
+  -o "$KERNEL_ADDRESS_SPACE_OBJ"
+
+echo "[11/34] compiling runtime.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -282,7 +302,7 @@ echo "[10/33] compiling runtime.cpp"
   -c "$KERNEL_RUNTIME_SRC" \
   -o "$KERNEL_RUNTIME_OBJ"
 
-echo "[11/33] compiling interrupts.cpp"
+echo "[12/34] compiling interrupts.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -300,7 +320,7 @@ echo "[11/33] compiling interrupts.cpp"
   -c "$KERNEL_INTERRUPTS_SRC" \
   -o "$KERNEL_INTERRUPTS_OBJ"
 
-echo "[12/33] compiling pic.cpp"
+echo "[13/34] compiling pic.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -318,7 +338,7 @@ echo "[12/33] compiling pic.cpp"
   -c "$KERNEL_PIC_SRC" \
   -o "$KERNEL_PIC_OBJ"
 
-echo "[13/33] compiling pit.cpp"
+echo "[14/34] compiling pit.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -336,7 +356,7 @@ echo "[13/33] compiling pit.cpp"
   -c "$KERNEL_PIT_SRC" \
   -o "$KERNEL_PIT_OBJ"
 
-echo "[14/33] compiling keyboard.cpp"
+echo "[15/34] compiling keyboard.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -354,7 +374,7 @@ echo "[14/33] compiling keyboard.cpp"
   -c "$KERNEL_KEYBOARD_SRC" \
   -o "$KERNEL_KEYBOARD_OBJ"
 
-echo "[15/33] compiling heap.cpp"
+echo "[16/34] compiling heap.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -372,7 +392,7 @@ echo "[15/33] compiling heap.cpp"
   -c "$KERNEL_HEAP_SRC" \
   -o "$KERNEL_HEAP_OBJ"
 
-echo "[16/33] compiling kmemory.cpp"
+echo "[17/34] compiling kmemory.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -390,7 +410,7 @@ echo "[16/33] compiling kmemory.cpp"
   -c "$KERNEL_KMEMORY_SRC" \
   -o "$KERNEL_KMEMORY_OBJ"
 
-echo "[17/33] compiling boot_volume.cpp"
+echo "[18/34] compiling boot_volume.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -408,7 +428,7 @@ echo "[17/33] compiling boot_volume.cpp"
   -c "$KERNEL_BOOT_VOLUME_SRC" \
   -o "$KERNEL_BOOT_VOLUME_OBJ"
 
-echo "[18/33] compiling block_device.cpp"
+echo "[19/34] compiling block_device.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -426,7 +446,7 @@ echo "[18/33] compiling block_device.cpp"
   -c "$KERNEL_BLOCK_DEVICE_SRC" \
   -o "$KERNEL_BLOCK_DEVICE_OBJ"
 
-echo "[19/33] compiling os64fs.cpp"
+echo "[20/34] compiling os64fs.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -444,7 +464,7 @@ echo "[19/33] compiling os64fs.cpp"
   -c "$KERNEL_OS64FS_SRC" \
   -o "$KERNEL_OS64FS_OBJ"
 
-echo "[20/33] compiling file.cpp"
+echo "[21/34] compiling file.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -462,7 +482,7 @@ echo "[20/33] compiling file.cpp"
   -c "$KERNEL_FILE_SRC" \
   -o "$KERNEL_FILE_OBJ"
 
-echo "[21/33] compiling directory.cpp"
+echo "[22/34] compiling directory.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -480,7 +500,7 @@ echo "[21/33] compiling directory.cpp"
   -c "$KERNEL_DIRECTORY_SRC" \
   -o "$KERNEL_DIRECTORY_OBJ"
 
-echo "[22/33] compiling vfs.cpp"
+echo "[23/34] compiling vfs.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -498,7 +518,7 @@ echo "[22/33] compiling vfs.cpp"
   -c "$KERNEL_VFS_SRC" \
   -o "$KERNEL_VFS_OBJ"
 
-echo "[23/33] compiling fd.cpp"
+echo "[24/34] compiling fd.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -516,7 +536,7 @@ echo "[23/33] compiling fd.cpp"
   -c "$KERNEL_FD_SRC" \
   -o "$KERNEL_FD_OBJ"
 
-echo "[24/33] compiling syscall.cpp"
+echo "[25/34] compiling syscall.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -534,7 +554,7 @@ echo "[24/33] compiling syscall.cpp"
   -c "$KERNEL_SYSCALL_SRC" \
   -o "$KERNEL_SYSCALL_OBJ"
 
-echo "[25/33] compiling scheduler.cpp"
+echo "[26/34] compiling scheduler.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -554,7 +574,7 @@ echo "[25/33] compiling scheduler.cpp"
 
 # Link the kernel to a fixed address. For this learning round we intentionally keep it low
 # so stage2 can keep using the simplest BIOS CHS read path.
-echo "[26/33] linking kernel.elf"
+echo "[27/34] linking kernel.elf"
 "$LD_BIN" \
   -m elf_x86_64 \
   -T "$KERNEL_LINKER_SCRIPT" \
@@ -567,6 +587,7 @@ echo "[26/33] linking kernel.elf"
   "$KERNEL_SHELL_OBJ" \
   "$KERNEL_PAGE_ALLOCATOR_OBJ" \
   "$KERNEL_PAGING_OBJ" \
+  "$KERNEL_ADDRESS_SPACE_OBJ" \
   "$KERNEL_RUNTIME_OBJ" \
   "$KERNEL_INTERRUPTS_OBJ" \
   "$KERNEL_PIC_OBJ" \
@@ -585,7 +606,7 @@ echo "[26/33] linking kernel.elf"
   "$KERNEL_SCHEDULER_OBJ"
 
 # Stage2 wants a raw blob on disk, so we strip the ELF container and keep only the loadable bytes.
-echo "[27/33] generating kernel.bin"
+echo "[28/34] generating kernel.bin"
 "$OBJCOPY_BIN" -O binary "$KERNEL_ELF" "$KERNEL_BIN"
 
 kernel_size="$(wc -c < "$KERNEL_BIN" | tr -d ' ')"
@@ -622,7 +643,7 @@ if [ "$os64fs_readme_length" -gt "$OS64FS_DATA_BLOCK_SIZE" ] || \
   exit 1
 fi
 
-echo "[28/33] generating boot_volume.bin"
+echo "[29/34] generating boot_volume.bin"
 truncate -s "$BOOT_VOLUME_BYTES" "$BOOT_VOLUME_BIN"
 printf '%s' "$OS64FS_SIGNATURE" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=0 conv=notrunc status=none
 write_le32 1 | dd of="$BOOT_VOLUME_BIN" bs=1 seek=8 conv=notrunc status=none
@@ -653,7 +674,7 @@ printf '%s' "$OS64FS_NOTES" | dd of="$BOOT_VOLUME_BIN" bs=1 seek="$os64fs_notes_
 printf '%s' "$OS64FS_GUIDE" | dd of="$BOOT_VOLUME_BIN" bs=1 seek="$os64fs_guide_offset" conv=notrunc status=none
 
 # Stage2 needs to know how many sectors to read and what fixed address the kernel expects.
-echo "[29/33] generating kernel metadata for stage2"
+echo "[30/34] generating kernel metadata for stage2"
 cat > "$KERNEL_META_INC" <<EOF
 %define KERNEL_LOAD_ADDR 0x00010000
 %define KERNEL_LOAD_SEGMENT 0x1000
@@ -668,7 +689,7 @@ cat > "$KERNEL_META_INC" <<EOF
 EOF
 
 # Stage2 now spans eight sectors because it also sets up A20/E820/GDT/page tables/long mode.
-echo "[30/33] assembling stage2"
+echo "[31/34] assembling stage2"
 nasm -f bin -i "$BUILD_DIR/" "$STAGE2_SRC" -o "$STAGE2_BIN"
 
 size="$(wc -c < "$STAGE2_BIN" | tr -d ' ')"
@@ -678,7 +699,7 @@ if [ "$size" -ne "$STAGE2_EXPECTED_SIZE" ]; then
 fi
 
 # Create a raw floppy-sized image and place stage1/stage2/kernel in the first sectors.
-echo "[31/33] creating raw disk image"
+echo "[32/34] creating raw disk image"
 truncate -s "$IMAGE_SIZE" "$DISK_IMG"
 dd if="$STAGE1_BIN" of="$DISK_IMG" bs=512 count=1 conv=notrunc status=none
 dd if="$STAGE2_BIN" of="$DISK_IMG" bs=512 seek=1 count=8 conv=notrunc status=none
@@ -686,7 +707,7 @@ dd if="$KERNEL_BIN" of="$DISK_IMG" bs=512 seek=9 conv=notrunc status=none
 dd if="$BOOT_VOLUME_BIN" of="$DISK_IMG" bs=512 seek=$((boot_volume_start_sector - 1)) conv=notrunc status=none
 
 # BIOS boot sectors must end with the 0x55aa signature.
-echo "[32/33] verifying boot signature"
+echo "[33/34] verifying boot signature"
 signature="$(hexdump -n 2 -s 510 -e '2/1 "%02x"' "$STAGE1_BIN")"
 if [ "$signature" != "55aa" ]; then
   echo "boot signature mismatch: expected 55aa, got $signature" >&2
@@ -694,7 +715,7 @@ if [ "$signature" != "55aa" ]; then
 fi
 
 # Emit the key output paths so manual runs can inspect the artifacts directly.
-echo "[33/33] build complete"
+echo "[34/34] build complete"
 echo "stage1.bin: $STAGE1_BIN"
 echo "stage2.bin: $STAGE2_BIN"
 echo "kernel.elf: $KERNEL_ELF"

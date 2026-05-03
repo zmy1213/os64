@@ -12,9 +12,9 @@ source "$ROOT_DIR/scripts/qemu-test-lib.sh"
 serial_log_is_ready_to_stop() {
   local serial_log="$1"
 
-  # `shell ok` 说明整条正常启动自测链已经走完。
-  # 这里轮询时只看一个足够靠后的里程碑，最后真正判成功时仍然会跑下面那整套全量断言。
-  grep -q "shell ok" "$serial_log"
+  # 现在不只要看到 `shell ok`，还要看到“真实交互 shell 已经作为调度线程启动”。
+  # 这样正常启动回归才会覆盖到这轮新补的 scheduler -> shell 接管路径。
+  grep -q "shell_thread_started_tid=" "$serial_log"
 }
 
 # Always start from a fresh serial log so old output cannot mask failures.
@@ -59,6 +59,11 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "paging ok" "$SERIAL_LOG" \
   && grep -q "long mode ok" "$SERIAL_LOG" \
   && grep -q "hello from os64 kernel" "$SERIAL_LOG" \
+  && grep -q "tss_rsp0=0x" "$SERIAL_LOG" \
+  && grep -q "tss_ist1=0x" "$SERIAL_LOG" \
+  && grep -q "tss_task_register=0x0000000000000028" "$SERIAL_LOG" \
+  && grep -q "tss_io_map_base=104" "$SERIAL_LOG" \
+  && grep -q "tss ok" "$SERIAL_LOG" \
   && grep -q "idt ok" "$SERIAL_LOG" \
   && grep -q "boot info ok" "$SERIAL_LOG" \
   && grep -q "e820 parse ok" "$SERIAL_LOG" \
@@ -70,6 +75,15 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "mapped_virtual=0x" "$SERIAL_LOG" \
   && grep -q "read_back_value=0x1122334455667788" "$SERIAL_LOG" \
   && grep -q "map_page ok" "$SERIAL_LOG" \
+  && grep -q "address_space_kernel_root=0x" "$SERIAL_LOG" \
+  && grep -q "address_space_user_root=0x" "$SERIAL_LOG" \
+  && grep -q "address_space_user_base=0x0000000000400000" "$SERIAL_LOG" \
+  && grep -q "address_space_user_stack_top=0x0000000000800000" "$SERIAL_LOG" \
+  && grep -q "address_space_user_page_phys=0x" "$SERIAL_LOG" \
+  && grep -q "address_space_user_page_virt=0x0000000000400000" "$SERIAL_LOG" \
+  && grep -q "address_space_user_lookup=0x" "$SERIAL_LOG" \
+  && grep -q "address_space_mapped_user_pages=1" "$SERIAL_LOG" \
+  && grep -q "address_space ok" "$SERIAL_LOG" \
   && grep -q "heap init ok" "$SERIAL_LOG" \
   && grep -q "heap_small=0x" "$SERIAL_LOG" \
   && grep -q "heap_large=0x" "$SERIAL_LOG" \
@@ -169,6 +183,19 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "int80_open_count=0" "$SERIAL_LOG" \
   && grep -q "int80_bad_result=0xFFFFFFFFFFFFFFFF" "$SERIAL_LOG" \
   && grep -q "int80_syscall ok" "$SERIAL_LOG" \
+  && grep -q "user_mode_root=0x" "$SERIAL_LOG" \
+  && grep -q "user_mode_code_phys=0x" "$SERIAL_LOG" \
+  && grep -q "user_mode_stack_phys=0x" "$SERIAL_LOG" \
+  && grep -q "user_mode_entry=0x0000000000400000" "$SERIAL_LOG" \
+  && grep -q "user_mode_stack_top=0x0000000000800000" "$SERIAL_LOG" \
+  && grep -q "user_mode_program_size=" "$SERIAL_LOG" \
+  && grep -q "user_mode_message=hello from ring3 via int80" "$SERIAL_LOG" \
+  && grep -q "user_mode_cwd=/" "$SERIAL_LOG" \
+  && grep -q "user_mode_readme_prefix=os64fs readme" "$SERIAL_LOG" \
+  && grep -q "user_mode_return_cs=0x0000000000000043" "$SERIAL_LOG" \
+  && grep -q "user_mode_return_cpl=3" "$SERIAL_LOG" \
+  && grep -q "user_mode_return_flags=0x0000000000000003" "$SERIAL_LOG" \
+  && grep -q "user mode ok" "$SERIAL_LOG" \
   && grep -q "filesystem ok" "$SERIAL_LOG" \
   && grep -q "pic ok" "$SERIAL_LOG" \
   && grep -q "pit ok" "$SERIAL_LOG" \
@@ -258,6 +285,29 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "uptime - show tick-based uptime" "$SERIAL_LOG" \
   && grep -q "echo  - print text back" "$SERIAL_LOG" \
   && grep -q "history - show recent commands" "$SERIAL_LOG" \
+  && grep -q "user_thread_pid=5" "$SERIAL_LOG" \
+  && grep -q "user_thread_tid=11" "$SERIAL_LOG" \
+  && grep -q "user_thread_kernel_cwd_before=/docs" "$SERIAL_LOG" \
+  && grep -q "user_thread_process_cwd_before=/" "$SERIAL_LOG" \
+  && grep -q "user_thread_root=0x" "$SERIAL_LOG" \
+  && grep -q "user_thread_code_phys=0x" "$SERIAL_LOG" \
+  && grep -q "user_thread_stack_phys=0x" "$SERIAL_LOG" \
+  && grep -q "user_thread_entry=0x0000000000400000" "$SERIAL_LOG" \
+  && grep -q "user_thread_stack_top=0x0000000000800000" "$SERIAL_LOG" \
+  && grep -q "user_thread_program_size=" "$SERIAL_LOG" \
+  && grep -q "user_thread_return_cs=0x0000000000000043" "$SERIAL_LOG" \
+  && grep -q "user_thread_return_cpl=3" "$SERIAL_LOG" \
+  && grep -q "user_thread_return_flags=0x0000000000000003" "$SERIAL_LOG" \
+  && grep -q "user_thread_kernel_cwd_after=/docs" "$SERIAL_LOG" \
+  && grep -q "user_thread_process_cwd_after=/" "$SERIAL_LOG" \
+  && grep -q "user_thread_open_count=0" "$SERIAL_LOG" \
+  && grep -q "user_thread_process_state=exited" "$SERIAL_LOG" \
+  && grep -q "user_thread_state=finished" "$SERIAL_LOG" \
+  && grep -q "user thread ok" "$SERIAL_LOG" \
+  && grep -q "shell_process_pid=6" "$SERIAL_LOG" \
+  && grep -q "shell_thread_tid=12" "$SERIAL_LOG" \
+  && grep -q "shell_thread_started_pid=6" "$SERIAL_LOG" \
+  && grep -q "shell_thread_started_tid=12" "$SERIAL_LOG" \
   && grep -q "clear - clear console area" "$SERIAL_LOG" \
   && grep -q "shell_line=mem" "$SERIAL_LOG" \
   && grep -q "mem_free_pages=" "$SERIAL_LOG" \
@@ -344,7 +394,7 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "cpu_max_extended_leaf=0x" "$SERIAL_LOG" \
   && grep -q "cpu_long_mode=1" "$SERIAL_LOG" \
   && grep -q "shell_line=echo hi42" "$SERIAL_LOG" \
-  && grep -q $'^hi42\r$' "$SERIAL_LOG" \
+  && grep -q "os64 % hi42" "$SERIAL_LOG" \
   && grep -q "shell_line=uptime" "$SERIAL_LOG" \
   && grep -q "uptime_ticks=" "$SERIAL_LOG" \
   && grep -q "uptime_frequency_hz=100" "$SERIAL_LOG" \

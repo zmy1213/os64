@@ -87,6 +87,18 @@ const char* shell_history_entry_text(const ShellState* shell, size_t index);
 // 返回一个稳定字符串，方便日志里打印这次命令结果。
 const char* shell_command_result_name(ShellCommandResult result);
 
+// 跑一轮真正的 shell 交互：
+// 1. 打提示符
+// 2. 读一行
+// 3. 执行命令
+//
+// 这样正常交互路径和 smoke test 就能复用同一套代码，
+// 后面把 shell 放进调度线程时也不会和测试路径分叉。
+ShellCommandResult shell_run_once(ShellState* shell,
+                                  char* line_buffer,
+                                  size_t capacity,
+                                  size_t* out_line_length);
+
 // 正常启动时的最小交互循环。
 // 它会：
 // 1. 打提示符

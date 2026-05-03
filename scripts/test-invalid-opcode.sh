@@ -12,6 +12,20 @@ serial_log_has_expected_markers() {
   local serial_log="$1"
 
   grep -q "heap alloc ok" "$serial_log" \
+    && grep -q "tss_rsp0=0x" "$serial_log" \
+    && grep -q "tss_ist1=0x" "$serial_log" \
+    && grep -q "tss_task_register=0x0000000000000028" "$serial_log" \
+    && grep -q "tss_io_map_base=104" "$serial_log" \
+    && grep -q "tss ok" "$serial_log" \
+    && grep -q "address_space_kernel_root=0x" "$serial_log" \
+    && grep -q "address_space_user_root=0x" "$serial_log" \
+    && grep -q "address_space_user_base=0x0000000000400000" "$serial_log" \
+    && grep -q "address_space_user_stack_top=0x0000000000800000" "$serial_log" \
+    && grep -q "address_space_user_page_phys=0x" "$serial_log" \
+    && grep -q "address_space_user_page_virt=0x0000000000400000" "$serial_log" \
+    && grep -q "address_space_user_lookup=0x" "$serial_log" \
+    && grep -q "address_space_mapped_user_pages=1" "$serial_log" \
+    && grep -q "address_space ok" "$serial_log" \
     && grep -q "boot volume loaded ok" "$serial_log" \
     && grep -q "boot volume ok" "$serial_log" \
     && grep -q "file_layer ok" "$serial_log" \
@@ -20,6 +34,32 @@ serial_log_has_expected_markers() {
     && grep -q "fd_layer ok" "$serial_log" \
     && grep -q "syscall_layer ok" "$serial_log" \
     && grep -q "int80_syscall ok" "$serial_log" \
+    && grep -q "user_mode_message=hello from ring3 via int80" "$serial_log" \
+    && grep -q "user_mode_cwd=/" "$serial_log" \
+    && grep -q "user_mode_readme_prefix=os64fs readme" "$serial_log" \
+    && grep -q "user_mode_return_cs=0x0000000000000043" "$serial_log" \
+    && grep -q "user_mode_return_cpl=3" "$serial_log" \
+    && grep -q "user_mode_return_flags=0x0000000000000003" "$serial_log" \
+    && grep -q "user mode ok" "$serial_log" \
+    && grep -q "user_thread_pid=5" "$serial_log" \
+    && grep -q "user_thread_tid=11" "$serial_log" \
+    && grep -q "user_thread_kernel_cwd_before=/docs" "$serial_log" \
+    && grep -q "user_thread_process_cwd_before=/" "$serial_log" \
+    && grep -q "user_thread_root=0x" "$serial_log" \
+    && grep -q "user_thread_code_phys=0x" "$serial_log" \
+    && grep -q "user_thread_stack_phys=0x" "$serial_log" \
+    && grep -q "user_thread_entry=0x0000000000400000" "$serial_log" \
+    && grep -q "user_thread_stack_top=0x0000000000800000" "$serial_log" \
+    && grep -q "user_thread_program_size=" "$serial_log" \
+    && grep -q "user_thread_return_cs=0x0000000000000043" "$serial_log" \
+    && grep -q "user_thread_return_cpl=3" "$serial_log" \
+    && grep -q "user_thread_return_flags=0x0000000000000003" "$serial_log" \
+    && grep -q "user_thread_kernel_cwd_after=/docs" "$serial_log" \
+    && grep -q "user_thread_process_cwd_after=/" "$serial_log" \
+    && grep -q "user_thread_open_count=0" "$serial_log" \
+    && grep -q "user_thread_process_state=exited" "$serial_log" \
+    && grep -q "user_thread_state=finished" "$serial_log" \
+    && grep -q "user thread ok" "$serial_log" \
     && grep -q "stdin_syscall ok" "$serial_log" \
     && grep -q "filesystem ok" "$serial_log" \
     && grep -q "scheduler ok" "$serial_log" \

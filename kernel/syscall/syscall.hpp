@@ -43,6 +43,7 @@ enum SyscallNumber : uint64_t {
   kSyscallNumberStatPath = 7,
   kSyscallNumberListDir = 8,
   kSyscallNumberWrite = 9,  // 这次先追加，不去重排前一轮已经用起来的编号。
+  kSyscallNumberExit = 10,  // 第一版用户态先靠它告诉内核：“我已经跑完，可以回到 smoke test 继续了”。
 };
 
 // 这是第一版“写输出”回调。

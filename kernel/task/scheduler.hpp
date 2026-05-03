@@ -5,6 +5,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "memory/address_space.hpp"
+#include "syscall/syscall.hpp"
+#include "task/user_mode.hpp"
+
 // 第一版 tasking 先故意保守一点：
 // 只支持很少量的进程和线程，避免一上来把重点淹没在“可变长容器”里。
 constexpr size_t kSchedulerMaxProcessCount = 8;
@@ -44,16 +48,26 @@ enum ThreadPriority : uint8_t {
   kThreadPriorityIdle = 3,
 };
 
+// 现在调度器开始不只知道“谁是一条线程”，
+// 还知道“这条线程最后是继续留在 ring 0，还是要真的进 ring 3”。
+enum ThreadExecutionMode : uint8_t {
+  kThreadExecutionModeKernel = 0,
+  kThreadExecutionModeUser = 1,
+};
+
 using KernelThreadEntry = void (*)(void* context);
 
 struct ProcessControlBlock {
   bool in_use;                                     // 这个 PCB 槽位现在是否已经被占用。
-  bool is_kernel_process;                          // 这一步还没有用户态，所以先只区分“是不是内核进程”。
+  bool is_kernel_process;                          // 现在开始真的区分：这是共享内核地址空间的 kernel process，还是带独立用户页表根的 user process。
   uint32_t pid;                                    // 第一版进程号，后面 shell/ps/等待机制都会靠它识别对象。
   ProcessState state;                              // 当前进程大体处在什么生命周期阶段。
   uint32_t live_thread_count;                      // 这个进程还有多少线程没退出。
   uint64_t total_thread_ticks;                     // 这个进程名下所有线程一共消耗了多少 timer tick。
   uint64_t dispatch_count;                         // 这个进程的线程一共被调度上 CPU 多少次。
+  AddressSpace address_space;                      // 这一步开始，进程对象第一次真的携带一份“页表根属于谁”的信息。
+  FileDescriptorTable file_descriptors;            // 现在开始，每个进程自己也能带一张 fd 表，而不是所有人共用全局打开文件表。
+  SyscallContext syscall_context;                  // cwd、stdout/stderr 写出口、fd 视图这些 syscall 状态，也正式挂进 PCB。
   char name[kSchedulerNameCapacity];               // 先保留一个固定长度名字，方便日志和调试。
 };
 
@@ -63,8 +77,9 @@ struct ThreadControlBlock {
   ThreadState state;                               // 当前线程所处的调度状态。
   ThreadPriority priority;                         // 调度器现在会先看优先级，再看队列顺序。
   ProcessControlBlock* owner;                      // 这个线程属于哪个进程。
-  KernelThreadEntry entry;                         // 真正的线程入口函数。
-  void* entry_context;                             // 交给入口函数的参数。
+  ThreadExecutionMode execution_mode;              // 这条线程最后是跑 kernel entry，还是切进 user RIP。
+  KernelThreadEntry entry;                         // kernel thread 的真正入口函数；user thread 这里先留空。
+  void* entry_context;                             // 交给 kernel thread 入口函数的参数；user thread 当前不使用。
   void* stack_allocation;                          // 线程栈底层来自哪块堆内存，后面做回收会用到它。
   size_t stack_allocation_bytes;                   // 栈一共分了多少字节。
   uint64_t stack_top;                              // 栈顶虚拟地址，主要给初始化栈帧用。
@@ -74,6 +89,7 @@ struct ThreadControlBlock {
   uint64_t consumed_ticks;                         // 这个线程在运行态下累计消耗了多少 timer tick。
   uint64_t wake_tick;                              // 如果线程在 sleep，这里记录“第几个 tick 应该被唤醒”。
   bool is_idle_thread;                             // idle thread 是特殊线程：永远存在，但不计入普通 live thread。
+  UserModeLaunchContext user_mode;                 // 如果这是 user thread，这里就是那份真正会交给 `iretq` 路径的用户态启动现场。
   char name[kSchedulerNameCapacity];               // 线程名字先也做成固定数组，避免早期依赖动态字符串。
 };
 
@@ -111,6 +127,15 @@ bool scheduler_is_ready(const SchedulerState* scheduler);
 ProcessControlBlock* scheduler_create_kernel_process(
     SchedulerState* scheduler,
     const char* name);
+ProcessControlBlock* scheduler_create_user_process(
+    SchedulerState* scheduler,
+    PageAllocator* allocator,
+    const char* name);
+bool scheduler_initialize_process_syscall_view(
+    ProcessControlBlock* process,
+    const VfsMount* vfs,
+    SyscallWriteHandler write_handler,
+    void* write_context);
 
 ThreadControlBlock* scheduler_create_kernel_thread(
     SchedulerState* scheduler,
@@ -119,6 +144,15 @@ ThreadControlBlock* scheduler_create_kernel_thread(
     KernelThreadEntry entry,
     void* entry_context,
     size_t stack_bytes,
+    ThreadPriority priority);
+ThreadControlBlock* scheduler_create_user_thread(
+    SchedulerState* scheduler,
+    ProcessControlBlock* owner,
+    PageAllocator* allocator,
+    const char* name,
+    uint64_t user_instruction_pointer,
+    uint64_t user_stack_pointer,
+    uint64_t user_rflags,
     ThreadPriority priority);
 
 // 让当前 ready queue 一直跑到“已经没有任何可运行线程”为止。

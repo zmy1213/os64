@@ -937,9 +937,9 @@ bool initialize_shell(ShellState* shell,
 }
 
 void shell_print_prompt(const ShellState* shell) {
-  // 提示符单独换成更轻的强调色，让界面不再整屏都是同一块高亮白字。
+  // macOS 默认 zsh 提示符习惯以 `%` 收尾，这里借这个视觉习惯把 shell 做得更像终端窗口。
   set_output_color(shell, shell->output.prompt_color);
-  write_string(shell, "os64> ");
+  write_string(shell, "os64 % ");
   set_output_color(shell, shell->output.text_color);
 }
 
@@ -1095,11 +1095,15 @@ const char* shell_command_result_name(ShellCommandResult result) {
   }
 }
 
-void shell_run_forever(ShellState* shell,
-                       char* line_buffer,
-                       size_t capacity) {
+ShellCommandResult shell_run_once(ShellState* shell,
+                                  char* line_buffer,
+                                  size_t capacity,
+                                  size_t* out_line_length) {
   if (shell == nullptr || line_buffer == nullptr || capacity < 2) {
-    return;
+    if (out_line_length != nullptr) {
+      *out_line_length = 0;
+    }
+    return kShellCommandEmpty;
   }
 
   ConsoleHistoryProvider history_provider;
@@ -1107,10 +1111,24 @@ void shell_run_forever(ShellState* shell,
   history_provider.entry_text = history_provider_entry_text;
   history_provider.context = shell;
 
+  shell_print_prompt(shell);
+  const size_t line_length =
+      console_read_line_with_history(line_buffer, capacity, &history_provider);
+  if (out_line_length != nullptr) {
+    *out_line_length = line_length;
+  }
+
+  return shell_execute_line(shell, line_buffer);
+}
+
+void shell_run_forever(ShellState* shell,
+                       char* line_buffer,
+                       size_t capacity) {
+  if (shell == nullptr || line_buffer == nullptr || capacity < 2) {
+    return;
+  }
+
   for (;;) {
-    shell_print_prompt(shell);
-    (void)console_read_line_with_history(line_buffer, capacity,
-                                         &history_provider);
-    (void)shell_execute_line(shell, line_buffer);
+    (void)shell_run_once(shell, line_buffer, capacity, nullptr);
   }
 }

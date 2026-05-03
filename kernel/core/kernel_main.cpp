@@ -2,6 +2,7 @@
 #include <stdint.h>
 
 #include "boot/boot_info.hpp"
+#include "boot/segments.hpp"
 #include "console/console.hpp"
 #include "fs/directory.hpp"
 #include "fs/fd.hpp"
@@ -12,6 +13,7 @@
 #include "interrupts/keyboard.hpp"
 #include "interrupts/pic.hpp"
 #include "interrupts/pit.hpp"
+#include "memory/address_space.hpp"
 #include "memory/heap.hpp"
 #include "memory/kmemory.hpp"
 #include "memory/page_allocator.hpp"
@@ -28,13 +30,36 @@ namespace {
 constexpr uint16_t kVgaColumns = 80;          // VGA 文本模式一行 80 列。
 constexpr uintptr_t kVgaBase = 0xB8000;       // VGA 文本缓冲区从这个物理地址开始。
 constexpr uint16_t kCom1Base = 0x3F8;         // COM1 串口的标准 I/O 端口基址。
-constexpr uint8_t kStatusTextColor = 0x07;    // 浅灰字黑底，比纯白更轻，不会显得那么“顶眼”。
-constexpr uint8_t kShellTextColor = 0x07;     // shell 正文也统一用浅灰色，减轻整屏发白的感觉。
-constexpr uint8_t kShellPromptColor = 0x03;   // 提示符改成柔一点的青色，让交互入口更清楚但不刺眼。
+constexpr uint16_t kConsoleInsetStartColumn = 2;  // 左边留 2 列空白，减少“文字贴边”的凌乱感。
+constexpr uint16_t kConsoleInsetEndColumn = 78;   // 右边同样留 2 列，让下半屏更像真正的终端内容区。
+constexpr uint8_t kStatusTextColor = 0x07;    // 状态区继续用浅灰字黑底，保证可读但不刺眼。
+constexpr uint8_t kShellTextColor = 0x07;     // shell 正文统一用浅灰色，接近 macOS Terminal 那种柔和正文感。
+constexpr uint8_t kShellPromptColor = 0x0B;   // 提示符改成更亮一点的青蓝色，更接近苹果终端的强调色。
 constexpr uint8_t kExceptionTextColor = 0x0C; // 异常标题保留醒目的浅红色，方便一眼看出是错误路径。
+constexpr uint8_t kChromeBarColor = 0x70;     // 浅灰背景黑字，用来模拟 macOS 窗口标题栏。
+constexpr uint8_t kChromeTitleColor = 0x78;   // 标题栏里用更柔一点的深灰文字。
+constexpr uint8_t kChromeRedDotColor = 0x74;  // 左上三色按钮里的红点。
+constexpr uint8_t kChromeYellowDotColor = 0x7E;  // 黄点。
+constexpr uint8_t kChromeGreenDotColor = 0x7A;   // 绿点。
+constexpr uint8_t kChromeDividerColor = 0x08;    // 深灰分隔文字，降低视觉噪声。
 constexpr uint16_t kMaxDecimalDigits = 20;    // 打印 64 位十进制时最多不会超过 20 位。
+constexpr uint16_t kExpectedTssIoMapBase = 104;                             // 64 位 TSS 一共 104 字节；I/O bitmap 偏移设成这里就等于“先不启用位图”。
 constexpr uint64_t kPagingTestVirtualAddress = 0x0000000000200000ULL;  // 2 MiB，正好落在当前临时映射之外。
 constexpr uint64_t kPagingTestPattern = 0x1122334455667788ULL;         // 用一个好认的模式值验证读写。
+constexpr uint64_t kAddressSpaceSmokeVirtualAddress = kUserAddressSpaceBase;  // 第一版用户区烟测先从 4 MiB 这个地址开始挂第 1 张页。
+constexpr uint64_t kUserModeCodeVirtualAddress = kUserAddressSpaceBase;  // 第一版用户代码先固定放在用户窗口最开始那一页。
+constexpr uint64_t kUserModeStackPageVirtualAddress =
+    kUserAddressSpaceDefaultStackTop - kPageSize;  // 用户栈先只映射 1 页，所以页基址正好在 stack top 下方 4 KiB。
+constexpr uint64_t kUserModeInitialStackPointer = kUserAddressSpaceDefaultStackTop;  // 第一次 iretq 进 ring 3 时，RSP 先从这页顶端开始。
+constexpr uint64_t kUserModeRequiredRflags = 0x2;   // x86 规定 bit1 恒为 1；第一版先把 IF 关着，避免 smoke test 被异步 IRQ 打断。
+constexpr uint64_t kUserModeExpectedCodeSelector = kUserCodeSelectorRpl3;  // 如果真的落进 CPL=3，用户程序最后读到的 CS 应该就是这个值。
+constexpr uint64_t kUserModeExpectedCpl = 3;        // 再单独把最低两位的 CPL 也做成可读常量。
+constexpr uint64_t kUserModeReturnCodeSelectorMask = 0xFFFFULL;            // `exit` 返回值低 16 位继续保留真正的用户态 CS。
+constexpr uint64_t kUserModeReturnResultShift = 16;                        // 更高位现在拿来塞用户态自检结果。
+constexpr uint64_t kUserModeResultRootCwdOk = 0x1;                         // 用户程序看到的 cwd 必须真的是 `/`。
+constexpr uint64_t kUserModeResultReadmePrefixOk = 0x2;                    // 用户程序必须能用相对路径 `readme.txt` 读到预期前缀。
+constexpr uint64_t kUserModeExpectedResultFlags =
+    kUserModeResultRootCwdOk | kUserModeResultReadmePrefixOk;
 constexpr uint64_t kHeapTestSmallPattern = 0xA1B2C3D4E5F60718ULL;      // 小块堆分配测试用的模式值。
 constexpr uint64_t kHeapTestLargePattern0 = 0x0123456789ABCDEFULL;     // 大块堆分配第一页起始位置的模式值。
 constexpr uint64_t kHeapTestLargePattern1 = 0xFEDCBA9876543210ULL;     // 大块堆分配跨页位置的模式值。
@@ -74,10 +99,17 @@ constexpr char kSchedulerSleepExpectedTrace[] = "ABAB";                // 两个
 constexpr char kSchedulerBlockExpectedTrace[] = "BWb";                 // waiter 先 block，waker 唤醒后 waiter 再继续补完自己的后半段。
 constexpr uint8_t kKeyboardIrqLine = 1;                                // 传统 PC 键盘走主 PIC 的 IRQ1。
 constexpr uint64_t kKeyboardTestTimeoutTicks = 20;                     // 键盘测试每轮最多等 20 个 tick，避免异常时无限卡住。
-constexpr uint16_t kConsoleTestStartRow = 20;                          // 新增 scheduler 状态行后，把交互测试区再往下挪一行。
+constexpr uint16_t kConsoleTestStartRow = 12;                          // 压缩状态区以后，把下半屏还给交互终端。
 constexpr size_t kConsoleLineBufferCapacity = 32;                      // 这一轮测试只读短行，32 字节足够验证流程。
-constexpr uint16_t kShellTestStartRow = 20;                            // shell 也跟着下移，避免覆盖新的 `scheduler ok` 状态行。
+constexpr uint16_t kShellTestStartRow = 12;                            // shell 烟测也复用更大的终端区域。
 constexpr size_t kShellLineBufferCapacity = 40;                        // 现在要测 `stat docs/guide.txt`，把命令行缓冲区稍微放大一点。
+constexpr uint16_t kCoreStatusRow = 5;                                 // TSS/IDT/BootInfo/E820 这类最早期启动结果压成同一行。
+constexpr uint16_t kMemoryStatusRow = 6;                               // 页分配器/页表/地址空间/堆/kmemory 汇总到同一行。
+constexpr uint16_t kStorageStatusRow = 7;                              // boot volume + filesystem。
+constexpr uint16_t kRuntimeStatusRow = 8;                              // timer + scheduler。
+constexpr uint16_t kInputStatusRow = 9;                                // keyboard/stdin/console。
+constexpr uint16_t kShellStatusRow = 10;                               // shell 和异常 smoke 的状态行。
+constexpr uint16_t kShellDividerRow = 11;                              // 状态区和交互区之间的视觉分隔线。
 constexpr uint8_t kKeyboardTestScancodes[] = {
     0x1E,  // A 按下 -> 'a'
     0x9E,  // A 松开 -> 这一轮应忽略，不进入字符缓冲区
@@ -249,16 +281,17 @@ constexpr uint64_t kPageFaultSmokePattern = 0x0BADF00DCAFED00DULL;     // 页错
 
 PageAllocator g_page_allocator;               // 第一版物理页分配器状态先放在一个全局对象里。
 KernelHeap g_kernel_heap;                     // 第一版内核堆状态也先放成全局对象，方便后面各模块共享。
-SchedulerState g_scheduler;                   // 第一版调度器状态；现在先只管理内核线程，不碰用户态。
+SchedulerState g_scheduler;                   // 现在这份调度器状态开始同时承载两类线程：kernel thread 和第一版 user thread。
 ShellState g_shell;                           // 最小 shell 的状态也先放在全局对象里，后面交互循环会一直复用。
 BootVolume g_boot_volume;                     // 这一轮新增的启动卷状态，表示 stage2 预读进来的那段扇区数据。
 BlockDevice g_boot_block_device;             // 再往上一层，把 boot volume 包成通用块设备接口。
 Os64Fs g_os64fs;                             // 第一版只读文件系统状态也先做成全局对象。
 VfsMount g_vfs;                              // VFS 根挂载点，shell 以后从这里而不是直接从 OS64FS 进入。
 FileDescriptorTable g_fd_table;              // 第一版全局 fd 表；以后有进程后会变成每个进程一张表。
-SyscallContext g_syscall_context;            // 第一版系统调用上下文；现在先包住全局 fd 表。
+SyscallContext g_syscall_context;            // 这份“内核默认 syscall 上下文”仍然保留，方便 boot/smoke 阶段和没有线程时的早期调用。
 uint64_t g_kernel_object_ctor_count = 0;      // 对象层测试里一共成功调用过多少次构造函数。
 uint64_t g_kernel_object_dtor_count = 0;      // 对象层测试里一共成功调用过多少次析构函数。
+UserModeLaunchContext* g_active_user_mode_session = nullptr;  // 直接 `user_mode_enter()` 的早期 smoke 仍然保留这条一次性返回通道；后面 scheduler 版 user thread 会走 TCB 里的正式启动现场。
 
 struct KernelObjectProbe {
   uint64_t left;       // 构造函数收到的第一个参数。
@@ -357,6 +390,10 @@ struct StdinBlockingInjectorContext {
   uint64_t observed_tid;            // 证明 injector 也是独立线程。
 };
 
+struct KernelShellThreadContext {
+  ShellState* shell;                // 真实交互 shell 仍然复用全局 g_shell 状态。
+};
+
 // 往 I/O 端口写一个字节。内核里没有现成库函数，所以这里自己直接发机器指令。
 inline void out8(uint16_t port, uint8_t value) {
   asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
@@ -441,15 +478,6 @@ size_t syscall_output_write(int32_t fd,
   return bytes_to_write;
 }
 
-size_t shell_history_provider_count(const void* context) {
-  return shell_history_entry_count(static_cast<const ShellState*>(context));
-}
-
-const char* shell_history_provider_text(const void* context, size_t index) {
-  return shell_history_entry_text(static_cast<const ShellState*>(context),
-                                  index);
-}
-
 const ShellOutput kShellOutput = {
     shell_output_char,
     shell_clear_output,
@@ -516,6 +544,12 @@ void serial_write_i64(int64_t value) {
   serial_write_u64(static_cast<uint64_t>(value));
 }
 
+uint64_t read_rflags() {
+  uint64_t flags = 0;
+  asm volatile("pushfq; popq %0" : "=r"(flags) : : "memory");
+  return flags;
+}
+
 bool is_aligned(uint64_t value, uint64_t alignment) {
   if (alignment == 0) {
     return false;
@@ -573,20 +607,116 @@ bool bounded_text_equals(const char* actual,
   return expected[limit] == '\0';
 }
 
+bool page_is_directly_accessible_in_boot_identity_map(uint64_t physical_address) {
+  return physical_address != 0 && physical_address < kPagingBootIdentityLimit;
+}
+
+const uint8_t* user_mode_smoke_program_bytes() {
+  return &user_mode_smoke_program_start;
+}
+
+size_t user_mode_smoke_program_size() {
+  const uintptr_t begin =
+      reinterpret_cast<uintptr_t>(&user_mode_smoke_program_start);
+  const uintptr_t end =
+      reinterpret_cast<uintptr_t>(&user_mode_smoke_program_end);
+  return (end > begin) ? (end - begin) : 0;
+}
+
 // 直接往 VGA 文本缓冲区写一整行，让你在 QEMU 图形窗口里也能看到结果。
-void vga_write_line(uint16_t row, const char* text, uint8_t color) {
+void vga_fill_line(uint16_t row, uint8_t color) {
   volatile uint16_t* const vga =
       reinterpret_cast<volatile uint16_t*>(kVgaBase);
 
   for (size_t col = 0; col < kVgaColumns; ++col) {
-    const char ch = text[col];
-    if (ch == '\0') {
-      break;
-    }
-
     vga[row * kVgaColumns + col] =
-        static_cast<uint16_t>(color) << 8 | static_cast<uint8_t>(ch);
+        static_cast<uint16_t>(color) << 8 | static_cast<uint8_t>(' ');
   }
+}
+
+void vga_write_text_at(uint16_t row, uint16_t column, const char* text,
+                       uint8_t color) {
+  if (text == nullptr || column >= kVgaColumns) {
+    return;
+  }
+
+  volatile uint16_t* const vga =
+      reinterpret_cast<volatile uint16_t*>(kVgaBase);
+
+  for (size_t i = 0; text[i] != '\0' && (column + i) < kVgaColumns; ++i) {
+    vga[row * kVgaColumns + column + i] =
+        static_cast<uint16_t>(color) << 8 |
+        static_cast<uint8_t>(text[i]);
+  }
+}
+
+void vga_write_centered_line(uint16_t row, const char* text, uint8_t color) {
+  if (text == nullptr) {
+    return;
+  }
+
+  size_t length = 0;
+  while (text[length] != '\0') {
+    ++length;
+  }
+
+  const uint16_t start_column =
+      (length >= kVgaColumns)
+          ? 0
+          : static_cast<uint16_t>((kVgaColumns - length) / 2);
+  vga_write_text_at(row, start_column, text, color);
+}
+
+void vga_write_line(uint16_t row, const char* text, uint8_t color) {
+  vga_fill_line(row, color);  // 先整行铺空格，避免短文本覆盖长文本后留下残影，看起来会很乱。
+  vga_write_text_at(row, 0, text, color);
+}
+
+void vga_write_inset_line(uint16_t row,
+                          uint16_t column,
+                          const char* text,
+                          uint8_t color) {
+  vga_fill_line(row, color);
+  vga_write_text_at(row, column, text, color);
+}
+
+void draw_terminal_chrome() {
+  vga_fill_line(0, kChromeBarColor);
+  vga_write_text_at(0, 2, "o", kChromeRedDotColor);
+  vga_write_text_at(0, 4, "o", kChromeYellowDotColor);
+  vga_write_text_at(0, 6, "o", kChromeGreenDotColor);
+  vga_write_centered_line(0, "os64 terminal", kChromeTitleColor);
+
+  vga_fill_line(1, kStatusTextColor);
+  vga_write_centered_line(1, "system overview", kChromeDividerColor);
+
+  vga_fill_line(kShellDividerRow, kStatusTextColor);
+  vga_write_centered_line(kShellDividerRow, "[ session ]", kChromeDividerColor);
+}
+
+[[maybe_unused]] void draw_terminal_overview_panel() {
+  vga_fill_line(2, kStatusTextColor);
+  vga_write_centered_line(3, "os64 64-bit kernel", kStatusTextColor);
+  vga_write_centered_line(4, "bios boot / protected mode / long mode / c++ runtime",
+                          kChromeDividerColor);
+  vga_write_inset_line(5, kConsoleInsetStartColumn,
+                       "core      ready   tss  idt  bootinfo  e820",
+                       kStatusTextColor);
+  vga_write_inset_line(6, kConsoleInsetStartColumn,
+                       "memory    ready   pages  paging  addr-space  heap  kmem",
+                       kStatusTextColor);
+  vga_write_inset_line(7, kConsoleInsetStartColumn,
+                       "storage   ready   boot-volume  os64fs  vfs  syscalls",
+                       kStatusTextColor);
+  vga_write_inset_line(8, kConsoleInsetStartColumn,
+                       "runtime   ready   pic  pit  timer  scheduler",
+                       kStatusTextColor);
+  vga_write_inset_line(9, kConsoleInsetStartColumn,
+                       "input     ready   keyboard  stdin  console-line",
+                       kStatusTextColor);
+  vga_write_inset_line(10, kConsoleInsetStartColumn,
+                       "shell     live    history  clear  pwd/ls/cat/stat",
+                       kStatusTextColor);
 }
 
 // 既写屏幕也写串口，这样手工看和自动测都能兼顾。
@@ -661,6 +791,48 @@ void log_allocated_pages(PageAllocator* allocator) {
   }
 }
 
+// 第一版 TSS 烟测先不去做 ring 3，
+// 但至少要证明 4 件事已经真的发生：
+// 1. 内核自己装了一份 GDT
+// 2. `ltr` 成功把 TSS 选择子装进了 task register
+// 3. RSP0 已经指向一根真实内核栈
+// 4. double-fault 的 IST1 也已经准备好了
+bool run_tss_smoke_test() {
+  if (!initialize_tss()) {
+    return false;
+  }
+
+  serial_write_string("tss_rsp0=0x");
+  serial_write_hex64(tss_kernel_rsp0());
+  serial_write_crlf();
+
+  serial_write_string("tss_ist1=0x");
+  serial_write_hex64(tss_double_fault_ist1());
+  serial_write_crlf();
+
+  serial_write_string("tss_task_register=0x");
+  serial_write_hex64(tss_task_register_selector());
+  serial_write_crlf();
+
+  serial_write_string("tss_io_map_base=");
+  serial_write_u64(tss_io_map_base());
+  serial_write_crlf();
+
+  const bool ok =
+      tss_is_ready() &&
+      tss_kernel_rsp0() != 0 &&
+      tss_double_fault_ist1() != 0 &&
+      tss_task_register_selector() == kKernelTssSelector &&
+      tss_io_map_base() == kExpectedTssIoMapBase;
+
+  if (ok) {
+    serial_write_string("tss ok");
+    serial_write_crlf();
+  }
+
+  return ok;
+}
+
 // 这一步才是真正把“物理页分配器”和“页表管理器”接起来：
 // 先拿到一个物理页，再把它映射到一个新的虚拟地址，然后实际写进去读出来。
 bool run_paging_smoke_test(PageAllocator* allocator) {
@@ -696,6 +868,212 @@ bool run_paging_smoke_test(PageAllocator* allocator) {
   serial_write_crlf();
 
   return read_back == kPagingTestPattern;
+}
+
+// 这一步不去真的切到用户态，
+// 但至少先证明：
+// 1. 我们已经能从当前 CR3 克隆出一份新的页表根
+// 2. 这份新地址空间可以在“将来的用户区”里额外挂页
+// 3. 不切换 CR3 也能先从页表里把映射关系走出来检查
+bool run_address_space_smoke_test(PageAllocator* allocator) {
+  if (allocator == nullptr) {
+    return false;
+  }
+
+  const uint64_t kernel_root = paging_current_root_physical();
+  AddressSpace user_space;
+  memory_set(&user_space, 0, sizeof(user_space));
+  if (!clone_current_address_space(&user_space, allocator)) {
+    return false;
+  }
+
+  serial_write_string("address_space_kernel_root=0x");
+  serial_write_hex64(kernel_root);
+  serial_write_crlf();
+
+  serial_write_string("address_space_user_root=0x");
+  serial_write_hex64(user_space.root_physical_address);
+  serial_write_crlf();
+
+  serial_write_string("address_space_user_base=0x");
+  serial_write_hex64(user_space.user_region_base);
+  serial_write_crlf();
+
+  serial_write_string("address_space_user_stack_top=0x");
+  serial_write_hex64(user_space.default_user_stack_top);
+  serial_write_crlf();
+
+  const uint64_t user_physical_page = alloc_page(allocator);
+  if (user_physical_page == 0) {
+    return false;
+  }
+
+  serial_write_string("address_space_user_page_phys=0x");
+  serial_write_hex64(user_physical_page);
+  serial_write_crlf();
+
+  if (!address_space_map_user_page(&user_space, allocator,
+                                   kAddressSpaceSmokeVirtualAddress,
+                                   user_physical_page,
+                                   kPageWritable)) {
+    return false;
+  }
+
+  serial_write_string("address_space_user_page_virt=0x");
+  serial_write_hex64(kAddressSpaceSmokeVirtualAddress);
+  serial_write_crlf();
+
+  const uint64_t resolved_address =
+      address_space_resolve_mapping(&user_space,
+                                    kAddressSpaceSmokeVirtualAddress);
+  serial_write_string("address_space_user_lookup=0x");
+  serial_write_hex64(resolved_address);
+  serial_write_crlf();
+
+  serial_write_string("address_space_mapped_user_pages=");
+  serial_write_u64(user_space.mapped_user_pages);
+  serial_write_crlf();
+
+  const bool ok =
+      user_space.ready &&
+      user_space.owns_page_table_root &&
+      user_space.root_physical_address != 0 &&
+      user_space.root_physical_address != kernel_root &&
+      resolved_address == user_physical_page &&
+      user_space.mapped_user_pages == 1;
+
+  if (ok) {
+    serial_write_string("address_space ok");
+    serial_write_crlf();
+  }
+
+  return ok;
+}
+
+// 这是“第一次真正进入用户态”的最小闭环：
+// 1. 克隆当前页表根，得到一份独立用户地址空间
+// 2. 给它挂 1 页用户代码和 1 页用户栈
+// 3. 手工准备 iretq 要弹出的用户态入口现场
+// 4. 真的落进 ring 3
+// 5. 让用户代码用 `int 0x80` 回到内核，并通过最小 `exit` syscall 接回 C++ 调用点
+bool run_user_mode_smoke_test(PageAllocator* allocator,
+                              SyscallContext* context,
+                              FileDescriptorTable* fd_table) {
+  if (allocator == nullptr ||
+      context == nullptr ||
+      fd_table == nullptr ||
+      !initialize_syscall_context(context, fd_table) ||
+      !install_syscall_write_handler(context, syscall_output_write, nullptr) ||
+      !install_syscall_dispatch_context(context) ||
+      !syscall_dispatch_is_ready()) {
+    return false;
+  }
+
+  AddressSpace user_space;
+  memory_set(&user_space, 0, sizeof(user_space));
+  if (!clone_current_address_space(&user_space, allocator)) {
+    return false;
+  }
+
+  const uint64_t code_physical_page = alloc_page(allocator);
+  const uint64_t stack_physical_page = alloc_page(allocator);
+  if (!page_is_directly_accessible_in_boot_identity_map(code_physical_page) ||
+      !page_is_directly_accessible_in_boot_identity_map(stack_physical_page)) {
+    return false;
+  }
+
+  const size_t program_size = user_mode_smoke_program_size();
+  if (program_size == 0 || program_size > kPageSize) {
+    return false;
+  }
+
+  memory_set(reinterpret_cast<void*>(static_cast<uintptr_t>(code_physical_page)),
+             0, kPageSize);
+  memory_copy(reinterpret_cast<void*>(static_cast<uintptr_t>(code_physical_page)),
+              user_mode_smoke_program_bytes(), program_size);
+  memory_set(reinterpret_cast<void*>(static_cast<uintptr_t>(stack_physical_page)),
+             0, kPageSize);
+
+  if (!address_space_map_user_page(&user_space, allocator,
+                                   kUserModeCodeVirtualAddress,
+                                   code_physical_page, 0)) {
+    return false;
+  }
+
+  if (!address_space_map_user_page(&user_space, allocator,
+                                   kUserModeStackPageVirtualAddress,
+                                   stack_physical_page,
+                                   kPageWritable)) {
+    return false;
+  }
+
+  serial_write_string("user_mode_root=0x");
+  serial_write_hex64(user_space.root_physical_address);
+  serial_write_crlf();
+
+  serial_write_string("user_mode_code_phys=0x");
+  serial_write_hex64(code_physical_page);
+  serial_write_crlf();
+
+  serial_write_string("user_mode_stack_phys=0x");
+  serial_write_hex64(stack_physical_page);
+  serial_write_crlf();
+
+  serial_write_string("user_mode_entry=0x");
+  serial_write_hex64(kUserModeCodeVirtualAddress);
+  serial_write_crlf();
+
+  serial_write_string("user_mode_stack_top=0x");
+  serial_write_hex64(kUserModeInitialStackPointer);
+  serial_write_crlf();
+
+  serial_write_string("user_mode_program_size=");
+  serial_write_u64(program_size);
+  serial_write_crlf();
+
+  UserModeLaunchContext session;
+  memory_set(&session, 0, sizeof(session));
+  session.kernel_root_physical = paging_current_root_physical();
+  session.user_root_physical = user_space.root_physical_address;
+  session.user_instruction_pointer = kUserModeCodeVirtualAddress;
+  session.user_stack_pointer = kUserModeInitialStackPointer;
+  session.user_rflags =
+      (read_rflags() | kUserModeRequiredRflags) & ~(1ULL << 9);
+  session.user_code_selector = kUserCodeSelectorRpl3;
+  session.user_stack_selector = kUserDataSelectorRpl3;
+  session.return_value = 0;
+
+  g_active_user_mode_session = &session;
+  const uint64_t return_value = user_mode_enter(&session);
+  g_active_user_mode_session = nullptr;
+  session.return_value = return_value;
+  const uint64_t return_cs =
+      return_value & kUserModeReturnCodeSelectorMask;
+  const uint64_t return_flags =
+      return_value >> kUserModeReturnResultShift;
+
+  serial_write_string("user_mode_return_cs=0x");
+  serial_write_hex64(return_cs);
+  serial_write_crlf();
+
+  serial_write_string("user_mode_return_cpl=");
+  serial_write_u64(return_cs & 0x3);
+  serial_write_crlf();
+
+  serial_write_string("user_mode_return_flags=0x");
+  serial_write_hex64(return_flags);
+  serial_write_crlf();
+
+  const bool ok =
+      return_cs == kUserModeExpectedCodeSelector &&
+      (return_cs & 0x3) == kUserModeExpectedCpl &&
+      return_flags == kUserModeExpectedResultFlags;
+  if (ok) {
+    serial_write_string("user mode ok");
+    serial_write_crlf();
+  }
+
+  return ok;
 }
 
 // 这里用两次堆分配证明两件事：
@@ -2513,6 +2891,216 @@ bool run_scheduler_smoke_test() {
   return ok;
 }
 
+// 这一轮不再只满足于“kernel_main 亲自调一次 user_mode_enter 就算进过用户态”，
+// 而是要更进一步证明：
+// 1. scheduler 现在真的能持有一条 user thread
+// 2. 这条线程有自己的 user process / address space
+// 3. 用户态 `exit` 返回后，控制流会先回到线程自己的内核栈，再由 scheduler 正式回收线程
+bool run_scheduler_user_thread_smoke_test(PageAllocator* allocator,
+                                          SyscallContext* context,
+                                          FileDescriptorTable* fd_table) {
+  if (allocator == nullptr ||
+      context == nullptr ||
+      fd_table == nullptr ||
+      !scheduler_is_ready(&g_scheduler) ||
+      scheduler_current_thread(&g_scheduler) != nullptr ||
+      !initialize_syscall_context(context, fd_table) ||
+      !install_syscall_write_handler(context, syscall_output_write, nullptr) ||
+      !install_syscall_dispatch_context(context) ||
+      !syscall_dispatch_is_ready()) {
+    return false;
+  }
+
+  if (sys_chdir(context, "/docs") != kSyscallOk) {
+    return false;
+  }
+
+  const char* const kernel_cwd_before =
+      syscall_current_working_directory(context);
+  if (kernel_cwd_before == nullptr) {
+    return false;
+  }
+
+  ProcessControlBlock* const process =
+      scheduler_create_user_process(&g_scheduler, allocator, "user-smoke");
+  if (process == nullptr ||
+      !scheduler_initialize_process_syscall_view(process, &g_vfs,
+                                                 syscall_output_write,
+                                                 nullptr)) {
+    return false;
+  }
+
+  const char* const process_cwd_before =
+      syscall_current_working_directory(&process->syscall_context);
+  if (process_cwd_before == nullptr) {
+    return false;
+  }
+
+  const uint64_t code_physical_page = alloc_page(allocator);
+  const uint64_t stack_physical_page = alloc_page(allocator);
+  if (!page_is_directly_accessible_in_boot_identity_map(code_physical_page) ||
+      !page_is_directly_accessible_in_boot_identity_map(stack_physical_page)) {
+    return false;
+  }
+
+  const size_t program_size = user_mode_smoke_program_size();
+  if (program_size == 0 || program_size > kPageSize) {
+    return false;
+  }
+
+  memory_set(reinterpret_cast<void*>(static_cast<uintptr_t>(code_physical_page)),
+             0, kPageSize);
+  memory_copy(reinterpret_cast<void*>(static_cast<uintptr_t>(code_physical_page)),
+              user_mode_smoke_program_bytes(), program_size);
+  memory_set(reinterpret_cast<void*>(static_cast<uintptr_t>(stack_physical_page)),
+             0, kPageSize);
+
+  if (!address_space_map_user_page(&process->address_space, allocator,
+                                   kUserModeCodeVirtualAddress,
+                                   code_physical_page, 0)) {
+    return false;
+  }
+
+  if (!address_space_map_user_page(&process->address_space, allocator,
+                                   kUserModeStackPageVirtualAddress,
+                                   stack_physical_page,
+                                   kPageWritable)) {
+    return false;
+  }
+
+  const uint64_t user_rflags =
+      (read_rflags() | kUserModeRequiredRflags) & ~(1ULL << 9);
+  ThreadControlBlock* const thread =
+      scheduler_create_user_thread(&g_scheduler, process,
+                                   allocator,
+                                   "user-main",
+                                   kUserModeCodeVirtualAddress,
+                                   kUserModeInitialStackPointer,
+                                   user_rflags,
+                                   kThreadPriorityNormal);
+  if (thread == nullptr) {
+    return false;
+  }
+
+  serial_write_string("user_thread_pid=");
+  serial_write_u64(process->pid);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_tid=");
+  serial_write_u64(thread->tid);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_kernel_cwd_before=");
+  serial_write_string(kernel_cwd_before);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_process_cwd_before=");
+  serial_write_string(process_cwd_before);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_root=0x");
+  serial_write_hex64(process->address_space.root_physical_address);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_code_phys=0x");
+  serial_write_hex64(code_physical_page);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_stack_phys=0x");
+  serial_write_hex64(stack_physical_page);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_entry=0x");
+  serial_write_hex64(kUserModeCodeVirtualAddress);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_stack_top=0x");
+  serial_write_hex64(kUserModeInitialStackPointer);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_program_size=");
+  serial_write_u64(program_size);
+  serial_write_crlf();
+
+  const bool run_ok = run_scheduler_phase_until_idle();
+  const uint64_t return_value = thread->user_mode.return_value;
+  const uint64_t return_cs =
+      return_value & kUserModeReturnCodeSelectorMask;
+  const uint64_t return_flags =
+      return_value >> kUserModeReturnResultShift;
+  const char* const kernel_cwd_after =
+      syscall_current_working_directory(context);
+  const char* const process_cwd_after =
+      syscall_current_working_directory(&process->syscall_context);
+  const uint32_t process_open_count_after =
+      fd_open_count(&process->file_descriptors);
+
+  serial_write_string("user_thread_return_cs=0x");
+  serial_write_hex64(return_cs);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_return_cpl=");
+  serial_write_u64(return_cs & 0x3);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_return_flags=0x");
+  serial_write_hex64(return_flags);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_kernel_cwd_after=");
+  serial_write_string(kernel_cwd_after != nullptr ? kernel_cwd_after : "<null>");
+  serial_write_crlf();
+
+  serial_write_string("user_thread_process_cwd_after=");
+  serial_write_string(process_cwd_after != nullptr ? process_cwd_after : "<null>");
+  serial_write_crlf();
+
+  serial_write_string("user_thread_open_count=");
+  serial_write_u64(process_open_count_after);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_process_state=");
+  serial_write_string(scheduler_process_state_name(process->state));
+  serial_write_crlf();
+
+  serial_write_string("user_thread_state=");
+  serial_write_string(scheduler_thread_state_name(thread->state));
+  serial_write_crlf();
+
+  const bool ok =
+      run_ok &&
+      process->pid == 5 &&
+      thread->tid == 11 &&
+      strings_equal(kernel_cwd_before, "/docs") &&
+      strings_equal(process_cwd_before, "/") &&
+      return_cs == kUserModeExpectedCodeSelector &&
+      (return_cs & 0x3) == kUserModeExpectedCpl &&
+      return_flags == kUserModeExpectedResultFlags &&
+      kernel_cwd_after != nullptr &&
+      process_cwd_after != nullptr &&
+      strings_equal(kernel_cwd_after, "/docs") &&
+      strings_equal(process_cwd_after, "/") &&
+      process_open_count_after == 0 &&
+      process->state == kProcessStateExited &&
+      thread->state == kThreadStateFinished &&
+      scheduler_current_thread(&g_scheduler) == nullptr &&
+      scheduler_ready_thread_count(&g_scheduler) == 0 &&
+      scheduler_live_thread_count(&g_scheduler) == 0;
+
+  const bool restored_kernel_context =
+      initialize_syscall_context(context, fd_table) &&
+      install_syscall_write_handler(context, syscall_output_write, nullptr) &&
+      install_syscall_dispatch_context(context) &&
+      syscall_dispatch_is_ready();
+
+  if (ok && restored_kernel_context) {
+    serial_write_string("user thread ok");
+    serial_write_crlf();
+  }
+
+  return ok && restored_kernel_context;
+}
+
 void stdin_blocking_reader_thread_entry(void* raw_context) {
   auto* const context =
       static_cast<StdinBlockingReaderContext*>(raw_context);
@@ -2901,6 +3489,7 @@ bool run_console_input_smoke_test() {
     return false;  // 先确认上一轮字符测试已经把缓冲区消费干净。
   }
 
+  console_set_viewport(kConsoleInsetStartColumn, kConsoleInsetEndColumn);
   initialize_console(kConsoleTestStartRow, kShellTextColor);
   console_write_string("input> ");  // 这一轮先给最小控制台写一个提示符，模拟将来的命令行入口。
 
@@ -3084,6 +3673,7 @@ bool run_shell_smoke_test(const BootInfo* boot_info,
                           const BootVolume* boot_volume,
                           const BlockDevice* block_device,
                           SyscallContext* syscall_context) {
+  console_set_viewport(kConsoleInsetStartColumn, kConsoleInsetEndColumn);
   initialize_console(kShellTestStartRow, kShellTextColor);
 
   if (!initialize_shell(&g_shell, boot_info, &g_page_allocator, &g_kernel_heap,
@@ -3091,11 +3681,6 @@ bool run_shell_smoke_test(const BootInfo* boot_info,
                         &kShellOutput)) {
     return false;
   }
-
-  ConsoleHistoryProvider history_provider;
-  history_provider.entry_count = shell_history_provider_count;
-  history_provider.entry_text = shell_history_provider_text;
-  history_provider.context = &g_shell;
 
   uint64_t expected_irq_count = keyboard_irq_count();
   enable_interrupts();
@@ -3105,7 +3690,6 @@ bool run_shell_smoke_test(const BootInfo* boot_info,
        ++command_index) {
     const ShellSmokeCommand& command = kShellSmokeCommands[command_index];
 
-    shell_print_prompt(&g_shell);
     if (!inject_scancode_sequence("shell_inject",
                                   command.scancodes,
                                   command.scancode_count,
@@ -3115,9 +3699,10 @@ bool run_shell_smoke_test(const BootInfo* boot_info,
     }
 
     char line_buffer[kShellLineBufferCapacity];
-    const size_t line_length =
-        console_read_line_with_history(line_buffer, sizeof(line_buffer),
-                                       &history_provider);
+    size_t line_length = 0;
+    const ShellCommandResult result =
+        shell_run_once(&g_shell, line_buffer, sizeof(line_buffer),
+                       &line_length);
 
     serial_write_string("shell_line=");
     serial_write_string(line_buffer);
@@ -3126,9 +3711,6 @@ bool run_shell_smoke_test(const BootInfo* boot_info,
     serial_write_string("shell_line_length=");
     serial_write_u64(line_length);
     serial_write_crlf();
-
-    const ShellCommandResult result =
-        shell_execute_line(&g_shell, line_buffer);
 
     serial_write_string("shell_result=");
     serial_write_string(shell_command_result_name(result));
@@ -3146,6 +3728,67 @@ bool run_shell_smoke_test(const BootInfo* boot_info,
   return keyboard_irq_count() == expected_irq_count &&
          keyboard_buffered_char_count() == 0;
 }
+
+#if !defined(OS64_ENABLE_PAGE_FAULT_SMOKE) && !defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
+void kernel_shell_thread_entry(void* raw_context) {
+  auto* const context = static_cast<KernelShellThreadContext*>(raw_context);
+  if (context == nullptr || context->shell == nullptr) {
+    return;
+  }
+
+  const ThreadControlBlock* const current_thread =
+      scheduler_current_thread(&g_scheduler);
+  if (current_thread != nullptr) {
+    serial_write_string("shell_thread_started_pid=");
+    serial_write_u64(current_thread->owner != nullptr
+                         ? current_thread->owner->pid
+                         : 0);
+    serial_write_crlf();
+
+    serial_write_string("shell_thread_started_tid=");
+    serial_write_u64(current_thread->tid);
+    serial_write_crlf();
+  }
+
+  char line_buffer[kShellLineBufferCapacity];
+  shell_run_forever(context->shell, line_buffer, sizeof(line_buffer));
+}
+
+bool start_kernel_shell_under_scheduler() {
+  if (!scheduler_is_ready(&g_scheduler) || !interrupts_are_enabled()) {
+    return false;
+  }
+
+  static KernelShellThreadContext shell_context;
+  shell_context.shell = &g_shell;
+
+  ProcessControlBlock* const shell_process =
+      scheduler_create_kernel_process(&g_scheduler, "kernel-shell");
+  if (shell_process == nullptr) {
+    return false;
+  }
+
+  ThreadControlBlock* const shell_thread =
+      scheduler_create_kernel_thread(&g_scheduler, shell_process,
+                                     "shell-main",
+                                     kernel_shell_thread_entry,
+                                     &shell_context, 0,
+                                     kThreadPriorityNormal);
+  if (shell_thread == nullptr) {
+    return false;
+  }
+
+  serial_write_string("shell_process_pid=");
+  serial_write_u64(shell_process->pid);
+  serial_write_crlf();
+
+  serial_write_string("shell_thread_tid=");
+  serial_write_u64(shell_thread->tid);
+  serial_write_crlf();
+
+  return true;
+}
+#endif
 
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
 void run_invalid_opcode_smoke_test() {
@@ -3171,28 +3814,69 @@ void run_page_fault_smoke_test() {
 
 }  // namespace
 
+extern "C" bool kernel_user_mode_exit_is_armed() {
+  if (g_active_user_mode_session != nullptr) {
+    return true;
+  }
+
+  const ThreadControlBlock* const current_thread = scheduler_active_thread();
+  return current_thread != nullptr &&
+         current_thread->execution_mode == kThreadExecutionModeUser;
+}
+
+extern "C" [[noreturn]] void kernel_handle_user_mode_exit(
+    uint64_t return_value) {
+  if (g_active_user_mode_session != nullptr) {
+    UserModeLaunchContext* const session = g_active_user_mode_session;
+    session->return_value = return_value;
+    g_active_user_mode_session = nullptr;
+    user_mode_resume_kernel(session->kernel_resume_stack_pointer,
+                            session->kernel_root_physical,
+                            return_value);
+  }
+
+  ThreadControlBlock* const current_thread = scheduler_active_thread();
+  if (current_thread != nullptr &&
+      current_thread->execution_mode == kThreadExecutionModeUser) {
+    current_thread->user_mode.return_value = return_value;
+    user_mode_resume_kernel(current_thread->user_mode.kernel_resume_stack_pointer,
+                            current_thread->user_mode.kernel_root_physical,
+                            return_value);
+  }
+
+  for (;;) {
+    wait_for_interrupt();
+  }
+}
+
 extern "C" void kernel_main(const BootInfo* boot_info) {
-  write_status_line(4, "hello from os64 kernel");
+  draw_terminal_chrome();
+  write_status_line(3, "hello from os64 kernel");
+
+  if (!run_tss_smoke_test()) {
+    write_status_line(kCoreStatusRow, "tss bad");
+    return;
+  }
 
   if (!initialize_idt()) {
-    write_status_line(5, "idt bad");
+    write_status_line(kCoreStatusRow, "idt bad");
     return;
   }
 
-  write_status_line(5, "idt ok");
+  write_status_line(kCoreStatusRow, "idt ok");
 
   if (!is_boot_info_valid(boot_info)) {
-    write_status_line(6, "boot info bad");
+    write_status_line(kCoreStatusRow, "boot info bad");
     return;
   }
 
-  write_status_line(6, "boot info ok");
+  write_status_line(kCoreStatusRow, "boot info ok");
 
   log_e820_entries(boot_info);                 // 第一步：真正把 BIOS 给的内存地图读出来。
-  write_status_line(7, "e820 parse ok");
+  write_status_line(kCoreStatusRow, "e820 parse ok");
 
   if (!initialize_page_allocator(&g_page_allocator, boot_info)) {
-    write_status_line(8, "page allocator bad");
+    write_status_line(kMemoryStatusRow, "page allocator bad");
     return;
   }
 
@@ -3203,136 +3887,181 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
   serial_write_u64(count_free_pages(&g_page_allocator));
   serial_write_crlf();
 
-  write_status_line(8, "page allocator ok");
+  write_status_line(kMemoryStatusRow, "page allocator ok");
 
   if (!run_paging_smoke_test(&g_page_allocator)) {
-    write_status_line(9, "map_page bad");
+    write_status_line(kMemoryStatusRow, "map_page bad");
     return;
   }
 
-  write_status_line(9, "map_page ok");
+  write_status_line(kMemoryStatusRow, "map_page ok");
+
+  if (!run_address_space_smoke_test(&g_page_allocator)) {
+    write_status_line(kMemoryStatusRow, "addr space bad");
+    return;
+  }
+
+  write_status_line(kMemoryStatusRow, "addr space ok");
 
   if (!initialize_kernel_heap(&g_kernel_heap, &g_page_allocator)) {
-    write_status_line(10, "heap init bad");
+    write_status_line(kMemoryStatusRow, "heap init bad");
     return;
   }
 
-  write_status_line(10, "heap init ok");
+  write_status_line(kMemoryStatusRow, "heap init ok");
 
   if (!run_heap_smoke_test(&g_kernel_heap)) {
-    write_status_line(11, "heap alloc bad");
+    write_status_line(kMemoryStatusRow, "heap alloc bad");
     return;
   }
 
-  write_status_line(11, "heap alloc ok");
+  write_status_line(kMemoryStatusRow, "heap alloc ok");
 
   if (!run_kernel_memory_smoke_test(&g_page_allocator, &g_kernel_heap)) {
-    write_status_line(12, "kernel memory bad");
+    write_status_line(kMemoryStatusRow, "kernel memory bad");
     return;
   }
 
-  write_status_line(12, "kernel memory ok");
+  write_status_line(kMemoryStatusRow, "kernel memory ok");
 
   if (!run_boot_volume_smoke_test(boot_info, &g_boot_volume,
                                   &g_boot_block_device)) {
-    write_status_line(13, "boot volume bad");
+    write_status_line(kStorageStatusRow, "boot volume bad");
     return;
   }
 
-  write_status_line(13, "boot volume ok");
+  write_status_line(kStorageStatusRow, "boot volume ok");
 
   if (!run_filesystem_smoke_test(&g_boot_block_device, &g_os64fs)) {
-    write_status_line(14, "filesystem bad");
+    write_status_line(kStorageStatusRow, "filesystem bad");
     return;
   }
 
   if (!run_file_handle_smoke_test(&g_os64fs)) {
-    write_status_line(14, "file layer bad");
+    write_status_line(kStorageStatusRow, "file layer bad");
     return;
   }
 
   if (!run_directory_handle_smoke_test(&g_os64fs)) {
-    write_status_line(14, "directory layer bad");
+    write_status_line(kStorageStatusRow, "directory layer bad");
     return;
   }
 
   if (!run_vfs_smoke_test(&g_vfs, &g_os64fs)) {
-    write_status_line(14, "vfs bad");
+    write_status_line(kStorageStatusRow, "vfs bad");
     return;
   }
 
   if (!run_file_descriptor_smoke_test(&g_fd_table, &g_vfs)) {
-    write_status_line(14, "fd layer bad");
+    write_status_line(kStorageStatusRow, "fd layer bad");
     return;
   }
 
   if (!run_syscall_smoke_test(&g_syscall_context, &g_fd_table)) {
-    write_status_line(14, "syscall layer bad");
+    write_status_line(kStorageStatusRow, "syscall layer bad");
     return;
   }
 
   if (!run_int80_syscall_smoke_test(&g_syscall_context, &g_fd_table)) {
-    write_status_line(14, "int80 syscall bad");
+    write_status_line(kStorageStatusRow, "int80 syscall bad");
     return;
   }
 
-  write_status_line(14, "filesystem ok");
+  if (!run_user_mode_smoke_test(&g_page_allocator,
+                                &g_syscall_context,
+                                &g_fd_table)) {
+    write_status_line(kStorageStatusRow, "user mode bad");
+    return;
+  }
+
+  write_status_line(kStorageStatusRow, "filesystem ok");
 
   if (!run_timer_smoke_test()) {
-    write_status_line(15, "timer bad");
+    write_status_line(kRuntimeStatusRow, "timer bad");
     return;
   }
 
-  write_status_line(15, "timer ok");
+  write_status_line(kRuntimeStatusRow, "timer ok");
 
   if (!run_scheduler_smoke_test()) {
-    write_status_line(16, "scheduler bad");
+    write_status_line(kRuntimeStatusRow, "scheduler bad");
     return;
   }
 
-  write_status_line(16, "scheduler ok");
+  write_status_line(kRuntimeStatusRow, "scheduler ok");
 
   if (!run_keyboard_smoke_test()) {
-    write_status_line(17, "keyboard bad");
+    write_status_line(kInputStatusRow, "keyboard bad");
     return;
   }
 
   if (!run_stdin_syscall_smoke_test(&g_syscall_context, &g_fd_table)) {
-    write_status_line(17, "stdin syscall bad");
+    write_status_line(kInputStatusRow, "stdin syscall bad");
     return;
   }
 
-  write_status_line(17, "keyboard ok");
+  write_status_line(kInputStatusRow, "keyboard ok");
 
   if (!run_console_input_smoke_test()) {
-    write_status_line(18, "console input bad");
+    write_status_line(kInputStatusRow, "console input bad");
     return;
   }
 
-  write_status_line(18, "console input ok");
+  write_status_line(kInputStatusRow, "console input ok");
 
   if (!run_shell_smoke_test(boot_info, &g_boot_volume,
                             &g_boot_block_device, &g_syscall_context)) {
-    write_status_line(19, "shell bad");
+    write_status_line(kShellStatusRow, "shell bad");
     return;
   }
 
-  write_status_line(19, "shell ok");
+  if (!run_scheduler_user_thread_smoke_test(&g_page_allocator,
+                                            &g_syscall_context,
+                                            &g_fd_table)) {
+    write_status_line(kShellStatusRow, "user thread bad");
+    return;
+  }
+
+  write_status_line(kShellStatusRow, "shell ok");
 
 #if defined(OS64_ENABLE_PAGE_FAULT_SMOKE)
-  write_status_line(20, "page fault smoke");
+  write_status_line(kShellStatusRow, "page fault smoke");
   run_page_fault_smoke_test();
 #endif
 
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
-  write_status_line(20, "invalid opcode smoke");
+  write_status_line(kShellStatusRow, "invalid opcode smoke");
   run_invalid_opcode_smoke_test();
 #endif
 
 #if !defined(OS64_ENABLE_PAGE_FAULT_SMOKE) && !defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
-  enable_interrupts();  // 真正进入交互 shell 前重新开中断，不然 `hlt` 等键盘时不会再醒。
-  char shell_line_buffer[kShellLineBufferCapacity];
-  shell_run_forever(&g_shell, shell_line_buffer, sizeof(shell_line_buffer));
+  if (!initialize_shell(&g_shell, boot_info, &g_page_allocator, &g_kernel_heap,
+                        &g_boot_volume, &g_boot_block_device,
+                        &g_syscall_context, &kShellOutput)) {
+    write_status_line(kShellStatusRow, "shell reset bad");
+    return;
+  }
+
+  enable_interrupts();  // 下面要把 shell 作为真实内核线程交给调度器，所以先把 IRQ 重新打开。
+  if (!start_kernel_shell_under_scheduler()) {
+    disable_interrupts();
+    write_status_line(kShellStatusRow, "shell thread bad");
+    return;
+  }
+
+  write_status_line(kShellStatusRow, "shell thread ok");
+
+  // 这一轮不再让 kernel_main 自己直接死循环跑 shell；
+  // 而是把 shell-main 线程送进调度器，让它在等输入时可以真正 block。
+  if (!scheduler_run_until_idle(&g_scheduler)) {
+    disable_interrupts();
+    write_status_line(kShellStatusRow, "shell sched bad");
+    return;
+  }
+
+  disable_interrupts();
+  write_status_line(kShellStatusRow, "shell thread exit");
+  draw_terminal_overview_panel();
 #endif
 }
 
