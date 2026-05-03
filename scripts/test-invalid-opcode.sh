@@ -50,13 +50,24 @@ serial_log_has_expected_markers() {
     && grep -q "user_thread_stack_phys=0x" "$serial_log" \
     && grep -q "user_thread_entry=0x0000000000400000" "$serial_log" \
     && grep -q "user_thread_stack_top=0x0000000000800000" "$serial_log" \
+    && grep -q "user_thread_helper_tid=12" "$serial_log" \
+    && grep -q "user_thread_kernel_entry_stack_top=0x" "$serial_log" \
     && grep -q "user_thread_program_size=" "$serial_log" \
+    && grep -q "user_mode_yield_before=1" "$serial_log" \
+    && grep -q "user_mode_yield_after=1" "$serial_log" \
     && grep -q "user_thread_return_cs=0x0000000000000043" "$serial_log" \
     && grep -q "user_thread_return_cpl=3" "$serial_log" \
-    && grep -q "user_thread_return_flags=0x0000000000000003" "$serial_log" \
+    && grep -q "user_thread_return_flags=0x0000000000000007" "$serial_log" \
     && grep -q "user_thread_kernel_cwd_after=/docs" "$serial_log" \
     && grep -q "user_thread_process_cwd_after=/" "$serial_log" \
     && grep -q "user_thread_open_count=0" "$serial_log" \
+    && grep -q "user_thread_tss_rsp0=0x" "$serial_log" \
+    && grep -q "user_thread_helper_runs=1" "$serial_log" \
+    && grep -q "user_thread_yield_count=1" "$serial_log" \
+    && grep -q "user_thread_trap_cs=0x0000000000000043" "$serial_log" \
+    && grep -q "user_thread_trap_ss=0x000000000000003B" "$serial_log" \
+    && grep -q "user_thread_trap_rip=0x000000000040" "$serial_log" \
+    && grep -q "user_thread_trap_rsp=0x0000000000800000" "$serial_log" \
     && grep -q "user_thread_process_state=exited" "$serial_log" \
     && grep -q "user_thread_state=finished" "$serial_log" \
     && grep -q "user thread ok" "$serial_log" \

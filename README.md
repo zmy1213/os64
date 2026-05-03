@@ -147,10 +147,12 @@ make clean
 - `int80_syscall ok`
 - `scheduler ok`
 - `user thread ok`
+- `user_mode_yield_before=1`
+- `user_mode_yield_after=1`
 - `shell ok`
 - `shell_process_pid=6`
-- `shell_thread_tid=12`
-- `shell_thread_started_tid=12`
+- `shell_thread_tid=13`
+- `shell_thread_started_tid=13`
 
 调度器这一轮启动时还会额外打印 3 组关键自测日志：
 

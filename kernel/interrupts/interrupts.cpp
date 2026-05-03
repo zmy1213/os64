@@ -104,6 +104,7 @@ alignas(16) uint8_t g_kernel_tss_rsp0_stack[kKernelTssStackBytes];
 alignas(16) uint8_t g_kernel_double_fault_ist_stack[kKernelTssStackBytes];
 alignas(16) uint64_t g_kernel_gdt[kKernelGdtQwordCount];
 bool g_tss_ready = false;
+uint64_t g_kernel_tss_default_rsp0 = 0;  // 先记住“系统最初那根通用 RSP0”，后面非 user thread 运行时可以回退到它。
 
 void set_idt_gate(uint8_t vector, void (*handler)(),
                   uint8_t type_attributes = kInterruptGateType,
@@ -216,6 +217,7 @@ bool initialize_tss() {
   g_kernel_tss.rsp0 =
       stack_top_address(g_kernel_tss_rsp0_stack,
                         sizeof(g_kernel_tss_rsp0_stack));   // 以后 ring 3 -> ring 0 时，CPU 先切到这根内核栈。
+  g_kernel_tss_default_rsp0 = g_kernel_tss.rsp0;
   g_kernel_tss.ist1 =
       stack_top_address(g_kernel_double_fault_ist_stack,
                         sizeof(g_kernel_double_fault_ist_stack));  // double fault 单独走应急栈，避免沿用可能已损坏的当前栈。
@@ -250,6 +252,19 @@ uint16_t tss_task_register_selector() {
 
 uint64_t tss_kernel_rsp0() {
   return g_kernel_tss.rsp0;
+}
+
+uint64_t tss_default_kernel_rsp0() {
+  return g_kernel_tss_default_rsp0;
+}
+
+bool tss_set_kernel_rsp0(uint64_t rsp0) {
+  if (!g_tss_ready || rsp0 == 0) {
+    return false;
+  }
+
+  g_kernel_tss.rsp0 = rsp0;
+  return true;
 }
 
 uint64_t tss_double_fault_ist1() {

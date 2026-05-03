@@ -113,6 +113,7 @@ kernel/
 - 第一版 `process/thread/scheduler` + priority/sleep/block/wake 烟测
 - 第一次真正 `iretq` 进入 ring 3，再由用户态 `int 0x80` 打回内核的 smoke test
 - 第一版 scheduler-managed user thread：由调度器把一条 user thread 真正切进 ring 3，并在 `exit` 后正式回收线程
+- 正式 `UserTrapFrame` + 每用户线程独立内核进入栈：user thread 现在能在 syscall 里主动 `yield`，切去 helper thread，再恢复回 ring 3 继续跑
 - 控制台回显 + 最小行输入测试
 - 最小 shell 命令测试
 - shell 当前工作目录 `pwd` / `cd` / 相对路径测试

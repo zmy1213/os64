@@ -90,6 +90,11 @@ struct ThreadControlBlock {
   uint64_t wake_tick;                              // 如果线程在 sleep，这里记录“第几个 tick 应该被唤醒”。
   bool is_idle_thread;                             // idle thread 是特殊线程：永远存在，但不计入普通 live thread。
   UserModeLaunchContext user_mode;                 // 如果这是 user thread，这里就是那份真正会交给 `iretq` 路径的用户态启动现场。
+  void* user_kernel_entry_stack_allocation;        // user thread 需要第二根专用内核进入栈：专门给 TSS.rsp0 接 ring3 -> ring0 的 syscall/interrupt 帧。
+  uint64_t user_kernel_entry_stack_top;            // 这样每次 `int 0x80` 就不会踩坏 `user_mode_enter()` 当初保存的最终返回现场。
+  bool has_user_trap_frame;                        // 当前这条 user thread 最近一次从 ring 3 进内核时，是否已经捕获到一份正式 trap frame。
+  UserTrapFrame user_trap_frame;                   // 最近一次保存下来的用户态寄存器/iret 现场；后面做正式恢复时会靠它。
+  uint64_t user_yield_count;                       // 第一版先单独记“用户线程通过 syscall 主动让出 CPU”多少次，方便 smoke test 观察。
   char name[kSchedulerNameCapacity];               // 线程名字先也做成固定数组，避免早期依赖动态字符串。
 };
 

@@ -82,6 +82,8 @@
    再继续往前，把那次 `kernel_main` 亲自做的一次性 user mode smoke，升级成真正挂在 scheduler 下面的一条 user thread，并让 `exit` 正式回到调度器。
 39. [从“第一版 scheduler-managed user thread”到“每进程 syscall context / fd 视图”](./KERNEL_PROCESS_SYSCALL_CONTEXT_GUIDE.md)
    再继续往前，把还挂在全局变量上的 syscall/fd 视图真正挂进 PCB，让 ring 3 代码通过“当前线程所属进程”拿到自己的 cwd、相对路径和文件句柄视图。
+40. [从“每进程 syscall context / fd 视图”到“正式 UserTrapFrame + 每用户线程内核进入栈 + user yield/resume”](./KERNEL_USER_TRAPFRAME_YIELD_GUIDE.md)
+   再继续往前，把“能进 ring 3、也能拿到自己 syscall 视图”的 user thread，推进成“能在 syscall 里主动 yield、切去别的线程、再恢复回 ring 3 继续跑”，并正式把 trap frame 和 `TSS.rsp0` 这层机器现场做成可解释的数据结构。
 
 一句话记忆这个顺序：
 
@@ -126,4 +128,5 @@ stage1
 -> first real ring 3 entry via iretq + int 0x80 back to kernel
 -> first scheduler-managed user thread with exit back to scheduler
 -> first per-process syscall context and fd view for user processes
+-> formal UserTrapFrame + dedicated per-user-thread kernel-entry stack + user yield/resume path
 ```

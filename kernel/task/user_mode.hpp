@@ -21,6 +21,46 @@ struct UserModeLaunchContext {
   uint64_t return_value;                 // 用户态最后用 `exit` syscall 带回来的值；当前先拿它回传用户态看到的 CS。
 };
 
+// 这是第一版“正式保存下来的用户态 trap frame”。
+// 它不再只保存 `iretq` 需要的最小 5 项，
+// 而是把：
+// - 通用寄存器
+// - vector / error_code
+// - RIP / CS / RFLAGS
+// - 用户态 RSP / SS
+// 一起收下来。
+//
+// 这一轮里它先主要用于：
+// 1. 把 ring 3 -> ring 0 的机器现场真正变成一个明确的数据结构
+// 2. 给后面的“用户线程被挂起后再恢复”铺路
+struct UserTrapFrame {
+  uint64_t r15;
+  uint64_t r14;
+  uint64_t r13;
+  uint64_t r12;
+  uint64_t r11;
+  uint64_t r10;
+  uint64_t r9;
+  uint64_t r8;
+  uint64_t rdi;
+  uint64_t rsi;
+  uint64_t rbp;
+  uint64_t rbx;
+  uint64_t rdx;
+  uint64_t rcx;
+  uint64_t rax;
+  uint64_t vector;
+  uint64_t error_code;
+  uint64_t rip;
+  uint64_t cs;
+  uint64_t rflags;
+  uint64_t rsp;
+  uint64_t ss;
+};
+
+static_assert(sizeof(UserTrapFrame) == 176,
+              "UserTrapFrame layout must stay stable");
+
 static_assert(offsetof(UserModeLaunchContext, kernel_resume_stack_pointer) == 0,
               "UserModeLaunchContext layout must match user_mode_enter");
 static_assert(offsetof(UserModeLaunchContext, kernel_root_physical) == 8,
@@ -47,5 +87,7 @@ extern "C" [[noreturn]] void user_mode_resume_kernel(
     uint64_t return_value);
 extern "C" uint8_t user_mode_smoke_program_start;
 extern "C" uint8_t user_mode_smoke_program_end;
+extern "C" uint8_t user_mode_yield_program_start;
+extern "C" uint8_t user_mode_yield_program_end;
 
 #endif

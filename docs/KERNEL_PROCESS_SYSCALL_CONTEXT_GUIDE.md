@@ -412,7 +412,7 @@ user thread 很容易就会看到：
 - `user_mode_return_flags=0x0000000000000003`
 - `user_thread_kernel_cwd_before=/docs`
 - `user_thread_process_cwd_before=/`
-- `user_thread_return_flags=0x0000000000000003`
+- `user_thread_return_flags=0x0000000000000007`
 - `user_thread_kernel_cwd_after=/docs`
 - `user_thread_process_cwd_after=/`
 - `user_thread_open_count=0`
@@ -438,7 +438,6 @@ user thread 很容易就会看到：
 - ELF 用户程序加载
 - 用户态页错误恢复
 - timer 抢占后返回用户态
-- 每线程独立 `RSP0`
 - 多条 user thread 共享同一进程地址空间
 - 用户态阻塞后的正式恢复路径
 
@@ -461,10 +460,9 @@ user thread 很容易就会看到：
 这一轮把“进程自己的 syscall 视图”立住以后，
 下一步最合理的通常是继续把“用户线程被内核重新接回去”这件事做得更正式：
 
-1. 给 user thread 准备更正式的 trap frame / 返回用户态现场
-2. 开始考虑每线程自己的内核进入栈，而不是全局一份 `TSS.rsp0`
-3. 再往后做更像样的用户程序加载器，而不是只靠内嵌 smoke program
-4. 最后再去碰 `fork/exec/wait`
+1. 这一步后来已经继续推进成“正式 `UserTrapFrame` + 每用户线程独立内核进入栈 + user yield/resume”，可以接着看 [KERNEL_USER_TRAPFRAME_YIELD_GUIDE.md](./KERNEL_USER_TRAPFRAME_YIELD_GUIDE.md)
+2. 再往后做更像样的用户程序加载器，而不是只靠内嵌 smoke program
+3. 最后再去碰 `fork/exec/wait`
 
 一句话记住这一轮：
 

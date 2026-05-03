@@ -294,20 +294,31 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "user_thread_stack_phys=0x" "$SERIAL_LOG" \
   && grep -q "user_thread_entry=0x0000000000400000" "$SERIAL_LOG" \
   && grep -q "user_thread_stack_top=0x0000000000800000" "$SERIAL_LOG" \
+  && grep -q "user_thread_helper_tid=12" "$SERIAL_LOG" \
+  && grep -q "user_thread_kernel_entry_stack_top=0x" "$SERIAL_LOG" \
   && grep -q "user_thread_program_size=" "$SERIAL_LOG" \
+  && grep -q "user_mode_yield_before=1" "$SERIAL_LOG" \
+  && grep -q "user_mode_yield_after=1" "$SERIAL_LOG" \
   && grep -q "user_thread_return_cs=0x0000000000000043" "$SERIAL_LOG" \
   && grep -q "user_thread_return_cpl=3" "$SERIAL_LOG" \
-  && grep -q "user_thread_return_flags=0x0000000000000003" "$SERIAL_LOG" \
+  && grep -q "user_thread_return_flags=0x0000000000000007" "$SERIAL_LOG" \
   && grep -q "user_thread_kernel_cwd_after=/docs" "$SERIAL_LOG" \
   && grep -q "user_thread_process_cwd_after=/" "$SERIAL_LOG" \
   && grep -q "user_thread_open_count=0" "$SERIAL_LOG" \
+  && grep -q "user_thread_tss_rsp0=0x" "$SERIAL_LOG" \
+  && grep -q "user_thread_helper_runs=1" "$SERIAL_LOG" \
+  && grep -q "user_thread_yield_count=1" "$SERIAL_LOG" \
+  && grep -q "user_thread_trap_cs=0x0000000000000043" "$SERIAL_LOG" \
+  && grep -q "user_thread_trap_ss=0x000000000000003B" "$SERIAL_LOG" \
+  && grep -q "user_thread_trap_rip=0x000000000040" "$SERIAL_LOG" \
+  && grep -q "user_thread_trap_rsp=0x0000000000800000" "$SERIAL_LOG" \
   && grep -q "user_thread_process_state=exited" "$SERIAL_LOG" \
   && grep -q "user_thread_state=finished" "$SERIAL_LOG" \
   && grep -q "user thread ok" "$SERIAL_LOG" \
   && grep -q "shell_process_pid=6" "$SERIAL_LOG" \
-  && grep -q "shell_thread_tid=12" "$SERIAL_LOG" \
+  && grep -q "shell_thread_tid=13" "$SERIAL_LOG" \
   && grep -q "shell_thread_started_pid=6" "$SERIAL_LOG" \
-  && grep -q "shell_thread_started_tid=12" "$SERIAL_LOG" \
+  && grep -q "shell_thread_started_tid=13" "$SERIAL_LOG" \
   && grep -q "clear - clear console area" "$SERIAL_LOG" \
   && grep -q "shell_line=mem" "$SERIAL_LOG" \
   && grep -q "mem_free_pages=" "$SERIAL_LOG" \

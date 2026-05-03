@@ -58,8 +58,11 @@ constexpr uint64_t kUserModeReturnCodeSelectorMask = 0xFFFFULL;            // `e
 constexpr uint64_t kUserModeReturnResultShift = 16;                        // 更高位现在拿来塞用户态自检结果。
 constexpr uint64_t kUserModeResultRootCwdOk = 0x1;                         // 用户程序看到的 cwd 必须真的是 `/`。
 constexpr uint64_t kUserModeResultReadmePrefixOk = 0x2;                    // 用户程序必须能用相对路径 `readme.txt` 读到预期前缀。
+constexpr uint64_t kUserModeResultYieldResumeOk = 0x4;                     // 这一步新增：用户线程在 syscall 里让出 CPU 后，回来仍能继续执行。
 constexpr uint64_t kUserModeExpectedResultFlags =
     kUserModeResultRootCwdOk | kUserModeResultReadmePrefixOk;
+constexpr uint64_t kUserModeExpectedYieldResultFlags =
+    kUserModeExpectedResultFlags | kUserModeResultYieldResumeOk;
 constexpr uint64_t kHeapTestSmallPattern = 0xA1B2C3D4E5F60718ULL;      // 小块堆分配测试用的模式值。
 constexpr uint64_t kHeapTestLargePattern0 = 0x0123456789ABCDEFULL;     // 大块堆分配第一页起始位置的模式值。
 constexpr uint64_t kHeapTestLargePattern1 = 0xFEDCBA9876543210ULL;     // 大块堆分配跨页位置的模式值。
@@ -378,6 +381,11 @@ struct SchedulerWakeThreadContext {
   uint64_t wait_ticks;              // 先等几个 tick，再去 wake。
 };
 
+struct SchedulerUserYieldHelperContext {
+  uint64_t observed_tid;            // 证明 helper 真的是单独那条线程在跑。
+  uint64_t run_count;               // 这一步里 helper 至少应该跑 1 次，说明 user thread 确实让出了 CPU。
+};
+
 struct StdinBlockingReaderContext {
   SyscallContext* syscall_context;  // 读 stdin 还是走现有 sys_read 接口，只是现在在调度线程里调用它。
   char character;                   // 被唤醒后真正读到的那个字符。
@@ -620,6 +628,18 @@ size_t user_mode_smoke_program_size() {
       reinterpret_cast<uintptr_t>(&user_mode_smoke_program_start);
   const uintptr_t end =
       reinterpret_cast<uintptr_t>(&user_mode_smoke_program_end);
+  return (end > begin) ? (end - begin) : 0;
+}
+
+const uint8_t* user_mode_yield_program_bytes() {
+  return &user_mode_yield_program_start;
+}
+
+size_t user_mode_yield_program_size() {
+  const uintptr_t begin =
+      reinterpret_cast<uintptr_t>(&user_mode_yield_program_start);
+  const uintptr_t end =
+      reinterpret_cast<uintptr_t>(&user_mode_yield_program_end);
   return (end > begin) ? (end - begin) : 0;
 }
 
@@ -2574,6 +2594,17 @@ void scheduler_wake_thread_entry(void* raw_context) {
   (void)scheduler_yield_current_thread();
 }
 
+void scheduler_user_yield_helper_thread_entry(void* raw_context) {
+  auto* const context =
+      static_cast<SchedulerUserYieldHelperContext*>(raw_context);
+  if (context == nullptr) {
+    return;
+  }
+
+  observe_scheduler_thread_tid(&context->observed_tid);
+  ++context->run_count;
+}
+
 bool run_scheduler_smoke_test() {
   if (!initialize_scheduler(&g_scheduler, kSchedulerTimeSliceTicks)) {
     return false;
@@ -2943,7 +2974,7 @@ bool run_scheduler_user_thread_smoke_test(PageAllocator* allocator,
     return false;
   }
 
-  const size_t program_size = user_mode_smoke_program_size();
+  const size_t program_size = user_mode_yield_program_size();
   if (program_size == 0 || program_size > kPageSize) {
     return false;
   }
@@ -2951,7 +2982,7 @@ bool run_scheduler_user_thread_smoke_test(PageAllocator* allocator,
   memory_set(reinterpret_cast<void*>(static_cast<uintptr_t>(code_physical_page)),
              0, kPageSize);
   memory_copy(reinterpret_cast<void*>(static_cast<uintptr_t>(code_physical_page)),
-              user_mode_smoke_program_bytes(), program_size);
+              user_mode_yield_program_bytes(), program_size);
   memory_set(reinterpret_cast<void*>(static_cast<uintptr_t>(stack_physical_page)),
              0, kPageSize);
 
@@ -2982,12 +3013,28 @@ bool run_scheduler_user_thread_smoke_test(PageAllocator* allocator,
     return false;
   }
 
+  SchedulerUserYieldHelperContext helper_context;
+  memory_set(&helper_context, 0, sizeof(helper_context));
+  ThreadControlBlock* const helper_thread =
+      scheduler_create_kernel_thread(&g_scheduler, process,
+                                     "user-yield-helper",
+                                     scheduler_user_yield_helper_thread_entry,
+                                     &helper_context, kPageSize,
+                                     kThreadPriorityNormal);
+  if (helper_thread == nullptr) {
+    return false;
+  }
+
   serial_write_string("user_thread_pid=");
   serial_write_u64(process->pid);
   serial_write_crlf();
 
   serial_write_string("user_thread_tid=");
   serial_write_u64(thread->tid);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_helper_tid=");
+  serial_write_u64(helper_thread->tid);
   serial_write_crlf();
 
   serial_write_string("user_thread_kernel_cwd_before=");
@@ -3018,6 +3065,10 @@ bool run_scheduler_user_thread_smoke_test(PageAllocator* allocator,
   serial_write_hex64(kUserModeInitialStackPointer);
   serial_write_crlf();
 
+  serial_write_string("user_thread_kernel_entry_stack_top=0x");
+  serial_write_hex64(thread->user_kernel_entry_stack_top);
+  serial_write_crlf();
+
   serial_write_string("user_thread_program_size=");
   serial_write_u64(program_size);
   serial_write_crlf();
@@ -3034,6 +3085,7 @@ bool run_scheduler_user_thread_smoke_test(PageAllocator* allocator,
       syscall_current_working_directory(&process->syscall_context);
   const uint32_t process_open_count_after =
       fd_open_count(&process->file_descriptors);
+  const uint64_t current_tss_rsp0 = tss_kernel_rsp0();
 
   serial_write_string("user_thread_return_cs=0x");
   serial_write_hex64(return_cs);
@@ -3059,6 +3111,34 @@ bool run_scheduler_user_thread_smoke_test(PageAllocator* allocator,
   serial_write_u64(process_open_count_after);
   serial_write_crlf();
 
+  serial_write_string("user_thread_tss_rsp0=0x");
+  serial_write_hex64(current_tss_rsp0);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_helper_runs=");
+  serial_write_u64(helper_context.run_count);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_yield_count=");
+  serial_write_u64(thread->user_yield_count);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_trap_cs=0x");
+  serial_write_hex64(thread->user_trap_frame.cs);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_trap_ss=0x");
+  serial_write_hex64(thread->user_trap_frame.ss);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_trap_rip=0x");
+  serial_write_hex64(thread->user_trap_frame.rip);
+  serial_write_crlf();
+
+  serial_write_string("user_thread_trap_rsp=0x");
+  serial_write_hex64(thread->user_trap_frame.rsp);
+  serial_write_crlf();
+
   serial_write_string("user_thread_process_state=");
   serial_write_string(scheduler_process_state_name(process->state));
   serial_write_crlf();
@@ -3071,18 +3151,32 @@ bool run_scheduler_user_thread_smoke_test(PageAllocator* allocator,
       run_ok &&
       process->pid == 5 &&
       thread->tid == 11 &&
+      helper_thread->tid == 12 &&
       strings_equal(kernel_cwd_before, "/docs") &&
       strings_equal(process_cwd_before, "/") &&
       return_cs == kUserModeExpectedCodeSelector &&
       (return_cs & 0x3) == kUserModeExpectedCpl &&
-      return_flags == kUserModeExpectedResultFlags &&
+      return_flags == kUserModeExpectedYieldResultFlags &&
       kernel_cwd_after != nullptr &&
       process_cwd_after != nullptr &&
       strings_equal(kernel_cwd_after, "/docs") &&
       strings_equal(process_cwd_after, "/") &&
       process_open_count_after == 0 &&
+      current_tss_rsp0 == thread->user_kernel_entry_stack_top &&
+      helper_context.observed_tid == helper_thread->tid &&
+      helper_context.run_count == 1 &&
+      thread->user_yield_count == 1 &&
+      thread->yield_count == 1 &&
+      thread->has_user_trap_frame &&
+      thread->user_trap_frame.vector == kSyscallInterruptVector &&
+      thread->user_trap_frame.cs == kUserCodeSelectorRpl3 &&
+      thread->user_trap_frame.ss == kUserDataSelectorRpl3 &&
+      thread->user_trap_frame.rip >= kUserModeCodeVirtualAddress &&
+      thread->user_trap_frame.rsp >= kUserModeStackPageVirtualAddress &&
+      thread->user_trap_frame.rsp <= kUserModeInitialStackPointer &&
       process->state == kProcessStateExited &&
       thread->state == kThreadStateFinished &&
+      helper_thread->state == kThreadStateFinished &&
       scheduler_current_thread(&g_scheduler) == nullptr &&
       scheduler_ready_thread_count(&g_scheduler) == 0 &&
       scheduler_live_thread_count(&g_scheduler) == 0;

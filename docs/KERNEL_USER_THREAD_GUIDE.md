@@ -433,7 +433,6 @@ user thread 进入 ring 3
 
 还没做的包括：
 
-- 每线程独立 `RSP0`
 - 用户线程被 timer 抢占后再返回用户态
 - 多条 user thread 共存
 - 用户线程阻塞后再恢复
@@ -460,9 +459,8 @@ user thread 进入 ring 3
 而是继续把 user thread 变得更“正式”：
 
 1. 这一步后来已经继续推进成“每进程独立 syscall context / fd 表”，可以接着看 [KERNEL_PROCESS_SYSCALL_CONTEXT_GUIDE.md](./KERNEL_PROCESS_SYSCALL_CONTEXT_GUIDE.md)
-2. 再给 user thread 准备更正式的 trap frame / 返回用户态现场
-3. 开始考虑每线程自己的内核进入栈，而不是全局一份 `TSS.rsp0`
-4. 再往后才是真正的 ELF 用户程序加载和用户地址空间布局升级
+2. 这一步后来又继续推进成“正式 `UserTrapFrame` + 每用户线程独立内核进入栈 + user yield/resume”，可以接着看 [KERNEL_USER_TRAPFRAME_YIELD_GUIDE.md](./KERNEL_USER_TRAPFRAME_YIELD_GUIDE.md)
+3. 再往后才是真正的 ELF 用户程序加载和用户地址空间布局升级
 
 一句话记住这一轮：
 

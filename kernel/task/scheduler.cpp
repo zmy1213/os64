@@ -221,6 +221,26 @@ void mark_thread_running(SchedulerState* scheduler,
     return;
   }
 
+  // 以后如果这条线程此刻正准备跑在 ring 3，
+  // 下一次从用户态打进内核时，CPU 就必须先切到“它自己那根专用内核进入栈”。
+  //
+  // 注意这里不能再复用 user thread 启动时那根 scheduler/bootstrap 栈。
+  // 因为 `user_mode_enter()` 把“最后要退回哪条内核栈”的返回现场也压在那根栈上；
+  // 如果每次 syscall 都继续把 trap frame 压到同一页顶端，
+  // 最终 `exit` 时那份最初保存的返回现场就会被踩坏。
+  //
+  // 所以 user thread 现在明确拆成两根栈：
+  // - `stack_top`：给 scheduler/bootstrap + `user_mode_enter()` 最终返回
+  // - `user_kernel_entry_stack_top`：专门给 TSS.rsp0 接 ring 3 -> ring 0 的入口现场
+  //
+  // 对普通 kernel thread 则继续回退到初始化 TSS 时那根默认 RSP0。
+  if (thread->execution_mode == kThreadExecutionModeUser &&
+      thread->user_kernel_entry_stack_top != 0) {
+    (void)tss_set_kernel_rsp0(thread->user_kernel_entry_stack_top);
+  } else {
+    (void)tss_set_kernel_rsp0(tss_default_kernel_rsp0());
+  }
+
   scheduler->current_thread = thread;
   scheduler->remaining_slice_ticks = scheduler->time_slice_ticks;
   scheduler->preempt_requested = false;
@@ -493,9 +513,38 @@ ThreadControlBlock* scheduler_create_kernel_thread(
     stack_bytes = kMinimumThreadStackBytes;
   }
 
-  void* const stack_allocation = kmalloc_aligned(stack_bytes, 16);
-  if (stack_allocation == nullptr) {
-    return nullptr;
+  // 如果这是一条“挂在 user process 下面、但自己跑在 ring 0”的 helper thread，
+  // 它很可能会在当前 user CR3 还没切回 kernel root 时就被调度到。
+  //
+  // 这时如果继续给它用普通 heap 栈，就会撞上当前教学内核的现实限制：
+  // - kernel heap 虚拟区正好和 user window 重叠
+  // - cloned user root 不保证还能看到那根 heap 栈
+  //
+  // 所以这类 helper thread 这一轮也先退回到“低地址 identity-mapped 栈”。
+  // 它不是最终形态，但能先把“用户线程在 syscall 里 yield，再切回来恢复”
+  // 这条路径稳定跑通。
+  const bool use_identity_mapped_stack = !owner->is_kernel_process;
+  void* stack_allocation = nullptr;
+  if (use_identity_mapped_stack) {
+    PageAllocator* const allocator = kernel_memory_page_allocator();
+    if (allocator == nullptr) {
+      return nullptr;
+    }
+
+    stack_bytes = kPagingPageSize;
+    const uint64_t stack_page = alloc_page(allocator);
+    if (stack_page == 0 || stack_page >= kPagingBootIdentityLimit) {
+      return nullptr;
+    }
+
+    stack_allocation =
+        reinterpret_cast<void*>(static_cast<uintptr_t>(stack_page));
+    memory_set(stack_allocation, 0, kPagingPageSize);
+  } else {
+    stack_allocation = kmalloc_aligned(stack_bytes, 16);
+    if (stack_allocation == nullptr) {
+      return nullptr;
+    }
   }
 
   memory_set(thread, 0, sizeof(*thread));
@@ -520,7 +569,9 @@ ThreadControlBlock* scheduler_create_kernel_thread(
     thread->in_use = false;
     --owner->live_thread_count;
     --scheduler->live_thread_count;
-    (void)kfree(stack_allocation);
+    if (!use_identity_mapped_stack) {
+      (void)kfree(stack_allocation);
+    }
     return nullptr;
   }
 
@@ -550,18 +601,37 @@ ThreadControlBlock* scheduler_create_user_thread(
     return nullptr;
   }
 
-  // user thread 进入 ring 3 之前，仍然需要一根“以后从用户态回到内核时能继续恢复”的 kernel-resume 栈。
+  // user thread 进入 ring 3 之前，第一版其实需要两根 low identity-mapped 栈：
+  // 1. scheduler/bootstrap 栈：
+  //    - `scheduler_switch_context()` 会从这里第一次把线程“ret”进 bootstrap
+  //    - `user_mode_enter()` 也会把“最后要退回哪条内核栈”的返回现场保存在这里
+  // 2. TSS.rsp0 专用内核进入栈：
+  //    - 每次用户态 `int 0x80` / 以后外部中断进 ring 0，都先落到这根栈
+  //
+  // 如果只给 1 根栈，那么后续 syscall 压入的 trap frame 会覆盖掉
+  // `user_mode_enter()` 当初保存的最终返回现场，最后 `exit` 就没法安全回到线程入口了。
+  //
   // 这里不能直接用 heap 栈，因为当前教学内核的 heap 虚拟区和用户区窗口还有重叠，
   // clone 出来的 user root 不一定能继续看到那根 heap 栈。
   //
-  // 所以第一版先保守地给 user thread 分 1 页低地址 identity-mapped 栈：
+  // 所以第一版先保守地给 user thread 分 2 页低地址 identity-mapped 栈：
   // - 在当前 kernel root 下能访问
   // - 切到 cloned user root 之后也仍然有同样的恒等映射
-  const uint64_t stack_page = alloc_page(allocator);
-  if (stack_page == 0 || stack_page >= kPagingBootIdentityLimit) {
+  const uint64_t scheduler_stack_page = alloc_page(allocator);
+  const uint64_t kernel_entry_stack_page = alloc_page(allocator);
+  if (scheduler_stack_page == 0 ||
+      scheduler_stack_page >= kPagingBootIdentityLimit ||
+      kernel_entry_stack_page == 0 ||
+      kernel_entry_stack_page >= kPagingBootIdentityLimit) {
     return nullptr;
   }
-  memory_set(reinterpret_cast<void*>(static_cast<uintptr_t>(stack_page)), 0,
+
+  memory_set(reinterpret_cast<void*>(
+                 static_cast<uintptr_t>(scheduler_stack_page)),
+             0, kPagingPageSize);
+  memory_set(reinterpret_cast<void*>(
+                 static_cast<uintptr_t>(kernel_entry_stack_page)),
+             0,
              kPagingPageSize);
 
   memory_set(thread, 0, sizeof(*thread));
@@ -574,9 +644,12 @@ ThreadControlBlock* scheduler_create_user_thread(
   thread->entry = nullptr;
   thread->entry_context = nullptr;
   thread->stack_allocation =
-      reinterpret_cast<void*>(static_cast<uintptr_t>(stack_page));
+      reinterpret_cast<void*>(static_cast<uintptr_t>(scheduler_stack_page));
   thread->stack_allocation_bytes = kPagingPageSize;
   thread->is_idle_thread = false;
+  thread->user_kernel_entry_stack_allocation =
+      reinterpret_cast<void*>(static_cast<uintptr_t>(kernel_entry_stack_page));
+  thread->user_kernel_entry_stack_top = kernel_entry_stack_page + kPagingPageSize;
   thread->user_mode.user_instruction_pointer = user_instruction_pointer;
   thread->user_mode.user_stack_pointer = user_stack_pointer;
   thread->user_mode.user_rflags = user_rflags;

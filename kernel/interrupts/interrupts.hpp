@@ -32,6 +32,8 @@ bool initialize_tss();
 bool tss_is_ready();
 uint16_t tss_task_register_selector();
 uint64_t tss_kernel_rsp0();
+uint64_t tss_default_kernel_rsp0();
+bool tss_set_kernel_rsp0(uint64_t rsp0);
 uint64_t tss_double_fault_ist1();
 uint16_t tss_io_map_base();
 

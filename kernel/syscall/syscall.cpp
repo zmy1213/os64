@@ -260,6 +260,49 @@ SyscallContext* current_dispatch_context() {
   return g_active_syscall_context;
 }
 
+bool frame_came_from_user_mode(const SyscallInterruptFrame* frame) {
+  return frame != nullptr && (frame->cs & 0x3) == 3;
+}
+
+void capture_current_user_trap_frame(const SyscallInterruptFrame* frame) {
+  ThreadControlBlock* const current_thread = scheduler_active_thread();
+  if (current_thread == nullptr ||
+      current_thread->execution_mode != kThreadExecutionModeUser ||
+      !frame_came_from_user_mode(frame)) {
+    return;
+  }
+
+  UserTrapFrame& trap_frame = current_thread->user_trap_frame;
+  trap_frame.r15 = frame->r15;
+  trap_frame.r14 = frame->r14;
+  trap_frame.r13 = frame->r13;
+  trap_frame.r12 = frame->r12;
+  trap_frame.r11 = frame->r11;
+  trap_frame.r10 = frame->r10;
+  trap_frame.r9 = frame->r9;
+  trap_frame.r8 = frame->r8;
+  trap_frame.rdi = frame->rdi;
+  trap_frame.rsi = frame->rsi;
+  trap_frame.rbp = frame->rbp;
+  trap_frame.rbx = frame->rbx;
+  trap_frame.rdx = frame->rdx;
+  trap_frame.rcx = frame->rcx;
+  trap_frame.rax = frame->rax;
+  trap_frame.vector = frame->vector;
+  trap_frame.error_code = frame->error_code;
+  trap_frame.rip = frame->rip;
+  trap_frame.cs = frame->cs;
+  trap_frame.rflags = frame->rflags;
+
+  const uint64_t* const tail =
+      reinterpret_cast<const uint64_t*>(
+          reinterpret_cast<const uint8_t*>(frame) +
+          sizeof(SyscallInterruptFrame));
+  trap_frame.rsp = tail[0];
+  trap_frame.ss = tail[1];
+  current_thread->has_user_trap_frame = true;
+}
+
 int64_t dispatch_syscall_registers(uint64_t syscall_number,
                                    uint64_t argument0,
                                    uint64_t argument1,
@@ -299,6 +342,17 @@ int64_t dispatch_syscall_registers(uint64_t syscall_number,
         return syscall_status_result(kSyscallUnsupported);
       }
       kernel_handle_user_mode_exit(argument0);
+    case kSyscallNumberYield: {
+      ThreadControlBlock* const current_thread = scheduler_active_thread();
+      if (current_thread == nullptr ||
+          current_thread->execution_mode != kThreadExecutionModeUser) {
+        return syscall_status_result(kSyscallUnsupported);
+      }
+
+      ++current_thread->user_yield_count;
+      (void)scheduler_yield_current_thread();
+      return syscall_status_result(kSyscallOk);
+    }
     case kSyscallNumberClose:
       return syscall_status_result(
           sys_close(context, static_cast<int32_t>(argument0)));
@@ -745,6 +799,8 @@ extern "C" void kernel_handle_syscall(SyscallInterruptFrame* frame) {
   if (frame == nullptr) {
     return;
   }
+
+  capture_current_user_trap_frame(frame);
 
   frame->rax = encode_syscall_result(
       dispatch_syscall_registers(frame->rax,
