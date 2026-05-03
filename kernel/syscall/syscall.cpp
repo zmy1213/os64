@@ -232,10 +232,16 @@ int32_t read_stdin_stream(void* buffer, size_t bytes_to_read) {
       return 0;
     }
 
-    wait_for_interrupt();
+    // 如果当前正跑在线程上下文里，
+    // 这里优先把线程真正挂进 keyboard wait queue，
+    // 由下一个字符 IRQ 来唤醒它。
+    if (keyboard_wait_for_stream_char()) {
+      continue;
+    }
 
-    // stdin 现在也开始配合调度器：
-    // 当线程正阻塞在“等下一个键盘 IRQ”时，允许在安全点切给别的线程。
+    // 如果当前还没有线程上下文，或者暂时没法真正 block，
+    // 那就退回到旧的“hlt 等中断 + 安全点 yield”路径。
+    wait_for_interrupt();
     (void)scheduler_yield_if_requested();
   }
 }

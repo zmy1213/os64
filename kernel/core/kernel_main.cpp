@@ -113,6 +113,8 @@ constexpr uint8_t kSyscallStdinScancodes[] = {
     0x1C,        // Enter -> '\n'
 };
 constexpr char kSyscallStdinExpected[] = "ok\n";
+constexpr uint8_t kBlockedStdinScancode = 0x1E;                      // 'a'，专门拿来测“read(0) 先 block，再被键盘 IRQ 唤醒”。
+constexpr char kBlockedStdinExpected[] = "a";
 constexpr uint8_t kInt80StdinScancodes[] = {
     0xE0, 0x4B,  // ArrowLeft -> 同样不应卡住 stdin 字节流读取。
     0x17,        // I -> 'i'
@@ -341,6 +343,18 @@ struct SchedulerWakeThreadContext {
   ThreadControlBlock* wake_target;  // 这个线程负责唤醒谁。
   uint64_t observed_tid;            // waker 第一次真正跑起来时看到的 tid。
   uint64_t wait_ticks;              // 先等几个 tick，再去 wake。
+};
+
+struct StdinBlockingReaderContext {
+  SyscallContext* syscall_context;  // 读 stdin 还是走现有 sys_read 接口，只是现在在调度线程里调用它。
+  char character;                   // 被唤醒后真正读到的那个字符。
+  int32_t read_result;              // `sys_read()` 最终返回多少字节。
+  uint64_t observed_tid;            // 证明 reader 线程真的跑在线程上下文里。
+};
+
+struct StdinBlockingInjectorContext {
+  uint8_t scancode;                 // 要注入哪个测试扫描码。
+  uint64_t observed_tid;            // 证明 injector 也是独立线程。
 };
 
 // 往 I/O 端口写一个字节。内核里没有现成库函数，所以这里自己直接发机器指令。
@@ -2499,6 +2513,114 @@ bool run_scheduler_smoke_test() {
   return ok;
 }
 
+void stdin_blocking_reader_thread_entry(void* raw_context) {
+  auto* const context =
+      static_cast<StdinBlockingReaderContext*>(raw_context);
+  if (context == nullptr || context->syscall_context == nullptr) {
+    return;
+  }
+
+  observe_scheduler_thread_tid(&context->observed_tid);
+  context->character = '\0';
+  context->read_result =
+      sys_read(context->syscall_context, kSyscallStandardInputFd,
+               &context->character, 1);
+}
+
+void stdin_blocking_injector_thread_entry(void* raw_context) {
+  auto* const context =
+      static_cast<StdinBlockingInjectorContext*>(raw_context);
+  if (context == nullptr) {
+    return;
+  }
+
+  observe_scheduler_thread_tid(&context->observed_tid);
+  timer_wait_ticks(1);
+  (void)keyboard_inject_test_scancode(context->scancode);
+}
+
+bool run_stdin_blocking_scheduler_smoke_test(SyscallContext* context) {
+  if (context == nullptr ||
+      !keyboard_is_ready() ||
+      keyboard_buffered_char_count() != 0 ||
+      !scheduler_is_ready(&g_scheduler) ||
+      scheduler_current_thread(&g_scheduler) != nullptr) {
+    return false;
+  }
+
+  StdinBlockingReaderContext reader_context;
+  memory_set(&reader_context, 0, sizeof(reader_context));
+  reader_context.syscall_context = context;
+  reader_context.read_result = kSyscallInvalidArgument;
+
+  StdinBlockingInjectorContext injector_context;
+  memory_set(&injector_context, 0, sizeof(injector_context));
+  injector_context.scancode = kBlockedStdinScancode;
+
+  ProcessControlBlock* const process =
+      scheduler_create_kernel_process(&g_scheduler, "stdin-block");
+  if (process == nullptr) {
+    return false;
+  }
+
+  ThreadControlBlock* const reader_thread =
+      scheduler_create_kernel_thread(&g_scheduler, process,
+                                     "stdin-reader",
+                                     stdin_blocking_reader_thread_entry,
+                                     &reader_context, 0,
+                                     kThreadPriorityNormal);
+  ThreadControlBlock* const injector_thread =
+      scheduler_create_kernel_thread(&g_scheduler, process,
+                                     "stdin-injector",
+                                     stdin_blocking_injector_thread_entry,
+                                     &injector_context, 0,
+                                     kThreadPriorityNormal);
+  if (reader_thread == nullptr || injector_thread == nullptr) {
+    return false;
+  }
+
+  serial_write_string("stdin_block_pid=");
+  serial_write_u64(process->pid);
+  serial_write_crlf();
+
+  serial_write_string("stdin_block_reader_tid=");
+  serial_write_u64(reader_thread->tid);
+  serial_write_crlf();
+
+  serial_write_string("stdin_block_injector_tid=");
+  serial_write_u64(injector_thread->tid);
+  serial_write_crlf();
+
+  const bool run_ok = run_scheduler_phase_until_idle();
+  const uint16_t remaining_chars = keyboard_buffered_char_count();
+
+  serial_write_string("stdin_block_read=");
+  serial_write_i64(reader_context.read_result);
+  serial_write_crlf();
+
+  serial_write_string("stdin_block_char=0x");
+  serial_write_hex64(static_cast<uint8_t>(reader_context.character));
+  serial_write_crlf();
+
+  serial_write_string("stdin_block_buffer_remaining=");
+  serial_write_u64(remaining_chars);
+  serial_write_crlf();
+
+  return run_ok &&
+         process->pid == 4 &&
+         reader_thread->tid == 9 &&
+         injector_thread->tid == 10 &&
+         reader_context.observed_tid == reader_thread->tid &&
+         injector_context.observed_tid == injector_thread->tid &&
+         reader_context.read_result == 1 &&
+         reader_context.character == kBlockedStdinExpected[0] &&
+         process->state == kProcessStateExited &&
+         reader_thread->state == kThreadStateFinished &&
+         injector_thread->state == kThreadStateFinished &&
+         scheduler_blocked_thread_count(&g_scheduler) == 0 &&
+         remaining_chars == 0;
+}
+
 bool wait_for_keyboard_irq_count(uint64_t target_count,
                                  uint64_t timeout_ticks) {
   const uint64_t start_tick = timer_tick_count();
@@ -2635,6 +2757,10 @@ bool run_stdin_syscall_smoke_test(SyscallContext* context,
       !initialize_syscall_context(context, fd_table) ||
       !install_syscall_dispatch_context(context) ||
       !syscall_dispatch_is_ready()) {
+    return false;
+  }
+
+  if (!run_stdin_blocking_scheduler_smoke_test(context)) {
     return false;
   }
 

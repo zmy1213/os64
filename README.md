@@ -225,7 +225,8 @@ os64>
 - kernel 里现在还补了第一版 `int 0x80` 软中断入口，会把寄存器参数转进现有 `sys_*` 分发器
 - kernel 里现在又把公开 syscall fd 先整理成 `0/1/2 = stdin/stdout/stderr`、`3+ = 普通文件`
 - kernel 里现在已经补了第一版 `sys_write`，能先把 `stdout/stderr` 写到当前控制台输出路径
-- kernel 里现在又把 `stdin` 真正接到了键盘字符流，第一版 `sys_read(0, ...)` 和 `int 0x80 read(0, ...)` 都已经能读输入
+- kernel 里现在又把 `stdin` 真正接到了键盘字符流，`sys_read(0, ...)` 和 `int 0x80 read(0, ...)` 都已经能读输入
+- 当 `stdin` 当前没有字符时，如果调用者正跑在线程上下文里，内核现在也会把它 block 到 keyboard wait queue，再由键盘 IRQ 唤醒
 - kernel 里现在已经补了第一版 `Process/Thread/Scheduler` 骨架，开始真正区分“进程拥有资源”和“线程在 CPU 上执行”
 - 每个 kernel thread 现在已经有自己的独立栈，调度器也已经能按 `high/normal/background` 选线程，并在同优先级里 round-robin
 - 线程现在已经有 `ready/running/sleeping/blocked/finished` 这些状态，`idle thread` 也已经补上

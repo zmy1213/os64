@@ -1,5 +1,8 @@
 #include "interrupts/keyboard.hpp"
 
+#include "interrupts/interrupts.hpp"
+#include "task/scheduler.hpp"
+
 namespace {
 
 constexpr uint16_t kKeyboardDataPort = 0x60;          // 键盘数据端口，扫描码最终从这里读出来。
@@ -20,6 +23,7 @@ volatile uint16_t g_keyboard_char_count = 0;          // 当前排队事件里�
 volatile uint64_t g_keyboard_dropped_char_count = 0;  // 如果缓冲区满了，被丢掉的字符数量记在这里。
 volatile uint8_t g_keyboard_has_extended_prefix = 0;  // `0xE0` 前缀表示接下来这个字节要按扩展键来解释。
 volatile uint8_t g_keyboard_initialized = 0;          // 让更高层知道“当前键盘输入队列是否已经进入可消费状态”。
+ThreadControlBlock* g_keyboard_stream_waiters[kSchedulerMaxThreadCount];  // 第一版先用固定数组记“哪些线程正在等 stdin 字符”。
 
 inline void out8(uint16_t port, uint8_t value) {
   asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
@@ -226,6 +230,63 @@ bool try_dequeue_input_event(KeyboardInputEvent* out_event,
   return true;
 }
 
+bool stream_waiter_is_registered(ThreadControlBlock* thread) {
+  if (thread == nullptr) {
+    return false;
+  }
+
+  for (size_t i = 0; i < kSchedulerMaxThreadCount; ++i) {
+    if (g_keyboard_stream_waiters[i] == thread) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool register_stream_waiter(ThreadControlBlock* thread) {
+  if (thread == nullptr) {
+    return false;
+  }
+
+  if (stream_waiter_is_registered(thread)) {
+    return true;
+  }
+
+  for (size_t i = 0; i < kSchedulerMaxThreadCount; ++i) {
+    if (g_keyboard_stream_waiters[i] == nullptr) {
+      g_keyboard_stream_waiters[i] = thread;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+void unregister_stream_waiter(ThreadControlBlock* thread) {
+  if (thread == nullptr) {
+    return;
+  }
+
+  for (size_t i = 0; i < kSchedulerMaxThreadCount; ++i) {
+    if (g_keyboard_stream_waiters[i] == thread) {
+      g_keyboard_stream_waiters[i] = nullptr;
+    }
+  }
+}
+
+void wake_stream_waiters() {
+  for (size_t i = 0; i < kSchedulerMaxThreadCount; ++i) {
+    ThreadControlBlock* const waiter = g_keyboard_stream_waiters[i];
+    if (waiter == nullptr) {
+      continue;
+    }
+
+    (void)scheduler_wake_thread(waiter);
+    g_keyboard_stream_waiters[i] = nullptr;
+  }
+}
+
 }  // namespace
 
 bool initialize_keyboard() {
@@ -238,6 +299,9 @@ bool initialize_keyboard() {
   g_keyboard_char_count = 0;
   g_keyboard_dropped_char_count = 0;
   g_keyboard_has_extended_prefix = 0;
+  for (size_t i = 0; i < kSchedulerMaxThreadCount; ++i) {
+    g_keyboard_stream_waiters[i] = nullptr;
+  }
   g_keyboard_initialized = 1;
   return true;
 }
@@ -262,6 +326,10 @@ void handle_keyboard_irq() {
   if (translate_scancode_to_input_event(g_keyboard_last_scancode,
                                         &translated_event)) {
     enqueue_input_event(translated_event);
+
+    if (translated_event.kind == kKeyboardInputCharacter) {
+      wake_stream_waiters();
+    }
   }
 }
 
@@ -333,6 +401,44 @@ bool keyboard_try_read_stream_char(char* out_char) {
   }
   restore_interrupt_flags(flags);
   return success;
+}
+
+bool keyboard_wait_for_stream_char() {
+  if (!keyboard_is_ready() || !interrupts_are_enabled()) {
+    return false;
+  }
+
+  ThreadControlBlock* const current_thread = scheduler_active_thread();
+  if (current_thread == nullptr || current_thread->is_idle_thread) {
+    return false;
+  }
+
+  const uint64_t flags = save_interrupt_flags_and_disable();
+  if (g_keyboard_char_count != 0) {
+    restore_interrupt_flags(flags);
+    return true;
+  }
+
+  if (!register_stream_waiter(current_thread)) {
+    restore_interrupt_flags(flags);
+    return false;
+  }
+
+  if (g_keyboard_char_count != 0) {
+    unregister_stream_waiter(current_thread);
+    restore_interrupt_flags(flags);
+    return true;
+  }
+
+  const bool blocked = scheduler_block_current_thread_and_enable_interrupts();
+  if (!blocked) {
+    unregister_stream_waiter(current_thread);
+    restore_interrupt_flags(flags);
+    return false;
+  }
+
+  unregister_stream_waiter(current_thread);
+  return true;
 }
 
 bool keyboard_inject_test_scancode(uint8_t scancode) {

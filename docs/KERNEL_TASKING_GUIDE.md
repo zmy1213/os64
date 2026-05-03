@@ -539,7 +539,7 @@ sched_block_trace=BWb
 - 文件描述符表可以从“全局一张”变成“每进程一张”
 - cwd 可以从“全局一个”变成“每进程一个”
 - `sleep` 现在已经可以真的把线程挂起
-- `read(0)` 下一步就可以真正阻塞当前线程
+- `read(0)` 现在也已经可以真的阻塞当前线程，再由键盘 IRQ 唤醒
 - 最后才是用户态程序
 
 一句话说：
@@ -603,15 +603,15 @@ kernel_main -> create shell thread -> scheduler_run()
 
 这会让调度器第一次接管真实交互路径。
 
-### 路线 B：把 blocked/wakeup 真接进 I/O
+### 路线 B：把剩下的交互输入也接进 blocked/wakeup
 
 比如：
 
-- `read(0)` 没字符时把线程挂进 keyboard wait 队列
-- 键盘 IRQ 到来时再唤醒等输入的线程
-- 后面磁盘 I/O 也复用这套 blocked/wakeup 形状
+- `console_read_line_with_history()` 不再自己 `hlt` + 轮询
+- shell 读命令行时也真的 block 当前线程
+- 后面磁盘 I/O 继续复用这套 blocked/wakeup 形状
 
-这一步会让调度器从“会管理 sleep/block 状态”推进到“真的被 I/O 子系统用起来”。
+这一步会让调度器从“已经接进 stdin”推进到“整个交互输入链都真正靠线程等待关系工作”。
 
 ### 路线 C：开始准备用户态前置条件
 
@@ -628,9 +628,9 @@ kernel_main -> create shell thread -> scheduler_run()
 
 ```text
 把 shell 接进 scheduler
-+ 让 stdin/read(0) 真的阻塞当前线程
++ 把 console/shell 的输入等待也改成真正 block
 ```
 
 原因是：
 
-> 现在 blocked/wakeup 的骨架已经有了，最合理的是先把它接进真实输入路径，再让 shell 真跑在线程里，这样下一步做用户态时基础会扎实得多。
+> 现在 `stdin/read(0)` 这条阻塞链已经打通了，最合理的是继续把 shell 和 console 也接进调度器，这样用户能看到的整条交互路径就都建立在线程模型上了。

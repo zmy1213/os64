@@ -220,6 +220,12 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "keyboard_char_5=0x0000000000000008" "$SERIAL_LOG" \
   && grep -q "keyboard_buffer_remaining=0" "$SERIAL_LOG" \
   && grep -q "keyboard_dropped_chars=0" "$SERIAL_LOG" \
+  && grep -q "stdin_block_pid=4" "$SERIAL_LOG" \
+  && grep -q "stdin_block_reader_tid=9" "$SERIAL_LOG" \
+  && grep -q "stdin_block_injector_tid=10" "$SERIAL_LOG" \
+  && grep -q "stdin_block_read=1" "$SERIAL_LOG" \
+  && grep -q "stdin_block_char=0x0000000000000061" "$SERIAL_LOG" \
+  && grep -q "stdin_block_buffer_remaining=0" "$SERIAL_LOG" \
   && grep -q "stdin_sys_read=3" "$SERIAL_LOG" \
   && grep -q "stdin_sys_empty=0" "$SERIAL_LOG" \
   && grep -q "stdin_int80_read=3" "$SERIAL_LOG" \

@@ -575,7 +575,7 @@ bool scheduler_sleep_current_thread(uint64_t ticks) {
   return true;
 }
 
-bool scheduler_block_current_thread() {
+bool block_current_thread_internal(bool enable_interrupts_before_switch) {
   SchedulerState* const scheduler = active_scheduler();
   if (!scheduler_is_ready(scheduler) || scheduler->current_thread == nullptr ||
       scheduler->current_thread->is_idle_thread) {
@@ -594,14 +594,31 @@ bool scheduler_block_current_thread() {
     if (scheduler->blocked_thread_count > 0) {
       --scheduler->blocked_thread_count;
     }
+
+    if (enable_interrupts_before_switch) {
+      enable_interrupts();
+    }
     return false;
   }
 
   mark_thread_running(scheduler, next_thread);
   ++scheduler->total_switches;
+
+  if (enable_interrupts_before_switch) {
+    enable_interrupts();
+  }
+
   scheduler_switch_context(&current_thread->saved_stack_pointer,
                            next_thread->saved_stack_pointer);
   return true;
+}
+
+bool scheduler_block_current_thread() {
+  return block_current_thread_internal(false);
+}
+
+bool scheduler_block_current_thread_and_enable_interrupts() {
+  return block_current_thread_internal(true);
 }
 
 bool scheduler_wake_thread(ThreadControlBlock* thread) {
@@ -721,6 +738,10 @@ ThreadControlBlock* scheduler_current_thread(
   }
 
   return scheduler->current_thread;
+}
+
+ThreadControlBlock* scheduler_active_thread() {
+  return scheduler_current_thread(active_scheduler());
 }
 
 uint32_t scheduler_ready_thread_count(const SchedulerState* scheduler) {

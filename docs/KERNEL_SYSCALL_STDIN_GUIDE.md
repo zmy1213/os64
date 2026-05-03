@@ -196,23 +196,32 @@ keyboard_try_read_stream_char()
 
 ## 5. `read(0)` 现在是阻塞的还是非阻塞的
 
-这一轮故意做成一个“半阻塞”版本。
+最开始这一层只是一个“半阻塞”版本，
+后来在补完第一版 scheduler 的 `blocked/wakeup` 骨架以后，
+`stdin` 又继续往前升级了一小步：
+
+```text
+如果当前已经跑在线程上下文里，
+read(0) 没字符时会真的把当前线程挂进 keyboard wait queue
+等字符 IRQ 到来再唤醒
+```
 
 规则是：
 
 1. 如果缓冲区里已经有字符，就立刻尽量多读
-2. 如果一个字符都没有，而且中断开着，就等待下一次中断
-3. 如果一个字符都没有，而且中断关着，就先返回 `0`
+2. 如果一个字符都没有，而且当前正在线程上下文里，就 block 当前线程
+3. 键盘 IRQ 到来并收到字符后，再把这个线程放回 ready queue
+4. 如果一个字符都没有，而且中断关着，就先返回 `0`
 
 为什么不一上来就做严格 POSIX 语义？
 
 因为当前项目还没有：
 
-- 进程调度
 - 信号
 - 非阻塞标志
 - TTY 行规程
 - EOF 语义
+- 用户态进程模型
 
 所以这里先求：
 
@@ -258,9 +267,9 @@ keyboard_is_ready()
 
 - `kernel/interrupts/keyboard.hpp`
 - `kernel/interrupts/keyboard.cpp`
-- `kernel/interrupts/interrupts.hpp`
-- `kernel/interrupts/interrupts.cpp`
 - `kernel/syscall/syscall.cpp`
+- `kernel/task/scheduler.hpp`
+- `kernel/task/scheduler.cpp`
 - `kernel/core/kernel_main.cpp`
 - `scripts/test-stage1.sh`
 - `scripts/test-invalid-opcode.sh`
@@ -271,9 +280,9 @@ keyboard_is_ready()
 
 一句话分工：
 
-- `keyboard/*` 负责给 stdin 提供“字节流视角”
-- `interrupts/*` 负责让 syscall 知道“现在能不能等中断”
-- `syscall.cpp` 负责把 `fd=0` 真正接进 stdin
+- `keyboard/*` 负责给 stdin 提供“字节流视角 + keyboard wait queue”
+- `syscall.cpp` 负责把 `fd=0` 真正接进 stdin，并在没字符时选择“直接 block 当前线程”
+- `scheduler.*` 负责提供“安全登记等待者后再 block，自身睡下去前重新开中断”的那条底层能力
 - `kernel_main.cpp` 负责新增自动烟测
 
 ---
@@ -283,6 +292,12 @@ keyboard_is_ready()
 这一轮新增的关键日志有：
 
 ```text
+stdin_block_pid=4
+stdin_block_reader_tid=9
+stdin_block_injector_tid=10
+stdin_block_read=1
+stdin_block_char=0x0000000000000061
+stdin_block_buffer_remaining=0
 stdin_sys_read=3
 stdin_sys_empty=0
 stdin_int80_read=3
@@ -294,6 +309,9 @@ stdin_syscall ok
 
 这些日志分别在证明：
 
+- `stdin_reader` 线程会先真的睡进 keyboard wait queue
+- `stdin_injector` 线程注入一个 `'a'` 扫描码以后，reader 会被键盘 IRQ 唤醒
+- reader 被唤醒后，`sys_read(0, ...)` 会继续返回 1 个字节，而且缓冲区没有残留
 - 直接 `sys_read(0, ...)` 已经能读到 3 个字符
 - 缓冲区清空后，再读一次当前会返回 `0`
 - `int 0x80` 入口也已经能走 `read(0, ...)`
@@ -370,12 +388,12 @@ stdin byte stream
 
 ```text
 先让系统里第一次真正出现“可调度线程”
-再去谈更复杂的用户态和阻塞语义
+再把 stdin 的等待关系真的挂进 scheduler
 ```
 
 原因是：
 
-> 你已经有了输入输出边界，但还没有“谁在系统里轮流执行”这层对象；先把 thread/scheduler 骨架搭起来，后面 `stdin` 的真正阻塞、用户态、每进程 fd/cwd 才有稳定落点。
+> 你已经有了输入输出边界，但还没有“谁在系统里轮流执行”这层对象；先把 thread/scheduler 骨架搭起来，`stdin` 的真正阻塞才能不靠轮询，而是靠 thread block/wakeup 做成更像真实 OS 的形状。
 
 继续阅读：
 

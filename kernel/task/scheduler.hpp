@@ -134,6 +134,9 @@ bool scheduler_yield_current_thread();
 bool scheduler_yield_if_requested();
 bool scheduler_sleep_current_thread(uint64_t ticks);
 bool scheduler_block_current_thread();
+// 这个入口专门给“先关中断登记等待者，再真正 block 自己”的等待队列用。
+// 它会在切到下一个线程前重新开中断，避免系统因为当前线程睡下去而收不到唤醒它的外部 IRQ。
+bool scheduler_block_current_thread_and_enable_interrupts();
 bool scheduler_wake_thread(ThreadControlBlock* thread);
 
 // 由 timer IRQ 路径调用。
@@ -144,6 +147,7 @@ void scheduler_handle_timer_tick();
 
 ThreadControlBlock* scheduler_current_thread(
     const SchedulerState* scheduler);
+ThreadControlBlock* scheduler_active_thread();
 uint32_t scheduler_ready_thread_count(const SchedulerState* scheduler);
 uint32_t scheduler_live_thread_count(const SchedulerState* scheduler);
 uint32_t scheduler_sleeping_thread_count(const SchedulerState* scheduler);

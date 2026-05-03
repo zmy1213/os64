@@ -60,6 +60,11 @@ bool keyboard_try_read_char(char* out_char);
 // 因为第一版 stdin 只想向上层提供可见字符、回车、退格这类字节流输入。
 bool keyboard_try_read_stream_char(char* out_char);
 
+// 如果当前没有可读字符，并且当前代码正跑在线程上下文里，
+// 这个接口会把当前线程挂进 keyboard wait queue，等下一个字符 IRQ 到来再唤醒。
+// 如果当前已经有字符可读，它会直接返回 true，让调用方马上重试读取。
+bool keyboard_wait_for_stream_char();
+
 // 给当前测试环境注入一个“像是键盘刚发来的扫描码”。
 // 这一轮主要给 QEMU 里的自动测试自举使用。
 bool keyboard_inject_test_scancode(uint8_t scancode);
