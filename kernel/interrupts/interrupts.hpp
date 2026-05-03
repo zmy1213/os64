@@ -34,6 +34,11 @@ void enable_interrupts();
 // 这一轮测试跑完后先关掉，避免后面日志阶段继续被时钟打断。
 void disable_interrupts();
 
+// 读取当前 IF 标志位，看看 CPU 此刻会不会接可屏蔽中断。
+// 这对第一版 stdin/read(0) 很有用，因为“是否能等键盘 IRQ 把字符送进来”
+// 取决于 IF 现在是不是开着。
+bool interrupts_are_enabled();
+
 // `hlt`：让 CPU 睡眠，直到下一次中断到来再醒。
 // 这是最小内核里等待 tick 的最好办法之一，因为它不会忙等空转。
 void wait_for_interrupt();

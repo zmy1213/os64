@@ -24,6 +24,10 @@ struct KeyboardInputEvent {
 // 这一轮先不做完整键盘驱动，只清理旧数据、清零计数器，方便后面做 IRQ1 测试。
 bool initialize_keyboard();
 
+// 让更上层知道“键盘输入子系统是否真的初始化过了”。
+// 第一版 stdin/read(0) 会用它来避免在键盘还没准备好时傻等。
+bool keyboard_is_ready();
+
 // 当 IRQ1 到来时，由中断路径调用它。
 // 它会从键盘控制器里读出 1 个扫描码并记下来。
 void handle_keyboard_irq();
@@ -50,6 +54,11 @@ bool keyboard_try_read_input_event(KeyboardInputEvent* out_event);
 // 成功时返回 true，并把字符写进 out_char；没有字符时返回 false。
 // 它现在主要给旧测试和只关心字符的调用方兼容使用。
 bool keyboard_try_read_char(char* out_char);
+
+// 这是给“字节流 stdin”准备的版本。
+// 它会忽略方向键 / Home / End / Delete 这种非字符事件，
+// 因为第一版 stdin 只想向上层提供可见字符、回车、退格这类字节流输入。
+bool keyboard_try_read_stream_char(char* out_char);
 
 // 给当前测试环境注入一个“像是键盘刚发来的扫描码”。
 // 这一轮主要给 QEMU 里的自动测试自举使用。

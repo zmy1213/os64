@@ -134,6 +134,12 @@ void disable_interrupts() {
   asm volatile("cli");   // Clear Interrupt Flag：后续即使 PIC 再发 IRQ，CPU 也先不接了。
 }
 
+bool interrupts_are_enabled() {
+  uint64_t flags = 0;
+  asm volatile("pushfq; popq %0" : "=r"(flags) : : "memory");
+  return (flags & (1ULL << 9)) != 0;
+}
+
 void wait_for_interrupt() {
   asm volatile("hlt");   // Halt：让 CPU 休眠，等下一次中断再把它唤醒。
 }

@@ -2,6 +2,7 @@
 
 #include "interrupts/interrupts.hpp"
 #include "interrupts/keyboard.hpp"
+#include "task/scheduler.hpp"
 
 namespace {
 
@@ -267,6 +268,10 @@ size_t console_read_line_with_history(char* buffer,
       // 这一轮先用最直接的阻塞方式：
       // 没有字符就 `hlt` 睡眠，等下一次中断把 CPU 唤醒后再试。
       wait_for_interrupt();
+
+      // 如果 timer 已经把时间片用尽的请求挂起来了，
+      // 那就趁这个等待输入的安全点把 CPU 让给别的线程。
+      (void)scheduler_yield_if_requested();
     }
 
     if (event.kind == kKeyboardInputArrowLeft) {

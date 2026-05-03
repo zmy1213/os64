@@ -21,6 +21,7 @@
 #include "storage/block_device.hpp"
 #include "storage/boot_volume.hpp"
 #include "syscall/syscall.hpp"
+#include "task/scheduler.hpp"
 
 namespace {
 
@@ -63,11 +64,15 @@ constexpr uint64_t kTimerSecondLogTick = 20;                           // 第 20
 constexpr uint64_t kTimerWaitTestTicks = 3;                            // 第一段先直接按 tick 等 3 下。
 constexpr uint64_t kTimerSleepTestMs = 50;                             // 第二段再按毫秒等 50ms，在 100Hz 下约等于 5 个 tick。
 constexpr uint64_t kTimerSleepMinTicks = 5;                            // 50ms 在 100Hz 下至少应该跨过 5 个 tick。
+constexpr uint32_t kSchedulerTimeSliceTicks = 1;                       // 第一版时间片先故意压成 1 tick，方便把线程切换痕迹放大出来。
+constexpr uint64_t kSchedulerThreadWaitTicks = 1;                      // 每个 smoke 线程每轮都先等 1 个 tick，再观察调度器会不会换人。
+constexpr size_t kSchedulerThreadIterations = 2;                       // 2 个线程各跑 2 轮，最理想的切换轨迹就是 ABAB。
+constexpr char kSchedulerExpectedTrace[] = "ABAB";                     // 这就是这一轮最直观的预期执行顺序。
 constexpr uint8_t kKeyboardIrqLine = 1;                                // 传统 PC 键盘走主 PIC 的 IRQ1。
 constexpr uint64_t kKeyboardTestTimeoutTicks = 20;                     // 键盘测试每轮最多等 20 个 tick，避免异常时无限卡住。
-constexpr uint16_t kConsoleTestStartRow = 19;                          // 新增文件系统状态行后，把交互测试区再往下挪一行。
+constexpr uint16_t kConsoleTestStartRow = 20;                          // 新增 scheduler 状态行后，把交互测试区再往下挪一行。
 constexpr size_t kConsoleLineBufferCapacity = 32;                      // 这一轮测试只读短行，32 字节足够验证流程。
-constexpr uint16_t kShellTestStartRow = 19;                            // shell 也跟着下移，避免覆盖新的 `filesystem ok` 状态行。
+constexpr uint16_t kShellTestStartRow = 20;                            // shell 也跟着下移，避免覆盖新的 `scheduler ok` 状态行。
 constexpr size_t kShellLineBufferCapacity = 40;                        // 现在要测 `stat docs/guide.txt`，把命令行缓冲区稍微放大一点。
 constexpr uint8_t kKeyboardTestScancodes[] = {
     0x1E,  // A 按下 -> 'a'
@@ -97,6 +102,20 @@ constexpr uint8_t kConsoleInputTestScancodes[] = {
     0x1C,  // Enter -> 结束这一行
 };
 constexpr char kConsoleExpectedLine[] = "os 64";                       // 这就是退格修正后的最终结果。
+constexpr uint8_t kSyscallStdinScancodes[] = {
+    0xE0, 0x48,  // ArrowUp -> 对第一版 stdin 字节流来说应被忽略。
+    0x18,        // O -> 'o'
+    0x25,        // K -> 'k'
+    0x1C,        // Enter -> '\n'
+};
+constexpr char kSyscallStdinExpected[] = "ok\n";
+constexpr uint8_t kInt80StdinScancodes[] = {
+    0xE0, 0x4B,  // ArrowLeft -> 同样不应卡住 stdin 字节流读取。
+    0x17,        // I -> 'i'
+    0x13,        // R -> 'r'
+    0x1C,        // Enter -> '\n'
+};
+constexpr char kInt80StdinExpected[] = "ir\n";
 constexpr uint8_t kShellHelpScancodes[] = {
     0x23, 0x12, 0x26, 0x19, 0x1C,  // help + Enter
 };
@@ -224,6 +243,7 @@ constexpr uint64_t kPageFaultSmokePattern = 0x0BADF00DCAFED00DULL;     // 页错
 
 PageAllocator g_page_allocator;               // 第一版物理页分配器状态先放在一个全局对象里。
 KernelHeap g_kernel_heap;                     // 第一版内核堆状态也先放成全局对象，方便后面各模块共享。
+SchedulerState g_scheduler;                   // 第一版调度器状态；现在先只管理内核线程，不碰用户态。
 ShellState g_shell;                           // 最小 shell 的状态也先放在全局对象里，后面交互循环会一直复用。
 BootVolume g_boot_volume;                     // 这一轮新增的启动卷状态，表示 stage2 预读进来的那段扇区数据。
 BlockDevice g_boot_block_device;             // 再往上一层，把 boot volume 包成通用块设备接口。
@@ -280,6 +300,17 @@ struct alignas(64) KernelAlignedObjectProbe {
   bool is_valid() const {
     return marker == kAlignedObjectMarker && cookie == kKernelObjectCookie;
   }
+};
+
+struct SchedulerSmokeState {
+  char trace[8];             // 线程每跑一轮，就往这里追加一个标记字符。
+  size_t trace_length;       // 当前已经记录了多少步。
+};
+
+struct SchedulerSmokeThreadContext {
+  SchedulerSmokeState* shared;   // 两个线程共享同一份轨迹缓冲区，方便最后核对执行顺序。
+  char trace_mark;               // 这个线程每次执行时要写进轨迹里的字符，比如 'A' 或 'B'。
+  uint64_t observed_tid;         // 线程第一次真正跑起来后，会把自己看到的 tid 记到这里。
 };
 
 // 往 I/O 端口写一个字节。内核里没有现成库函数，所以这里自己直接发机器指令。
@@ -2005,6 +2036,163 @@ bool run_timer_smoke_test() {
          sleep_elapsed_ticks >= kTimerSleepMinTicks;
 }
 
+void append_scheduler_trace(SchedulerSmokeState* state, char mark) {
+  if (state == nullptr || state->trace_length + 1 >= sizeof(state->trace)) {
+    return;
+  }
+
+  state->trace[state->trace_length++] = mark;
+  state->trace[state->trace_length] = '\0';
+}
+
+void scheduler_smoke_thread_entry(void* raw_context) {
+  auto* const context =
+      static_cast<SchedulerSmokeThreadContext*>(raw_context);
+  if (context == nullptr || context->shared == nullptr) {
+    return;
+  }
+
+  const ThreadControlBlock* const current_thread =
+      scheduler_current_thread(&g_scheduler);
+  if (current_thread != nullptr) {
+    context->observed_tid = current_thread->tid;
+  }
+
+  for (size_t iteration = 0; iteration < kSchedulerThreadIterations;
+       ++iteration) {
+    append_scheduler_trace(context->shared, context->trace_mark);
+    timer_wait_ticks(kSchedulerThreadWaitTicks);
+  }
+}
+
+bool run_scheduler_smoke_test() {
+  if (!initialize_scheduler(&g_scheduler, kSchedulerTimeSliceTicks)) {
+    return false;
+  }
+
+  SchedulerSmokeState smoke_state;
+  memory_set(&smoke_state, 0, sizeof(smoke_state));
+
+  SchedulerSmokeThreadContext thread_a_context;
+  memory_set(&thread_a_context, 0, sizeof(thread_a_context));
+  thread_a_context.shared = &smoke_state;
+  thread_a_context.trace_mark = 'A';
+
+  SchedulerSmokeThreadContext thread_b_context;
+  memory_set(&thread_b_context, 0, sizeof(thread_b_context));
+  thread_b_context.shared = &smoke_state;
+  thread_b_context.trace_mark = 'B';
+
+  ProcessControlBlock* const process =
+      scheduler_create_kernel_process(&g_scheduler, "kernel-smoke");
+  if (process == nullptr) {
+    return false;
+  }
+
+  ThreadControlBlock* const thread_a =
+      scheduler_create_kernel_thread(&g_scheduler, process, "sched-a",
+                                     scheduler_smoke_thread_entry,
+                                     &thread_a_context, 0);
+  ThreadControlBlock* const thread_b =
+      scheduler_create_kernel_thread(&g_scheduler, process, "sched-b",
+                                     scheduler_smoke_thread_entry,
+                                     &thread_b_context, 0);
+  if (thread_a == nullptr || thread_b == nullptr) {
+    return false;
+  }
+
+  serial_write_string("sched_pid=");
+  serial_write_u64(process->pid);
+  serial_write_crlf();
+
+  serial_write_string("sched_thread_a_tid=");
+  serial_write_u64(thread_a->tid);
+  serial_write_crlf();
+
+  serial_write_string("sched_thread_b_tid=");
+  serial_write_u64(thread_b->tid);
+  serial_write_crlf();
+
+  enable_interrupts();
+  const bool run_ok = scheduler_run_until_idle(&g_scheduler);
+  disable_interrupts();
+
+  serial_write_string("sched_trace=");
+  serial_write_string(smoke_state.trace);
+  serial_write_crlf();
+
+  serial_write_string("sched_process_state=");
+  serial_write_string(scheduler_process_state_name(process->state));
+  serial_write_crlf();
+
+  serial_write_string("sched_thread_a_state=");
+  serial_write_string(scheduler_thread_state_name(thread_a->state));
+  serial_write_crlf();
+
+  serial_write_string("sched_thread_b_state=");
+  serial_write_string(scheduler_thread_state_name(thread_b->state));
+  serial_write_crlf();
+
+  serial_write_string("sched_thread_a_ticks=");
+  serial_write_u64(thread_a->consumed_ticks);
+  serial_write_crlf();
+
+  serial_write_string("sched_thread_b_ticks=");
+  serial_write_u64(thread_b->consumed_ticks);
+  serial_write_crlf();
+
+  serial_write_string("sched_total_ticks=");
+  serial_write_u64(g_scheduler.total_ticks);
+  serial_write_crlf();
+
+  serial_write_string("sched_total_switches=");
+  serial_write_u64(g_scheduler.total_switches);
+  serial_write_crlf();
+
+  serial_write_string("sched_total_yields=");
+  serial_write_u64(g_scheduler.total_yields);
+  serial_write_crlf();
+
+  serial_write_string("sched_preempt_requests=");
+  serial_write_u64(g_scheduler.preempt_request_count);
+  serial_write_crlf();
+
+  serial_write_string("sched_ready_after=");
+  serial_write_u64(scheduler_ready_thread_count(&g_scheduler));
+  serial_write_crlf();
+
+  serial_write_string("sched_live_after=");
+  serial_write_u64(scheduler_live_thread_count(&g_scheduler));
+  serial_write_crlf();
+
+  const bool ok =
+      run_ok &&
+      process->pid == 1 &&
+      thread_a->tid == 1 &&
+      thread_b->tid == 2 &&
+      thread_a_context.observed_tid == thread_a->tid &&
+      thread_b_context.observed_tid == thread_b->tid &&
+      strings_equal(smoke_state.trace, kSchedulerExpectedTrace) &&
+      process->state == kProcessStateExited &&
+      thread_a->state == kThreadStateFinished &&
+      thread_b->state == kThreadStateFinished &&
+      thread_a->consumed_ticks >= kSchedulerThreadIterations &&
+      thread_b->consumed_ticks >= kSchedulerThreadIterations &&
+      g_scheduler.total_switches >= 5 &&
+      g_scheduler.total_yields >= 4 &&
+      g_scheduler.preempt_request_count >= 4 &&
+      scheduler_ready_thread_count(&g_scheduler) == 0 &&
+      scheduler_live_thread_count(&g_scheduler) == 0 &&
+      scheduler_current_thread(&g_scheduler) == nullptr;
+
+  if (ok) {
+    serial_write_string("scheduler ok");
+    serial_write_crlf();
+  }
+
+  return ok;
+}
+
 bool wait_for_keyboard_irq_count(uint64_t target_count,
                                  uint64_t timeout_ticks) {
   const uint64_t start_tick = timer_tick_count();
@@ -2130,6 +2318,150 @@ bool run_keyboard_smoke_test() {
              (sizeof(kKeyboardExpectedChars) / sizeof(kKeyboardExpectedChars[0])) &&
          chars_match && !has_extra_char && remaining_chars == 0 &&
          dropped_char_count == 0;
+}
+
+bool run_stdin_syscall_smoke_test(SyscallContext* context,
+                                  FileDescriptorTable* fd_table) {
+  if (context == nullptr ||
+      fd_table == nullptr ||
+      !keyboard_is_ready() ||
+      keyboard_buffered_char_count() != 0 ||
+      !initialize_syscall_context(context, fd_table) ||
+      !install_syscall_dispatch_context(context) ||
+      !syscall_dispatch_is_ready()) {
+    return false;
+  }
+
+  uint64_t expected_irq_count = keyboard_irq_count();
+  enable_interrupts();
+
+  for (uint64_t i = 0; i < (sizeof(kSyscallStdinScancodes) /
+                            sizeof(kSyscallStdinScancodes[0]));
+       ++i) {
+    serial_write_string("stdin_inject[");
+    serial_write_u64(i);
+    serial_write_string("]=0x");
+    serial_write_hex64(kSyscallStdinScancodes[i]);
+    serial_write_crlf();
+
+    if (!keyboard_inject_test_scancode(kSyscallStdinScancodes[i])) {
+      disable_interrupts();
+      return false;
+    }
+
+    ++expected_irq_count;
+    if (!wait_for_keyboard_irq_count(expected_irq_count,
+                                     kKeyboardTestTimeoutTicks)) {
+      disable_interrupts();
+      return false;
+    }
+  }
+
+  disable_interrupts();
+
+  char stdin_buffer[8];
+  const int32_t stdin_read =
+      sys_read(context, kSyscallStandardInputFd,
+               stdin_buffer, sizeof(stdin_buffer) - 1);
+  if (stdin_read < 0) {
+    return false;
+  }
+  stdin_buffer[static_cast<size_t>(stdin_read)] = '\0';
+
+  char stdin_empty = '\0';
+  const int32_t stdin_empty_read =
+      sys_read(context, kSyscallStandardInputFd,
+               &stdin_empty, 1);
+
+  serial_write_string("stdin_sys_read=");
+  serial_write_i64(stdin_read);
+  serial_write_crlf();
+
+  serial_write_string("stdin_sys_empty=");
+  serial_write_i64(stdin_empty_read);
+  serial_write_crlf();
+
+  enable_interrupts();
+
+  for (uint64_t i = 0; i < (sizeof(kInt80StdinScancodes) /
+                            sizeof(kInt80StdinScancodes[0]));
+       ++i) {
+    serial_write_string("stdin_int80_inject[");
+    serial_write_u64(i);
+    serial_write_string("]=0x");
+    serial_write_hex64(kInt80StdinScancodes[i]);
+    serial_write_crlf();
+
+    if (!keyboard_inject_test_scancode(kInt80StdinScancodes[i])) {
+      disable_interrupts();
+      return false;
+    }
+
+    ++expected_irq_count;
+    if (!wait_for_keyboard_irq_count(expected_irq_count,
+                                     kKeyboardTestTimeoutTicks)) {
+      disable_interrupts();
+      return false;
+    }
+  }
+
+  disable_interrupts();
+
+  char int80_stdin_buffer[8];
+  const int64_t int80_stdin_read =
+      invoke_int80_syscall(kSyscallNumberRead,
+                           static_cast<uint64_t>(kSyscallStandardInputFd),
+                           reinterpret_cast<uint64_t>(int80_stdin_buffer),
+                           sizeof(int80_stdin_buffer) - 1);
+  if (int80_stdin_read < 0) {
+    return false;
+  }
+  int80_stdin_buffer[static_cast<size_t>(int80_stdin_read)] = '\0';
+
+  char int80_stdin_empty = '\0';
+  const int64_t int80_stdin_empty_read =
+      invoke_int80_syscall(kSyscallNumberRead,
+                           static_cast<uint64_t>(kSyscallStandardInputFd),
+                           reinterpret_cast<uint64_t>(&int80_stdin_empty),
+                           1);
+
+  const uint16_t remaining_chars = keyboard_buffered_char_count();
+  const uint64_t dropped_chars = keyboard_dropped_char_count();
+
+  serial_write_string("stdin_int80_read=");
+  serial_write_i64(int80_stdin_read);
+  serial_write_crlf();
+
+  serial_write_string("stdin_int80_empty=");
+  serial_write_i64(int80_stdin_empty_read);
+  serial_write_crlf();
+
+  serial_write_string("stdin_buffer_remaining=");
+  serial_write_u64(remaining_chars);
+  serial_write_crlf();
+
+  serial_write_string("stdin_dropped_chars=");
+  serial_write_u64(dropped_chars);
+  serial_write_crlf();
+
+  const bool ok =
+      keyboard_irq_count() == expected_irq_count &&
+      stdin_read == static_cast<int32_t>(string_length(kSyscallStdinExpected)) &&
+      stdin_empty_read == 0 &&
+      strings_equal(stdin_buffer, kSyscallStdinExpected) &&
+      int80_stdin_read ==
+          static_cast<int64_t>(string_length(kInt80StdinExpected)) &&
+      int80_stdin_empty_read == 0 &&
+      strings_equal(int80_stdin_buffer, kInt80StdinExpected) &&
+      remaining_chars == 0 &&
+      dropped_chars == 0;
+
+  if (ok) {
+    serial_write_string("stdin_syscall ok");
+    serial_write_crlf();
+  }
+
+  return ok;
 }
 
 bool run_console_input_smoke_test() {
@@ -2521,35 +2853,47 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 
   write_status_line(15, "timer ok");
 
-  if (!run_keyboard_smoke_test()) {
-    write_status_line(16, "keyboard bad");
+  if (!run_scheduler_smoke_test()) {
+    write_status_line(16, "scheduler bad");
     return;
   }
 
-  write_status_line(16, "keyboard ok");
+  write_status_line(16, "scheduler ok");
+
+  if (!run_keyboard_smoke_test()) {
+    write_status_line(17, "keyboard bad");
+    return;
+  }
+
+  if (!run_stdin_syscall_smoke_test(&g_syscall_context, &g_fd_table)) {
+    write_status_line(17, "stdin syscall bad");
+    return;
+  }
+
+  write_status_line(17, "keyboard ok");
 
   if (!run_console_input_smoke_test()) {
-    write_status_line(17, "console input bad");
+    write_status_line(18, "console input bad");
     return;
   }
 
-  write_status_line(17, "console input ok");
+  write_status_line(18, "console input ok");
 
   if (!run_shell_smoke_test(boot_info, &g_boot_volume,
                             &g_boot_block_device, &g_syscall_context)) {
-    write_status_line(18, "shell bad");
+    write_status_line(19, "shell bad");
     return;
   }
 
-  write_status_line(18, "shell ok");
+  write_status_line(19, "shell ok");
 
 #if defined(OS64_ENABLE_PAGE_FAULT_SMOKE)
-  write_status_line(19, "page fault smoke");
+  write_status_line(20, "page fault smoke");
   run_page_fault_smoke_test();
 #endif
 
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
-  write_status_line(19, "invalid opcode smoke");
+  write_status_line(20, "invalid opcode smoke");
   run_invalid_opcode_smoke_test();
 #endif
 

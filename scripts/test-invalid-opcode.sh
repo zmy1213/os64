@@ -20,7 +20,9 @@ serial_log_has_expected_markers() {
     && grep -q "fd_layer ok" "$serial_log" \
     && grep -q "syscall_layer ok" "$serial_log" \
     && grep -q "int80_syscall ok" "$serial_log" \
+    && grep -q "stdin_syscall ok" "$serial_log" \
     && grep -q "filesystem ok" "$serial_log" \
+    && grep -q "scheduler ok" "$serial_log" \
     && grep -q "keyboard ok" "$serial_log" \
     && grep -q "console input ok" "$serial_log" \
     && grep -q "shell ok" "$serial_log" \

@@ -66,6 +66,10 @@
    再继续往前，让 CPU 真正执行一次 `int 0x80`，把寄存器打进 IDT 的软中断门，再由 C++ 分发器转到现有 `sys_*`。
 31. [从第一版 `int 0x80` 到公开 fd + `sys_write`](./KERNEL_SYSCALL_WRITE_GUIDE.md)
    再继续往前，把公开 syscall fd 先整理成 `0/1/2 = stdin/stdout/stderr`、`3+ = 普通文件`，并补上第一版 `sys_write` 输出路径。
+32. [从公开 fd + `sys_write` 到第一版 `stdin/read(0)`](./KERNEL_SYSCALL_STDIN_GUIDE.md)
+   再继续往前，把键盘字符缓冲真正接成 `stdin`，让 `read(0, ...)` 和 `int 0x80` 版本都能读到第一版标准输入。
+33. [从第一版 `stdin/read(0)` 到第一版 `process/thread/scheduler`](./KERNEL_TASKING_GUIDE.md)
+   再继续往前，把“整个系统只有一条内核主线在跑”推进成“内核已经有可调度线程、独立线程栈、ready queue 和第一版时间片切换骨架”。
 
 一句话记忆这个顺序：
 
@@ -101,4 +105,6 @@ stage1
 -> cwd inside syscall context
 -> first int 0x80 syscall gate
 -> public syscall fd 0/1/2 + first sys_write
+-> first stdin/read(0) from keyboard char stream
+-> first process/thread/scheduler skeleton
 ```

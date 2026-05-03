@@ -1,6 +1,6 @@
 # kernel 目录说明
 
-现在 `kernel/` 已经按职责拆成 10 类：
+现在 `kernel/` 已经按职责拆成 11 类：
 
 ```text
 kernel/
@@ -54,6 +54,10 @@ kernel/
 ├── syscall/
 │   ├── syscall.hpp
 │   └── syscall.cpp
+├── task/
+│   ├── scheduler.hpp
+│   ├── scheduler.cpp
+│   └── context_switch.asm
 └── runtime/
     ├── runtime.hpp
     └── runtime.cpp
@@ -103,6 +107,8 @@ kernel/
 - 定时器中断测试
 - 基于 tick 的最小等待 / sleep 测试
 - 键盘 IRQ + 字符缓冲区测试
+- 第一版 `stdin/read(0)` 键盘字符流烟测
+- 第一版 `process/thread/scheduler` 烟测
 - 控制台回显 + 最小行输入测试
 - 最小 shell 命令测试
 - shell 当前工作目录 `pwd` / `cd` / 相对路径测试
@@ -224,7 +230,7 @@ kernel/
 
 - `syscall.cpp/.hpp`
   现在先提供 `SyscallContext`，以及 `sys_open`、`sys_read`、`sys_write`、`sys_stat`、`sys_seek`、`sys_close`，再往前补了 `sys_getcwd`、`sys_chdir`、`sys_stat_path`、`sys_listdir`。
-  它先把“上层通过 fd、cwd、路径、错误码访问内核服务”的形状定下来，后来又往前补了第一版 `int 0x80` 软中断分发器，以及公开 syscall fd `0/1/2 = stdin/stdout/stderr`、`3+ = 普通文件` 这层边界翻译。
+  它先把“上层通过 fd、cwd、路径、错误码访问内核服务”的形状定下来，后来又往前补了第一版 `int 0x80` 软中断分发器，以及公开 syscall fd `0/1/2 = stdin/stdout/stderr`、`3+ = 普通文件` 这层边界翻译；现在 `sys_read(0)` 也已经能从键盘字符流读输入。
 
 一句话理解：
 
@@ -232,7 +238,22 @@ kernel/
 
 ---
 
-## 10. `runtime/`
+## 10. `task/`
+
+这里放第一版任务系统模块：
+
+- `scheduler.cpp/.hpp`
+  现在先放 `ProcessControlBlock`、`ThreadControlBlock`、`SchedulerState`，以及第一版 ready queue、线程创建、线程退出、时间片请求和协作式切换入口。
+- `context_switch.asm`
+  这是第一版真正的线程上下文切换汇编。当前先只保存 callee-saved 寄存器和 `RSP`，刚好够这轮 kernel thread 骨架使用。
+
+一句话理解：
+
+> `task/` 管“谁是进程、谁是线程、线程怎样拥有独立栈、调度器怎样决定下一次把 CPU 交给谁”。
+
+---
+
+## 11. `runtime/`
 
 这里放 freestanding 内核里最小的运行时工具：
 
@@ -257,7 +278,7 @@ kernel/
 
 ---
 
-## 11. 为什么现在这样分
+## 12. 为什么现在这样分
 
 因为如果所有文件都继续平铺在 `kernel/` 根目录，
 后面一多起来你会很快分不清：

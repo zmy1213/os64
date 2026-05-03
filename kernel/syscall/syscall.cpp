@@ -1,6 +1,9 @@
 #include "syscall/syscall.hpp"
 
+#include "interrupts/interrupts.hpp"
+#include "interrupts/keyboard.hpp"
 #include "runtime/runtime.hpp"
+#include "task/scheduler.hpp"
 
 namespace {
 
@@ -202,6 +205,39 @@ uint64_t encode_syscall_result(int64_t value) {
 
 int64_t syscall_status_result(SyscallStatus status) {
   return static_cast<int64_t>(status);
+}
+
+int32_t read_stdin_stream(void* buffer, size_t bytes_to_read) {
+  if (!keyboard_is_ready()) {
+    return kSyscallUnsupported;
+  }
+
+  char* out_buffer = static_cast<char*>(buffer);
+  size_t total_read = 0;
+
+  for (;;) {
+    char character = '\0';
+    while (total_read < bytes_to_read &&
+           keyboard_try_read_stream_char(&character)) {
+      out_buffer[total_read++] = character;
+    }
+
+    if (total_read > 0) {
+      return static_cast<int32_t>(total_read);
+    }
+
+    // 这里 deliberately 不把“当前没有字符”当成 EOF。
+    // 第一版 stdin 更像终端输入：如果中断开着，就等下一次键盘 IRQ 把字符送进来。
+    if (!interrupts_are_enabled()) {
+      return 0;
+    }
+
+    wait_for_interrupt();
+
+    // stdin 现在也开始配合调度器：
+    // 当线程正阻塞在“等下一个键盘 IRQ”时，允许在安全点切给别的线程。
+    (void)scheduler_yield_if_requested();
+  }
 }
 
 int64_t dispatch_syscall_registers(uint64_t syscall_number,
@@ -500,6 +536,10 @@ int32_t sys_read(SyscallContext* context, int32_t fd,
 
   if (buffer == nullptr || bytes_to_read > kMaxSyscallPositiveResult) {
     return kSyscallInvalidArgument;
+  }
+
+  if (fd == kSyscallStandardInputFd) {
+    return read_stdin_stream(buffer, bytes_to_read);
   }
 
   if (syscall_fd_is_reserved(fd)) {

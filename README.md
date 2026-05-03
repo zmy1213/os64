@@ -142,6 +142,7 @@ make clean
 - `fd_layer ok`
 - `syscall_layer ok`
 - `int80_syscall ok`
+- `scheduler ok`
 - `shell ok`
 
 最后会进入最小交互 shell，
@@ -212,6 +213,11 @@ os64>
 - kernel 里现在还补了第一版 `int 0x80` 软中断入口，会把寄存器参数转进现有 `sys_*` 分发器
 - kernel 里现在又把公开 syscall fd 先整理成 `0/1/2 = stdin/stdout/stderr`、`3+ = 普通文件`
 - kernel 里现在已经补了第一版 `sys_write`，能先把 `stdout/stderr` 写到当前控制台输出路径
+- kernel 里现在又把 `stdin` 真正接到了键盘字符流，第一版 `sys_read(0, ...)` 和 `int 0x80 read(0, ...)` 都已经能读输入
+- kernel 里现在已经补了第一版 `Process/Thread/Scheduler` 骨架，开始真正区分“进程拥有资源”和“线程在 CPU 上执行”
+- 每个 kernel thread 现在已经有自己的独立栈，调度器也已经能用 round-robin 在 ready queue 里的线程之间切换
+- `PIT IRQ0` 现在不只会记全局 tick，也会给当前线程记账，并在时间片用完时发出第一版 reschedule 请求
+- 当前调度模型还不是“完整抢占式内核”：真正切换先放在 `timer_wait_ticks` / `console_read_line_with_history` / `sys_read(stdin)` 这种安全点里完成
 - shell 里可以用 `disk` 看块设备，用 `pwd` / `cd` 管当前目录，用 `ls` / `cat` / `stat` 看文件系统
 - shell 会先把相对路径按 cwd 解析成绝对路径，例如 `cd docs` 后 `cat guide.txt` 会解析成 `/docs/guide.txt`
 - 现在 `pwd` / `cd` / `ls` / `cat` / `stat` 这些路径命令都已经开始改成通过 `SyscallContext + sys_*` 这层工作

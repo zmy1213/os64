@@ -121,7 +121,10 @@ SyscallStatus sys_chdir(SyscallContext* context, const char* path);
 // 成功返回 fd，失败返回负数 SyscallStatus。
 int32_t sys_open(SyscallContext* context, const char* path);
 
-// 成功返回读到的字节数，EOF 返回 0，失败返回负数 SyscallStatus。
+// 成功返回读到的字节数，EOF/当前无可读字符时返回 0，失败返回负数 SyscallStatus。
+// 现在：
+// - `fd == 0` 会走第一版 stdin 键盘字符流
+// - `fd >= 3` 会走只读文件路径
 int32_t sys_read(SyscallContext* context, int32_t fd,
                  void* buffer, size_t bytes_to_read);
 

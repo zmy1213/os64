@@ -179,6 +179,22 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "timer_sleep_ms=50" "$SERIAL_LOG" \
   && grep -q "timer_sleep_elapsed_ticks=" "$SERIAL_LOG" \
   && grep -q "timer ok" "$SERIAL_LOG" \
+  && grep -q "sched_pid=1" "$SERIAL_LOG" \
+  && grep -q "sched_thread_a_tid=1" "$SERIAL_LOG" \
+  && grep -q "sched_thread_b_tid=2" "$SERIAL_LOG" \
+  && grep -q "sched_trace=ABAB" "$SERIAL_LOG" \
+  && grep -q "sched_process_state=exited" "$SERIAL_LOG" \
+  && grep -q "sched_thread_a_state=finished" "$SERIAL_LOG" \
+  && grep -q "sched_thread_b_state=finished" "$SERIAL_LOG" \
+  && grep -q "sched_thread_a_ticks=" "$SERIAL_LOG" \
+  && grep -q "sched_thread_b_ticks=" "$SERIAL_LOG" \
+  && grep -q "sched_total_ticks=" "$SERIAL_LOG" \
+  && grep -q "sched_total_switches=" "$SERIAL_LOG" \
+  && grep -q "sched_total_yields=" "$SERIAL_LOG" \
+  && grep -q "sched_preempt_requests=" "$SERIAL_LOG" \
+  && grep -q "sched_ready_after=0" "$SERIAL_LOG" \
+  && grep -q "sched_live_after=0" "$SERIAL_LOG" \
+  && grep -q "scheduler ok" "$SERIAL_LOG" \
   && grep -q "keyboard init ok" "$SERIAL_LOG" \
   && grep -q "keyboard irq1 enabled" "$SERIAL_LOG" \
   && grep -q "keyboard_irq_count=7" "$SERIAL_LOG" \
@@ -192,6 +208,13 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "keyboard_char_5=0x0000000000000008" "$SERIAL_LOG" \
   && grep -q "keyboard_buffer_remaining=0" "$SERIAL_LOG" \
   && grep -q "keyboard_dropped_chars=0" "$SERIAL_LOG" \
+  && grep -q "stdin_sys_read=3" "$SERIAL_LOG" \
+  && grep -q "stdin_sys_empty=0" "$SERIAL_LOG" \
+  && grep -q "stdin_int80_read=3" "$SERIAL_LOG" \
+  && grep -q "stdin_int80_empty=0" "$SERIAL_LOG" \
+  && grep -q "stdin_buffer_remaining=0" "$SERIAL_LOG" \
+  && grep -q "stdin_dropped_chars=0" "$SERIAL_LOG" \
+  && grep -q "stdin_syscall ok" "$SERIAL_LOG" \
   && grep -q "keyboard ok" "$SERIAL_LOG" \
   && grep -q "console_line_length=5" "$SERIAL_LOG" \
   && grep -q "console_line=os 64" "$SERIAL_LOG" \

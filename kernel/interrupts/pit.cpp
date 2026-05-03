@@ -1,6 +1,7 @@
 #include "interrupts/pit.hpp"
 
 #include "interrupts/interrupts.hpp"
+#include "task/scheduler.hpp"
 
 namespace {
 
@@ -55,6 +56,10 @@ void handle_timer_irq() {
   // 第一版先只做一件最重要的事：
   // 来一次时钟中断，就把 tick 加 1。
   ++g_timer_ticks;
+
+  // 现在 timer IRQ 不只是在数“时间过去了多少”，
+  // 也开始给当前线程记账，并在时间片耗尽时发出 reschedule 请求。
+  scheduler_handle_timer_tick();
 }
 
 uint64_t timer_tick_count() {
@@ -79,6 +84,10 @@ void timer_wait_ticks(uint64_t ticks) {
   const uint64_t start_tick = g_timer_ticks;
   while ((g_timer_ticks - start_tick) < ticks) {
     wait_for_interrupt();
+
+    // 当前版本还不在 IRQ 里直接做抢占式切栈，
+    // 所以先在这种从 `hlt` 醒来的安全点响应“该换人了”的请求。
+    (void)scheduler_yield_if_requested();
   }
 }
 

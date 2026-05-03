@@ -480,10 +480,27 @@ write 就是多写个函数
 
 现在最顺的下一步一般有两条：
 
-第一条是继续补 syscall / I/O 边界：
+这一步后来继续推进到了：
 
 ```text
-stdin/read
+第一版 stdin/read(0)
+```
+
+也就是：
+
+- `sys_read(0, ...)` 直接从键盘字符流读输入
+- `int 0x80` 版本也能走同一条 stdin 路径
+- 方向键这类非字符事件暂时留给 console/shell，不进入字节流 stdin
+
+所以接下来最顺的方向仍然是：
+
+```text
+继续补 syscall / I/O 边界
+```
+
+比如：
+
+```text
 目录 fd / readdir
 更正式的终端/TTY 抽象
 ```
@@ -508,3 +525,9 @@ TSS
 原因是：
 
 > 用户态一旦进来，调试难度会突然上升；先把边界继续做实，后面会轻松很多。
+
+继续阅读：
+
+```text
+docs/KERNEL_SYSCALL_STDIN_GUIDE.md
+```
