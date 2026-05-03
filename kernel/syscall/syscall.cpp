@@ -802,10 +802,33 @@ extern "C" void kernel_handle_syscall(SyscallInterruptFrame* frame) {
 
   capture_current_user_trap_frame(frame);
 
+  // `int 0x80` 现在走的是 DPL=3 的 interrupt gate。
+  // 这意味着：
+  // - CPU 进内核时会先自动把 IF 清掉
+  // - 如果我们什么都不做，像 `read(0)` 这种“需要等键盘 IRQ 来唤醒自己”的 syscall
+  //   就会看到“当前中断没开”，从而根本没法真正 block
+  //
+  // 所以这里做一个很保守的补丁：
+  // 只有当这次 syscall 确实来自 ring3，且用户态原来的 RFLAGS 里 IF 本来就是开的，
+  // 才在真正分发 syscall 期间重新开中断。
+  //
+  // 这样：
+  // - 普通内核态测试用的 `int 0x80` 行为不变
+  // - 用户态阻塞式 syscall 终于能等到外部 IRQ
+  const bool should_enable_interrupts =
+      frame_came_from_user_mode(frame) && ((frame->rflags & (1ULL << 9)) != 0);
+  if (should_enable_interrupts) {
+    enable_interrupts();
+  }
+
   frame->rax = encode_syscall_result(
       dispatch_syscall_registers(frame->rax,
                                  frame->rdi,
                                  frame->rsi,
                                  frame->rdx,
                                  frame->rcx));
+
+  if (should_enable_interrupts) {
+    disable_interrupts();
+  }
 }

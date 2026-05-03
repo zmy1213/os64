@@ -546,7 +546,11 @@ user thread 可以暂停在内核里，再回来，最后还能继续回到 ring
 
 ## 9. 这一轮之后，下一步最合理做什么
 
-最合理的下一步通常是继续把“恢复用户态”做得更正式：
+这一步后来已经继续推进成“第一版 user timer preemption”，
+可以接着看 [KERNEL_USER_TIMER_PREEMPT_GUIDE.md](./KERNEL_USER_TIMER_PREEMPT_GUIDE.md)。
+
+如果只站在这一轮当时的视角，
+最合理的下一步通常还是继续把“恢复用户态”做得更正式：
 
 1. 让保存下来的 `UserTrapFrame` 不只是可观察，而是能真正参与恢复路径
 2. 让 timer 抢占也能安全切走 user thread，再回到 ring 3

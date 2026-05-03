@@ -23,6 +23,37 @@ struct InterruptFrame {
   uint64_t rflags;       // 当时的标志寄存器值。
 };
 
+// 这是给“需要看到完整通用寄存器现场”的入口准备的帧。
+// 现在有两类路径会用它：
+// 1. `int 0x80` syscall
+// 2. 硬件 IRQ，尤其是后面要做的“用户态被 timer 打断再恢复”
+//
+// 顺序必须严格匹配 `interrupt_stubs.asm` 里压栈的顺序。
+// 也就是说，C++ 看到的不是“抽象出来的寄存器对象”，
+// 而是真正照着汇编栈布局解释的一块内存。
+struct RegisterInterruptFrame {
+  uint64_t r15;          // 通用寄存器 r15。用户态/内核态切换回来以后，这些值都应该原样恢复。
+  uint64_t r14;          // 通用寄存器 r14。
+  uint64_t r13;          // 通用寄存器 r13。
+  uint64_t r12;          // 通用寄存器 r12。
+  uint64_t r11;          // 通用寄存器 r11。
+  uint64_t r10;          // 通用寄存器 r10。
+  uint64_t r9;           // 通用寄存器 r9。
+  uint64_t r8;           // 通用寄存器 r8。
+  uint64_t rdi;          // SysV 第 1 个参数寄存器。
+  uint64_t rsi;          // SysV 第 2 个参数寄存器。
+  uint64_t rbp;          // 基址寄存器；很多函数会把它当栈帧锚点。
+  uint64_t rbx;          // 被调用者保存寄存器之一。
+  uint64_t rdx;          // SysV 第 3 个参数寄存器。
+  uint64_t rcx;          // SysV 第 4 个参数寄存器；当前 `int 0x80` ABI 也拿它当第 4 参数。
+  uint64_t rax;          // 常常既是 syscall 编号寄存器，也是返回值寄存器。
+  uint64_t vector;       // 这次进内核到底是哪个向量触发的，比如 32 是 timer IRQ，128 是 `int 0x80`。
+  uint64_t error_code;   // 没有硬件错误码时，stub 会手工补一个 0，保证布局统一。
+  uint64_t rip;          // 返回用户态/内核态后，CPU 下一条要继续执行的指令地址。
+  uint64_t cs;           // 当时的代码段选择子；最低两位还能看出 CPL。
+  uint64_t rflags;       // 当时的 RFLAGS。
+};
+
 // 第一版 kernel-side TSS 初始化：
 // - 安装一份内核自己的 GDT
 // - 给 64 位 TSS 描述符分配槽位
@@ -59,5 +90,7 @@ void wait_for_interrupt();
 
 static_assert(sizeof(InterruptFrame) == 40,
               "InterruptFrame layout must stay stable");
+static_assert(sizeof(RegisterInterruptFrame) == 160,
+              "RegisterInterruptFrame layout must stay stable");
 
 #endif

@@ -115,7 +115,7 @@ irq_stub_%1:
     push r13
     push r14
     push r15
-    lea rdi, [rsp + 15 * 8]         ; 跳过 15 个通用寄存器后，刚好指到 vector/error/rip...
+    mov rdi, rsp                    ; 现在 IRQ 也把“完整寄存器帧起点”交给 C++，这样后面才能保存用户态被抢占时的全部现场。
     cld
     call kernel_handle_irq
     pop r15                         ; C++ 处理完后，把刚才保存的寄存器按相反顺序恢复。

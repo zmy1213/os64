@@ -84,6 +84,7 @@ struct ThreadControlBlock {
   size_t stack_allocation_bytes;                   // 栈一共分了多少字节。
   uint64_t stack_top;                              // 栈顶虚拟地址，主要给初始化栈帧用。
   uint64_t saved_stack_pointer;                    // 这就是上下文切换时真正来回保存/恢复的 RSP。
+  uint64_t saved_address_space_root_physical;      // 这条“已保存内核上下文”下次被恢复时，应该先切到哪份 CR3；有了它，调度器才知道不同线程暂停时各自依赖哪份地址空间。
   uint64_t dispatch_count;                         // 这个线程被切上 CPU 多少次。
   uint64_t yield_count;                            // 这个线程主动/被请求让出 CPU 多少次。
   uint64_t consumed_ticks;                         // 这个线程在运行态下累计消耗了多少 timer tick。
@@ -94,6 +95,9 @@ struct ThreadControlBlock {
   uint64_t user_kernel_entry_stack_top;            // 这样每次 `int 0x80` 就不会踩坏 `user_mode_enter()` 当初保存的最终返回现场。
   bool has_user_trap_frame;                        // 当前这条 user thread 最近一次从 ring 3 进内核时，是否已经捕获到一份正式 trap frame。
   UserTrapFrame user_trap_frame;                   // 最近一次保存下来的用户态寄存器/iret 现场；后面做正式恢复时会靠它。
+  bool has_user_preempt_trap_frame;                // 这是一份单独留给“timer 从 ring3 抢占进来”的现场，和普通 syscall 现场分开看更容易理解。
+  UserTrapFrame user_preempt_trap_frame;           // 它记录“用户线程正在 ring3 跑时，被 IRQ0 停在了哪条指令、哪些寄存器值是多少”。
+  uint64_t user_preempt_count;                     // 实际发生过多少次“用户态运行中被 timer 抢占并切去别的线程”。
   uint64_t user_yield_count;                       // 第一版先单独记“用户线程通过 syscall 主动让出 CPU”多少次，方便 smoke test 观察。
   char name[kSchedulerNameCapacity];               // 线程名字先也做成固定数组，避免早期依赖动态字符串。
 };

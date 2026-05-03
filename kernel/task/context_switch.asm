@@ -1,6 +1,7 @@
 bits 64
 
 global scheduler_switch_context
+global scheduler_switch_context_and_root
 global user_mode_enter
 global user_mode_resume_kernel
 global user_mode_smoke_program_start
@@ -42,6 +43,41 @@ scheduler_switch_context:
     pop rbp
     ret
 
+; 这是在原来最小上下文切换之上再多做一步 CR3 切换的版本。
+; 它解决的问题是：
+; - 当前线程的内核上下文，可能保存在 user root 下
+; - 下一条线程的内核上下文，可能要求先回到 kernel root
+;
+; 所以顺序必须是：
+; 1. 先在“当前还活着的地址空间”里把当前 RSP 保存好
+; 2. 再切到下一条线程要求的 CR3
+; 3. 最后才把 RSP 改成下一条线程自己的保存值
+;
+; 入参：
+;   RDI = 要把当前 RSP 保存到哪里
+;   RSI = 下一条线程恢复时应该使用的 RSP
+;   RDX = 下一条线程恢复前必须先装入的 CR3
+scheduler_switch_context_and_root:
+    push rbp
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov [rdi], rsp
+    mov rax, rdx
+    mov cr3, rax
+    mov rsp, rsi
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+
 ; 下面这几个偏移必须和 `kernel/task/user_mode.hpp` 里的
 ; `UserModeLaunchContext` 完全一致。
 %define USER_MODE_KERNEL_RESUME_RSP   0
@@ -63,9 +99,16 @@ scheduler_switch_context:
 %define SYSCALL_WRITE_NUMBER         9
 %define SYSCALL_EXIT_NUMBER          10
 %define SYSCALL_YIELD_NUMBER         11
+%define USER_MODE_PREEMPT_SHARED_PAGE_VIRT 0x0000000000401000
+%define USER_MODE_PREEMPT_ARM_OFFSET       0
+%define USER_MODE_PREEMPT_DONE_OFFSET      8
+%define USER_MODE_STDIN_ARM_OFFSET         16
+%define USER_MODE_STDIN_DONE_OFFSET        24
 %define USER_MODE_RESULT_ROOT_CWD_OK       0x0001
 %define USER_MODE_RESULT_README_PREFIX_OK  0x0002
 %define USER_MODE_RESULT_YIELD_RESUME_OK   0x0004
+%define USER_MODE_RESULT_TIMER_PREEMPT_OK  0x0008
+%define USER_MODE_RESULT_STDIN_BLOCK_OK    0x0010
 
 ; 第一次进用户态不是普通 `call`，而是：
 ; 1. 先把“当前这个内核调用点”需要恢复的 callee-saved 寄存器压栈
@@ -284,6 +327,8 @@ user_mode_smoke_program_end:
 ; 2. 内核把当前 user thread 切走，让别的线程先跑
 ; 3. 再切回来后，用户态从原来的下一条指令继续执行
 ; 4. 并且关键寄存器内容也保持不变
+; 5. 最后再进一步验证：用户线程在 ring3 自旋时，被 timer IRQ 抢占走，再回来继续执行
+; 6. 然后再验证：用户线程在 ring3 里调用 `read(0)` 时，如果当前没字符，会先 block，等键盘 IRQ 唤醒后再回到用户态
 ;
 ; 注意：
 ; 这一段会被单独复制到用户代码页里，
@@ -424,6 +469,58 @@ user_mode_yield_program_start:
     mov edx, user_mode_yield_after_message_end - user_mode_yield_after_message
     int 0x80
 
+    mov eax, SYSCALL_WRITE_NUMBER
+    mov edi, 1
+    lea rsi, [rel user_mode_preempt_before_message]
+    mov edx, user_mode_preempt_before_message_end - user_mode_preempt_before_message
+    int 0x80
+
+    mov rax, USER_MODE_PREEMPT_SHARED_PAGE_VIRT
+    mov qword [rax + USER_MODE_PREEMPT_ARM_OFFSET], 1
+
+.yield_wait_preempt_done:
+    cmp qword [rax + USER_MODE_PREEMPT_DONE_OFFSET], 0
+    je .yield_wait_preempt_done
+    mov rcx, 0x13579BDF2468ACE0
+    cmp r15, rcx
+    jne .yield_exit_user_mode
+    mov rcx, 0x0FEDCBA987654321
+    cmp r14, rcx
+    jne .yield_exit_user_mode
+    or ebx, USER_MODE_RESULT_TIMER_PREEMPT_OK
+
+    mov eax, SYSCALL_WRITE_NUMBER
+    mov edi, 1
+    lea rsi, [rel user_mode_preempt_after_message]
+    mov edx, user_mode_preempt_after_message_end - user_mode_preempt_after_message
+    int 0x80
+
+    mov eax, SYSCALL_WRITE_NUMBER
+    mov edi, 1
+    lea rsi, [rel user_mode_stdin_before_message]
+    mov edx, user_mode_stdin_before_message_end - user_mode_stdin_before_message
+    int 0x80
+
+    mov rax, USER_MODE_PREEMPT_SHARED_PAGE_VIRT
+    mov qword [rax + USER_MODE_STDIN_ARM_OFFSET], 1
+
+    mov eax, SYSCALL_READ_NUMBER
+    mov edi, 0
+    mov rsi, rsp
+    mov edx, 1
+    int 0x80
+    cmp eax, 1
+    jne .yield_exit_user_mode
+    cmp byte [rsp], 'a'
+    jne .yield_exit_user_mode
+    or ebx, USER_MODE_RESULT_STDIN_BLOCK_OK
+
+    mov eax, SYSCALL_WRITE_NUMBER
+    mov edi, 1
+    lea rsi, [rel user_mode_stdin_after_message]
+    mov edx, user_mode_stdin_after_message_end - user_mode_stdin_after_message
+    int 0x80
+
 .yield_exit_user_mode:
     add rsp, 64
 
@@ -443,6 +540,18 @@ user_mode_yield_before_message_end:
 user_mode_yield_after_message:
     db "user_mode_yield_after=1", 10
 user_mode_yield_after_message_end:
+user_mode_preempt_before_message:
+    db "user_mode_preempt_before=1", 10
+user_mode_preempt_before_message_end:
+user_mode_preempt_after_message:
+    db "user_mode_preempt_after=1", 10
+user_mode_preempt_after_message_end:
+user_mode_stdin_before_message:
+    db "user_mode_stdin_before=1", 10
+user_mode_stdin_before_message_end:
+user_mode_stdin_after_message:
+    db "user_mode_stdin_after=1", 10
+user_mode_stdin_after_message_end:
 user_mode_yield_smoke_message:
     db "user_mode_message=hello from ring3 via int80", 10
 user_mode_yield_smoke_message_end:

@@ -149,6 +149,15 @@ make clean
 - `user thread ok`
 - `user_mode_yield_before=1`
 - `user_mode_yield_after=1`
+- `user_mode_preempt_before=1`
+- `user_mode_preempt_after=1`
+- `user_mode_stdin_before=1`
+- `user_mode_stdin_after=1`
+- `user_thread_preempt_trap_vector=0x0000000000000020`
+- `user_thread_kernel_root=0x...`
+- `user_thread_helper_stack_base=0x...`
+- `user_thread_helper_resume_root=0x...`
+- `user_thread_stdin_done_flag=1`
 - `shell ok`
 - `shell_process_pid=6`
 - `shell_thread_tid=13`
@@ -165,6 +174,12 @@ make clean
 - 优先级 + 同优先级 round-robin
 - sleep + idle 唤醒链路
 - block + wake 链路
+
+现在 user thread 这条链路也不只停在“主动 `yield` 再回来”：
+
+- 用户态可以先在 syscall 里主动 `yield`
+- 然后还能在 ring 3 自旋时被 timer IRQ 抢占
+- 再通过原来的 `iretq` 返回链回到用户态继续执行
 
 最后会进入最小交互 shell，
 而且现在这个 shell 已经不是 `kernel_main` 直接死循环跑出来的，
@@ -242,7 +257,7 @@ os64>
 - 每个 kernel thread 现在已经有自己的独立栈，调度器也已经能按 `high/normal/background` 选线程，并在同优先级里 round-robin
 - 线程现在已经有 `ready/running/sleeping/blocked/finished` 这些状态，`idle thread` 也已经补上
 - `PIT IRQ0` 现在不只会记全局 tick，也会给当前线程记账，并在时间片用完时发出第一版 reschedule 请求
-- 当前调度模型还不是“完整抢占式内核”：真正切换先放在 `timer_wait_ticks` / `console_read_line_with_history` / `sys_read(stdin)` 这种安全点里完成
+- 当前调度模型还不是“完整抢占式内核”：大多数 kernel thread 仍然主要在 `timer_wait_ticks` / `console_read_line_with_history` / `sys_read(stdin)` 这种安全点切换；但 user thread 这条路径已经能在 ring 3 被 timer IRQ 抢占，并沿着 IRQ 返回链切去别的线程再回来
 - kernel 里现在已经第一次真正进入 ring 3：内核会克隆一份用户地址空间、映射 1 页用户代码和 1 页用户栈、用 `iretq` 落进用户态，再让用户代码用 `int 0x80` 调回现有 syscall 路径
 - 这一步现在还只是教学型 smoke test，不是完整用户进程模型；它主要证明 `ring 0 -> ring 3 -> ring 0` 的链路已经打通
 - kernel 里现在又往前走了一步：这次用户态不再只是 `kernel_main` 自己手工调一次，而是已经能作为第一版 `user thread` 挂进 scheduler，由 scheduler 切它进 ring 3，再在 `exit` 后正式把线程回收到 `finished`
@@ -250,6 +265,10 @@ os64>
 - kernel 里现在又把 `FileDescriptorTable + SyscallContext` 正式挂进 `ProcessControlBlock`，让“每进程自己的 cwd/fd/syscall 视图”第一次真正落地
 - `int 0x80` 分发现在如果正跑在线程上下文里，会优先取“当前线程所属进程”的 `syscall_context`，不再先信任全局默认上下文
 - ring 3 smoke program 现在不只会打印一句话，还会 `getcwd()` 并用相对路径 `open("readme.txt")`；scheduler 版 smoke 还会故意把默认内核 cwd 设成 `/docs`，借此证明用户进程看到的仍然是它自己的 `/`
+- kernel 里现在又把“暂停下来的内核栈属于哪份页表根”正式纳入调度器上下文：线程切换时不只保存 `RSP`，还会保存/恢复对应 `CR3`
+- 所以挂在 user process 下面的 helper kernel thread 现在也能回到普通 `kernel heap` 栈，不需要再靠低地址 identity-mapped 栈过渡
+- kernel 里现在又把“用户态阻塞式 syscall”往前推了一步：ring3 里的 `read(0)` 在没有字符时，会先在 syscall 里 block，再由键盘 IRQ 唤醒回来
+- 这一轮还顺手补了一个很关键的内核语义：来自 ring3 且用户原本开着 IF 的 `int 0x80`，在真正分发 syscall 期间会重新开中断，不然像 `read(0)` 这种要等外部 IRQ 的 syscall 根本不可能真的睡下去
 - shell 里可以用 `disk` 看块设备，用 `pwd` / `cd` 管当前目录，用 `ls` / `cat` / `stat` 看文件系统
 - shell 会先把相对路径按 cwd 解析成绝对路径，例如 `cd docs` 后 `cat guide.txt` 会解析成 `/docs/guide.txt`
 - 现在 `pwd` / `cd` / `ls` / `cat` / `stat` 这些路径命令都已经开始改成通过 `SyscallContext + sys_*` 这层工作

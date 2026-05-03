@@ -84,6 +84,12 @@
    再继续往前，把还挂在全局变量上的 syscall/fd 视图真正挂进 PCB，让 ring 3 代码通过“当前线程所属进程”拿到自己的 cwd、相对路径和文件句柄视图。
 40. [从“每进程 syscall context / fd 视图”到“正式 UserTrapFrame + 每用户线程内核进入栈 + user yield/resume”](./KERNEL_USER_TRAPFRAME_YIELD_GUIDE.md)
    再继续往前，把“能进 ring 3、也能拿到自己 syscall 视图”的 user thread，推进成“能在 syscall 里主动 yield、切去别的线程、再恢复回 ring 3 继续跑”，并正式把 trap frame 和 `TSS.rsp0` 这层机器现场做成可解释的数据结构。
+41. [从“正式 UserTrapFrame + user yield/resume”到“第一版 user timer preemption”](./KERNEL_USER_TIMER_PREEMPT_GUIDE.md)
+   再继续往前，把“只能在 syscall 里主动让出 CPU”的 user thread，推进成“正在 ring 3 跑时也会被 timer IRQ 抢占，切去别的线程，再顺着 IRQ 返回链回到用户态继续跑”。
+42. [从“第一版 user timer preemption”到“调度器保存内核上下文时也保存 CR3”](./KERNEL_SCHEDULER_CR3_SWITCH_GUIDE.md)
+   再继续往前，把“已经能从 ring 3 被 IRQ 抢占”的 user thread 调度路径，从“只保存内核栈 RSP”推进成“保存 RSP + 保存/恢复对应 CR3”，让 helper kernel thread 在 user process 下面也能重新用普通 kernel heap 栈。
+43. [从“调度器保存内核上下文时也保存 CR3”到“用户态 `read(0)` 真正 block/wake”](./KERNEL_USER_STDIN_BLOCK_GUIDE.md)
+   再继续往前，把“已经能 yield / preempt / root-aware 恢复”的 user thread，推进成“在 ring 3 里发起 `read(0)` 时，真的会在 syscall 里 block，再由键盘 IRQ 唤醒回来”。
 
 一句话记忆这个顺序：
 
@@ -129,4 +135,7 @@ stage1
 -> first scheduler-managed user thread with exit back to scheduler
 -> first per-process syscall context and fd view for user processes
 -> formal UserTrapFrame + dedicated per-user-thread kernel-entry stack + user yield/resume path
+-> first user timer preemption from ring3 back through the paused IRQ return path
+-> scheduler saves/restores paused kernel context together with the required CR3 root
+-> first real ring3 stdin read that blocks in-kernel and resumes from keyboard IRQ wakeup
 ```

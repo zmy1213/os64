@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "fs/fd.hpp"
+#include "interrupts/interrupts.hpp"
 
 constexpr size_t kSyscallPathCapacity = 64;  // 第一版每个“进程上下文”的 cwd 先限制在 63 个字符内。
 constexpr int32_t kSyscallStandardInputFd = 0;    // 公开 syscall fd 里，0 预留给标准输入。
@@ -67,32 +68,11 @@ struct SyscallContext {
   void* write_context;                              // 给 write_handler 留一个不透明上下文指针，方便以后接设备对象。
 };
 
-// 这个结构必须严格匹配 `interrupt_stubs.asm` 里 `syscall_interrupt_stub`
-// 的压栈顺序。
-// 现在 `int 0x80` 进入内核后，最顶层先保存的是通用寄存器，
-// 这样 C++ 处理函数既能读参数，也能把返回值写回 `rax`。
-struct SyscallInterruptFrame {
-  uint64_t r15;
-  uint64_t r14;
-  uint64_t r13;
-  uint64_t r12;
-  uint64_t r11;
-  uint64_t r10;
-  uint64_t r9;
-  uint64_t r8;
-  uint64_t rdi;
-  uint64_t rsi;
-  uint64_t rbp;
-  uint64_t rbx;
-  uint64_t rdx;
-  uint64_t rcx;
-  uint64_t rax;
-  uint64_t vector;
-  uint64_t error_code;
-  uint64_t rip;
-  uint64_t cs;
-  uint64_t rflags;
-};
+// syscall 入口现在直接复用“完整寄存器帧”这个通用结构。
+// 好处是：
+// 1. `int 0x80` 和硬件 IRQ 终于在数据布局上统一了
+// 2. 后面做“用户态被 timer 抢占”时，不需要再维护第二套几乎一样的字段
+using SyscallInterruptFrame = RegisterInterruptFrame;
 
 bool initialize_syscall_context(SyscallContext* context,
                                 FileDescriptorTable* fd_table);

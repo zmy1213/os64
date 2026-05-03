@@ -13,8 +13,10 @@ constexpr size_t kMinimumThreadStackBytes = 4096;
 
 SchedulerState* g_active_scheduler = nullptr;  // 当前系统里先只保留 1 个全局活跃调度器。
 
-extern "C" void scheduler_switch_context(uint64_t* saved_stack_pointer,
-                                         uint64_t load_stack_pointer);
+extern "C" void scheduler_switch_context_and_root(
+    uint64_t* saved_stack_pointer,
+    uint64_t load_stack_pointer,
+    uint64_t load_root_physical);
 extern "C" void scheduler_thread_bootstrap();
 
 uint64_t align_down(uint64_t value, uint64_t alignment) {
@@ -74,6 +76,40 @@ bool is_user_thread_ready_to_enter(const ThreadControlBlock* thread) {
          thread->user_mode.user_stack_pointer != 0 &&
          thread->user_mode.user_code_selector != 0 &&
          thread->user_mode.user_stack_selector != 0;
+}
+
+uint64_t scheduler_kernel_root_physical(const SchedulerState* scheduler) {
+  if (scheduler != nullptr &&
+      scheduler->processes[0].in_use &&
+      scheduler->processes[0].address_space.ready &&
+      scheduler->processes[0].address_space.root_physical_address != 0) {
+    return scheduler->processes[0].address_space.root_physical_address;
+  }
+
+  return paging_current_root_physical();
+}
+
+uint64_t thread_resume_root_physical(const SchedulerState* scheduler,
+                                     const ThreadControlBlock* thread) {
+  if (thread != nullptr && thread->saved_address_space_root_physical != 0) {
+    return thread->saved_address_space_root_physical;
+  }
+
+  // 对还没真正跑起来过的新线程，默认先在 kernel root 下恢复它的初始内核上下文。
+  // 这样：
+  // - 普通 kernel thread 能直接安全使用 kernel heap 栈
+  // - user thread 也会先在 kernel root 下跑 bootstrap，再由 `user_mode_enter()` 自己切去 user root
+  return scheduler_kernel_root_physical(scheduler);
+}
+
+void initialize_thread_saved_root(SchedulerState* scheduler,
+                                  ThreadControlBlock* thread) {
+  if (thread == nullptr) {
+    return;
+  }
+
+  thread->saved_address_space_root_physical =
+      scheduler_kernel_root_physical(scheduler);
 }
 
 bool push_ready_thread(SchedulerState* scheduler,
@@ -253,6 +289,58 @@ void mark_thread_running(SchedulerState* scheduler,
   }
 }
 
+void switch_thread_context(SchedulerState* scheduler,
+                           ThreadControlBlock* current_thread,
+                           ThreadControlBlock* next_thread) {
+  if (scheduler == nullptr ||
+      current_thread == nullptr ||
+      next_thread == nullptr) {
+    return;
+  }
+
+  // 这一步的核心就是：
+  // 当前线程暂停下来的内核栈，依赖的是“此刻正在用的这份 CR3”；
+  // 所以先把当前根页表也一起记下来。
+  current_thread->saved_address_space_root_physical =
+      paging_current_root_physical();
+
+  const uint64_t next_root =
+      thread_resume_root_physical(scheduler, next_thread);
+  mark_thread_running(scheduler, next_thread);
+  ++scheduler->total_switches;
+  scheduler_switch_context_and_root(&current_thread->saved_stack_pointer,
+                                    next_thread->saved_stack_pointer,
+                                    next_root);
+}
+
+void switch_from_bootstrap_to_thread(SchedulerState* scheduler,
+                                     ThreadControlBlock* next_thread) {
+  if (scheduler == nullptr || next_thread == nullptr) {
+    return;
+  }
+
+  const uint64_t next_root =
+      thread_resume_root_physical(scheduler, next_thread);
+  mark_thread_running(scheduler, next_thread);
+  ++scheduler->total_switches;
+  scheduler_switch_context_and_root(&scheduler->bootstrap_stack_pointer,
+                                    next_thread->saved_stack_pointer,
+                                    next_root);
+}
+
+void switch_from_thread_to_bootstrap(SchedulerState* scheduler,
+                                     ThreadControlBlock* current_thread) {
+  if (scheduler == nullptr || current_thread == nullptr) {
+    return;
+  }
+
+  current_thread->saved_address_space_root_physical =
+      paging_current_root_physical();
+  scheduler_switch_context_and_root(&current_thread->saved_stack_pointer,
+                                    scheduler->bootstrap_stack_pointer,
+                                    scheduler_kernel_root_physical(scheduler));
+}
+
 void update_owner_ready_state(ProcessControlBlock* owner) {
   if (owner == nullptr) {
     return;
@@ -402,6 +490,7 @@ bool initialize_scheduler(SchedulerState* scheduler,
   idle_thread->is_idle_thread = true;
   copy_name(idle_thread->name, "idle");
   prepare_initial_thread_stack(idle_thread);
+  initialize_thread_saved_root(scheduler, idle_thread);
   scheduler->idle_thread = idle_thread;
 
   g_active_scheduler = scheduler;
@@ -513,38 +602,14 @@ ThreadControlBlock* scheduler_create_kernel_thread(
     stack_bytes = kMinimumThreadStackBytes;
   }
 
-  // 如果这是一条“挂在 user process 下面、但自己跑在 ring 0”的 helper thread，
-  // 它很可能会在当前 user CR3 还没切回 kernel root 时就被调度到。
+  // 现在调度器已经知道“恢复下一条线程前要先切到哪份 CR3”，
+  // 所以 kernel thread 即使挂在 user process 下面，
+  // 也不需要再委屈自己去用 identity-mapped 栈。
   //
-  // 这时如果继续给它用普通 heap 栈，就会撞上当前教学内核的现实限制：
-  // - kernel heap 虚拟区正好和 user window 重叠
-  // - cloned user root 不保证还能看到那根 heap 栈
-  //
-  // 所以这类 helper thread 这一轮也先退回到“低地址 identity-mapped 栈”。
-  // 它不是最终形态，但能先把“用户线程在 syscall 里 yield，再切回来恢复”
-  // 这条路径稳定跑通。
-  const bool use_identity_mapped_stack = !owner->is_kernel_process;
-  void* stack_allocation = nullptr;
-  if (use_identity_mapped_stack) {
-    PageAllocator* const allocator = kernel_memory_page_allocator();
-    if (allocator == nullptr) {
-      return nullptr;
-    }
-
-    stack_bytes = kPagingPageSize;
-    const uint64_t stack_page = alloc_page(allocator);
-    if (stack_page == 0 || stack_page >= kPagingBootIdentityLimit) {
-      return nullptr;
-    }
-
-    stack_allocation =
-        reinterpret_cast<void*>(static_cast<uintptr_t>(stack_page));
-    memory_set(stack_allocation, 0, kPagingPageSize);
-  } else {
-    stack_allocation = kmalloc_aligned(stack_bytes, 16);
-    if (stack_allocation == nullptr) {
-      return nullptr;
-    }
+  // 统一回到普通 kernel heap 栈，更接近真实内核里的线程实现。
+  void* const stack_allocation = kmalloc_aligned(stack_bytes, 16);
+  if (stack_allocation == nullptr) {
+    return nullptr;
   }
 
   memory_set(thread, 0, sizeof(*thread));
@@ -561,6 +626,7 @@ ThreadControlBlock* scheduler_create_kernel_thread(
   thread->is_idle_thread = false;
   copy_name(thread->name, name);
   prepare_initial_thread_stack(thread);
+  initialize_thread_saved_root(scheduler, thread);
 
   ++owner->live_thread_count;
   ++scheduler->live_thread_count;
@@ -569,9 +635,7 @@ ThreadControlBlock* scheduler_create_kernel_thread(
     thread->in_use = false;
     --owner->live_thread_count;
     --scheduler->live_thread_count;
-    if (!use_identity_mapped_stack) {
-      (void)kfree(stack_allocation);
-    }
+    (void)kfree(stack_allocation);
     return nullptr;
   }
 
@@ -657,6 +721,7 @@ ThreadControlBlock* scheduler_create_user_thread(
   thread->user_mode.user_stack_selector = kUserDataSelectorRpl3;
   copy_name(thread->name, name);
   prepare_initial_thread_stack(thread);
+  initialize_thread_saved_root(scheduler, thread);
 
   ++owner->live_thread_count;
   ++scheduler->live_thread_count;
@@ -681,10 +746,7 @@ bool scheduler_run_until_idle(SchedulerState* scheduler) {
     return false;
   }
 
-  mark_thread_running(scheduler, next_thread);
-  ++scheduler->total_switches;
-  scheduler_switch_context(&scheduler->bootstrap_stack_pointer,
-                           next_thread->saved_stack_pointer);
+  switch_from_bootstrap_to_thread(scheduler, next_thread);
   return scheduler->live_thread_count == 0 &&
          scheduler->sleeping_thread_count == 0 &&
          scheduler->blocked_thread_count == 0;
@@ -709,10 +771,7 @@ bool scheduler_yield_current_thread() {
       return false;
     }
 
-    mark_thread_running(scheduler, next_thread);
-    ++scheduler->total_switches;
-    scheduler_switch_context(&current_thread->saved_stack_pointer,
-                             next_thread->saved_stack_pointer);
+    switch_thread_context(scheduler, current_thread, next_thread);
     return true;
   }
 
@@ -739,10 +798,7 @@ bool scheduler_yield_current_thread() {
     return false;
   }
 
-  mark_thread_running(scheduler, next_thread);
-  ++scheduler->total_switches;
-  scheduler_switch_context(&current_thread->saved_stack_pointer,
-                           next_thread->saved_stack_pointer);
+  switch_thread_context(scheduler, current_thread, next_thread);
   return true;
 }
 
@@ -786,10 +842,7 @@ bool scheduler_sleep_current_thread(uint64_t ticks) {
     return false;
   }
 
-  mark_thread_running(scheduler, next_thread);
-  ++scheduler->total_switches;
-  scheduler_switch_context(&current_thread->saved_stack_pointer,
-                           next_thread->saved_stack_pointer);
+  switch_thread_context(scheduler, current_thread, next_thread);
   return true;
 }
 
@@ -826,8 +879,7 @@ bool block_current_thread_internal(bool enable_interrupts_before_switch) {
     enable_interrupts();
   }
 
-  scheduler_switch_context(&current_thread->saved_stack_pointer,
-                           next_thread->saved_stack_pointer);
+  switch_thread_context(scheduler, current_thread, next_thread);
   return true;
 }
 
@@ -880,17 +932,13 @@ bool scheduler_wake_thread(ThreadControlBlock* thread) {
 
   ThreadControlBlock* const next_thread = select_next_runnable_thread(scheduler);
   if (next_thread != nullptr) {
-    mark_thread_running(scheduler, next_thread);
-    ++scheduler->total_switches;
-    scheduler_switch_context(&current_thread->saved_stack_pointer,
-                             next_thread->saved_stack_pointer);
+    switch_thread_context(scheduler, current_thread, next_thread);
   }
 
   scheduler->current_thread = nullptr;
   scheduler->preempt_requested = false;
   scheduler->remaining_slice_ticks = scheduler->time_slice_ticks;
-  scheduler_switch_context(&current_thread->saved_stack_pointer,
-                           scheduler->bootstrap_stack_pointer);
+  switch_from_thread_to_bootstrap(scheduler, current_thread);
 
   for (;;) {
     wait_for_interrupt();
@@ -1049,7 +1097,7 @@ void run_current_user_thread(ThreadControlBlock* current_thread) {
   }
 
   current_thread->user_mode.kernel_root_physical =
-      paging_current_root_physical();
+      scheduler_kernel_root_physical(active_scheduler());
   current_thread->user_mode.user_root_physical =
       current_thread->owner->address_space.root_physical_address;
   current_thread->user_mode.return_value = 0;

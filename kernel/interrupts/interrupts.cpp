@@ -5,6 +5,7 @@
 #include "interrupts/pic.hpp"
 #include "interrupts/pit.hpp"
 #include "runtime/runtime.hpp"
+#include "task/scheduler.hpp"
 
 namespace {
 
@@ -206,6 +207,60 @@ uint16_t read_task_register_selector() {
   return selector;
 }
 
+bool register_frame_came_from_user_mode(const RegisterInterruptFrame* frame) {
+  return frame != nullptr && (frame->cs & 0x3) == 0x3;
+}
+
+void capture_current_user_preempt_trap_frame(
+    const RegisterInterruptFrame* frame) {
+  ThreadControlBlock* const current_thread = scheduler_active_thread();
+  if (current_thread == nullptr ||
+      current_thread->execution_mode != kThreadExecutionModeUser ||
+      !register_frame_came_from_user_mode(frame)) {
+    return;
+  }
+
+  // 这里单独留下“用户态被 timer 打断”的现场。
+  // 我们故意不复用 `user_trap_frame`，是因为那份主要给 syscall 路径看；
+  // 抢占路径拆开以后，日志里更容易分清：
+  // - 这是用户主动 `int 0x80`
+  // - 还是外部时钟硬把它停住了
+  UserTrapFrame& trap_frame = current_thread->user_preempt_trap_frame;
+  trap_frame.r15 = frame->r15;
+  trap_frame.r14 = frame->r14;
+  trap_frame.r13 = frame->r13;
+  trap_frame.r12 = frame->r12;
+  trap_frame.r11 = frame->r11;
+  trap_frame.r10 = frame->r10;
+  trap_frame.r9 = frame->r9;
+  trap_frame.r8 = frame->r8;
+  trap_frame.rdi = frame->rdi;
+  trap_frame.rsi = frame->rsi;
+  trap_frame.rbp = frame->rbp;
+  trap_frame.rbx = frame->rbx;
+  trap_frame.rdx = frame->rdx;
+  trap_frame.rcx = frame->rcx;
+  trap_frame.rax = frame->rax;
+  trap_frame.vector = frame->vector;
+  trap_frame.error_code = frame->error_code;
+  trap_frame.rip = frame->rip;
+  trap_frame.cs = frame->cs;
+  trap_frame.rflags = frame->rflags;
+
+  // 当 CPU 从 ring3 进 ring0 时，
+  // 它还会在这块保存区后面继续压入“原来的用户栈指针 RSP”和“用户栈段 SS”。
+  // 所以这里顺着完整寄存器帧末尾再读两个 64 位，就能把 iretq 需要的尾巴也拿全。
+  const uint64_t* const tail =
+      reinterpret_cast<const uint64_t*>(
+          reinterpret_cast<const uint8_t*>(frame) +
+          sizeof(RegisterInterruptFrame));
+  trap_frame.rsp = tail[0];
+  trap_frame.ss = tail[1];
+
+  current_thread->has_user_preempt_trap_frame = true;
+  ++current_thread->user_preempt_count;
+}
+
 }  // namespace
 
 bool initialize_tss() {
@@ -334,13 +389,27 @@ void wait_for_interrupt() {
   asm volatile("hlt");   // Halt：让 CPU 休眠，等下一次中断再把它唤醒。
 }
 
-extern "C" void kernel_handle_irq(const InterruptFrame* frame) {
+extern "C" void kernel_handle_irq(const RegisterInterruptFrame* frame) {
   if (frame == nullptr) {
     return;
   }
 
   if (frame->vector == kPicMasterVectorBase) {
     handle_timer_irq();
+
+    // 这一轮第一次允许“正在 ring3 里跑的用户线程”被 timer 抢占。
+    // 流程是：
+    // 1. timer IRQ 先进来，先做正常 tick 记账和 reschedule 请求
+    // 2. 如果这次中断原本就来自 ring3，且当前线程真的是 user thread
+    // 3. 就在这条 IRQ 返回链上切去别的线程，再切回来
+    // 4. 最后仍然通过原来的 `iretq` 回到用户态
+    ThreadControlBlock* const current_thread = scheduler_active_thread();
+    if (current_thread != nullptr &&
+        current_thread->execution_mode == kThreadExecutionModeUser &&
+        register_frame_came_from_user_mode(frame) &&
+        scheduler_yield_if_requested()) {
+      capture_current_user_preempt_trap_frame(frame);
+    }
   } else if (frame->vector == static_cast<uint8_t>(kPicMasterVectorBase + 1)) {
     handle_keyboard_irq();
   }

@@ -114,6 +114,7 @@ kernel/
 - 第一次真正 `iretq` 进入 ring 3，再由用户态 `int 0x80` 打回内核的 smoke test
 - 第一版 scheduler-managed user thread：由调度器把一条 user thread 真正切进 ring 3，并在 `exit` 后正式回收线程
 - 正式 `UserTrapFrame` + 每用户线程独立内核进入栈：user thread 现在能在 syscall 里主动 `yield`，切去 helper thread，再恢复回 ring 3 继续跑
+- 第一版 user timer preemption：user thread 现在还能在 ring 3 自旋时被 IRQ0 抢占，切去 helper thread，再沿着原来的 IRQ 返回链回到用户态
 - 控制台回显 + 最小行输入测试
 - 最小 shell 命令测试
 - shell 当前工作目录 `pwd` / `cd` / 相对路径测试
@@ -144,9 +145,9 @@ kernel/
 这里放和异常/中断入口有关的代码：
 
 - `interrupt_stubs.asm`
-  真正离 CPU 最近的汇编入口。
+  真正离 CPU 最近的汇编入口；现在 IRQ 和 `int 0x80` 都会把完整寄存器帧交给 C++，方便保存用户态被抢占时的机器现场。
 - `interrupts.cpp/.hpp`
-  IDT、异常名字表、kernel-side GDT/TSS 初始化、ring 3 可用段描述符、开关中断、通用 trap/IRQ 接入逻辑。
+  IDT、异常名字表、kernel-side GDT/TSS 初始化、ring 3 可用段描述符、开关中断、通用 trap/IRQ 接入逻辑；现在也负责“timer IRQ 从 ring 3 抢占 user thread”这条路径，以及“键盘 IRQ 把 block 在 `read(0)` 里的 user thread 再唤醒回来”这条路径。
 - `pic.cpp/.hpp`
   初始化 8259A PIC，把硬件 IRQ 重映射到 32~47，并在 IRQ 结束后发 EOI。
 - `pit.cpp/.hpp`
@@ -237,7 +238,7 @@ kernel/
 
 - `syscall.cpp/.hpp`
   现在先提供 `SyscallContext`，以及 `sys_open`、`sys_read`、`sys_write`、`sys_stat`、`sys_seek`、`sys_close`，再往前补了 `sys_getcwd`、`sys_chdir`、`sys_stat_path`、`sys_listdir`。
-  它先把“上层通过 fd、cwd、路径、错误码访问内核服务”的形状定下来，后来又往前补了第一版 `int 0x80` 软中断分发器，以及公开 syscall fd `0/1/2 = stdin/stdout/stderr`、`3+ = 普通文件` 这层边界翻译；现在 `sys_read(0)` 也已经能从键盘字符流读输入，第一版用户态 `exit` 也会从这里接回内核 smoke test。这一步继续往前后，`int 0x80` 分发在有当前线程时也会优先取“当前线程所属进程”的 `SyscallContext`，而不是只看全局默认上下文。
+  它先把“上层通过 fd、cwd、路径、错误码访问内核服务”的形状定下来，后来又往前补了第一版 `int 0x80` 软中断分发器，以及公开 syscall fd `0/1/2 = stdin/stdout/stderr`、`3+ = 普通文件` 这层边界翻译；现在 `sys_read(0)` 也已经能从键盘字符流读输入，第一版用户态 `exit` 也会从这里接回内核 smoke test。这一步继续往前后，`int 0x80` 分发在有当前线程时也会优先取“当前线程所属进程”的 `SyscallContext`，而不是只看全局默认上下文；再进一步以后，来自 ring 3 的 `int 0x80` 如果用户原本开着 IF，还会在 syscall 分发期间重新开中断，让 `read(0)` 这种阻塞式用户态 syscall 真能等到键盘 IRQ。
 
 一句话理解：
 
@@ -250,9 +251,9 @@ kernel/
 这里放第一版任务系统模块：
 
 - `scheduler.cpp/.hpp`
-  现在先放 `ProcessControlBlock`、`ThreadControlBlock`、`SchedulerState`，以及分优先级 ready queue、idle thread、`sleep/block/wake` 骨架、线程创建/退出、时间片请求和协作式切换入口；正常启动时的 `shell-main` 线程也已经真的挂到这层来运行。这一步里它又开始区分 `kernel thread` 和 `user thread`，并补了第一版 `user process` / `user thread` 创建入口；后来又继续把每进程自己的 `FileDescriptorTable + SyscallContext` 正式挂进 `ProcessControlBlock`。
+  现在先放 `ProcessControlBlock`、`ThreadControlBlock`、`SchedulerState`，以及分优先级 ready queue、idle thread、`sleep/block/wake` 骨架、线程创建/退出、时间片请求和协作式切换入口；正常启动时的 `shell-main` 线程也已经真的挂到这层来运行。这一步里它又开始区分 `kernel thread` 和 `user thread`，并补了第一版 `user process` / `user thread` 创建入口；后来又继续把每进程自己的 `FileDescriptorTable + SyscallContext` 正式挂进 `ProcessControlBlock`。再往前一步以后，它还开始把“暂停下来的内核上下文依赖哪份页表根”也一起保存下来，所以线程切换现在不只保存 `RSP`，还会保存/恢复对应 `CR3`。
 - `context_switch.asm`
-  这是第一版真正的线程上下文切换汇编。当前先保存 kernel thread 需要的 callee-saved 寄存器和 `RSP`；这一步里它还额外承载了第一次 `iretq` 进入 ring 3、以及从用户态 `exit` 接回内核的入口/返回器，现在这条路径已经开始被真正的 user thread 复用。
+  这是第一版真正的线程上下文切换汇编。当前先保存 kernel thread 需要的 callee-saved 寄存器和 `RSP`；后来又继续扩成“切换线程前先保存当前 `RSP`，再切到下一条线程需要的 `CR3`，最后恢复下一条线程的 `RSP`”。这一步里它还额外承载了第一次 `iretq` 进入 ring 3、以及从用户态 `exit` 接回内核的入口/返回器，现在这条路径已经开始被真正的 user thread 复用。
 
 一句话理解：
 
