@@ -288,7 +288,13 @@ void handle_help_command(const ShellState* shell) {
   write_newline(shell);
   write_string(shell, "heap  - show kernel heap stats");
   write_newline(shell);
-  write_string(shell, "disk  - show boot volume info");
+  write_string(shell, "disk  - show raw boot block device info");
+  write_newline(shell);
+  write_string(shell, "ls    - list directory entries");
+  write_newline(shell);
+  write_string(shell, "cat   - print file contents");
+  write_newline(shell);
+  write_string(shell, "stat  - show inode metadata");
   write_newline(shell);
   write_string(shell, "irq   - show timer/keyboard irq stats");
   write_newline(shell);
@@ -366,50 +372,216 @@ void handle_heap_command(const ShellState* shell) {
 }
 
 void handle_disk_command(const ShellState* shell) {
-  if (shell == nullptr || !boot_volume_is_ready(shell->boot_volume)) {
+  if (shell == nullptr || !block_device_is_ready(shell->block_device)) {
     write_string(shell, "disk unavailable");
     write_newline(shell);
     return;
   }
-
-  const BootVolumeHeader* const header = boot_volume_header(shell->boot_volume);
-  if (header == nullptr) {
-    write_string(shell, "disk unavailable");
-    write_newline(shell);
-    return;
-  }
-
   write_string(shell, "disk_start_lba=");
-  write_u64(shell, shell->boot_volume->start_lba);
+  write_u64(shell, shell->block_device->start_lba);
   write_newline(shell);
 
   write_string(shell, "disk_sector_count=");
-  write_u64(shell, shell->boot_volume->sector_count);
+  write_u64(shell, shell->block_device->sector_count);
   write_newline(shell);
 
   write_string(shell, "disk_sector_size=");
-  write_u64(shell, shell->boot_volume->sector_size);
+  write_u64(shell, shell->block_device->sector_size);
   write_newline(shell);
 
   write_string(shell, "disk_total_bytes=");
-  write_u64(shell, boot_volume_total_bytes(shell->boot_volume));
+  write_u64(shell, block_device_total_bytes(shell->block_device));
+  write_newline(shell);
+}
+
+void handle_ls_command(const ShellState* shell, const char* arguments) {
+  if (shell == nullptr || !os64fs_is_mounted(shell->filesystem)) {
+    write_string(shell, "fs unavailable");
+    write_newline(shell);
+    return;
+  }
+
+  const char* path = skip_spaces(arguments);
+  if (path == nullptr || path[0] == '\0') {
+    path = "/";
+  }
+
+  Os64FsInode inode;
+  if (!os64fs_lookup_path(shell->filesystem, path, &inode)) {
+    write_string(shell, "ls path not found: ");
+    write_string(shell, path);
+    write_newline(shell);
+    return;
+  }
+
+  if (inode.type != kOs64FsTypeDirectory) {
+    write_string(shell, "ls not a directory: ");
+    write_string(shell, path);
+    write_newline(shell);
+    return;
+  }
+
+  const uint32_t entry_count =
+      os64fs_directory_entry_count(shell->filesystem, &inode);
+
+  write_string(shell, "ls_path=");
+  write_string(shell, path);
   write_newline(shell);
 
-  write_string(shell, "disk_signature=");
-  write_bounded_string(shell, header->signature, sizeof(header->signature));
+  write_string(shell, "ls_entry_count=");
+  write_u64(shell, entry_count);
   write_newline(shell);
 
-  write_string(shell, "disk_volume_name=");
-  write_bounded_string(shell, header->volume_name, sizeof(header->volume_name));
+  for (uint32_t entry_index = 0; entry_index < entry_count; ++entry_index) {
+    Os64FsDirEntry entry;
+    Os64FsInode child_inode;
+    if (!os64fs_read_directory_entry(shell->filesystem, &inode, entry_index,
+                                     &entry) ||
+        !os64fs_read_inode(shell->filesystem, entry.inode_number,
+                           &child_inode)) {
+      write_string(shell, "ls read failed");
+      write_newline(shell);
+      return;
+    }
+
+    write_string(shell, "ls[");
+    write_u64(shell, entry_index);
+    write_string(shell, "]=");
+    write_string(shell, os64fs_inode_type_name(entry.type));
+    write_char(shell, ' ');
+    write_bounded_string(shell, entry.name, entry.name_length);
+    write_string(shell, " size=");
+    write_u64(shell, child_inode.size_bytes);
+    write_newline(shell);
+  }
+}
+
+void handle_cat_command(const ShellState* shell, const char* arguments) {
+  if (shell == nullptr || !os64fs_is_mounted(shell->filesystem)) {
+    write_string(shell, "fs unavailable");
+    write_newline(shell);
+    return;
+  }
+
+  const char* path = skip_spaces(arguments);
+  if (path == nullptr || path[0] == '\0') {
+    write_string(shell, "usage: cat <path>");
+    write_newline(shell);
+    return;
+  }
+
+  Os64FsInode inode;
+  if (!os64fs_lookup_path(shell->filesystem, path, &inode)) {
+    write_string(shell, "cat path not found: ");
+    write_string(shell, path);
+    write_newline(shell);
+    return;
+  }
+
+  if (inode.type != kOs64FsTypeFile) {
+    write_string(shell, "cat not a file: ");
+    write_string(shell, path);
+    write_newline(shell);
+    return;
+  }
+
+  write_string(shell, "cat_path=");
+  write_string(shell, path);
   write_newline(shell);
 
-  write_string(shell, "disk_readme_sector=");
-  write_u64(shell, header->readme_sector_index);
+  write_string(shell, "cat_size=");
+  write_u64(shell, inode.size_bytes);
   write_newline(shell);
 
-  write_string(shell, "disk_notes_sector=");
-  write_u64(shell, header->notes_sector_index);
+  uint8_t chunk[64];
+  uint32_t offset = 0;
+  while (offset < inode.size_bytes) {
+    uint32_t bytes_this_round = sizeof(chunk);
+    if (bytes_this_round > (inode.size_bytes - offset)) {
+      bytes_this_round = inode.size_bytes - offset;
+    }
+
+    if (!os64fs_read_inode_data(shell->filesystem, &inode, offset,
+                                chunk, bytes_this_round)) {
+      write_string(shell, "cat read failed");
+      write_newline(shell);
+      return;
+    }
+
+    for (uint32_t i = 0; i < bytes_this_round; ++i) {
+      write_char(shell, static_cast<char>(chunk[i]));
+    }
+
+    offset += bytes_this_round;
+  }
+
   write_newline(shell);
+}
+
+void handle_stat_command(const ShellState* shell, const char* arguments) {
+  if (shell == nullptr || !os64fs_is_mounted(shell->filesystem)) {
+    write_string(shell, "fs unavailable");
+    write_newline(shell);
+    return;
+  }
+
+  const char* path = skip_spaces(arguments);
+  if (path == nullptr || path[0] == '\0') {
+    write_string(shell, "usage: stat <path>");
+    write_newline(shell);
+    return;
+  }
+
+  Os64FsInode inode;
+  if (!os64fs_lookup_path(shell->filesystem, path, &inode)) {
+    write_string(shell, "stat path not found: ");
+    write_string(shell, path);
+    write_newline(shell);
+    return;
+  }
+
+  write_string(shell, "stat_path=");
+  write_string(shell, path);
+  write_newline(shell);
+
+  write_string(shell, "stat_inode=");
+  write_u64(shell, inode.inode_number);
+  write_newline(shell);
+
+  write_string(shell, "stat_type=");
+  write_string(shell, os64fs_inode_type_name(inode.type));
+  write_newline(shell);
+
+  write_string(shell, "stat_size=");
+  write_u64(shell, inode.size_bytes);
+  write_newline(shell);
+
+  write_string(shell, "stat_links=");
+  write_u64(shell, inode.link_count);
+  write_newline(shell);
+
+  uint32_t block_count = 0;
+  for (size_t block_index = 0; block_index < 4; ++block_index) {
+    if (inode.direct_blocks[block_index] != kOs64FsInvalidBlockIndex) {
+      ++block_count;
+    }
+  }
+
+  write_string(shell, "stat_blocks=");
+  write_u64(shell, block_count);
+  write_newline(shell);
+
+  for (size_t block_index = 0; block_index < 4; ++block_index) {
+    if (inode.direct_blocks[block_index] == kOs64FsInvalidBlockIndex) {
+      continue;
+    }
+
+    write_string(shell, "stat_block_");
+    write_u64(shell, block_index);
+    write_string(shell, "=");
+    write_u64(shell, inode.direct_blocks[block_index]);
+    write_newline(shell);
+  }
 }
 
 void handle_irq_command(const ShellState* shell) {
@@ -615,6 +787,8 @@ bool initialize_shell(ShellState* shell,
                       const PageAllocator* allocator,
                       const KernelHeap* heap,
                       const BootVolume* boot_volume,
+                      const BlockDevice* block_device,
+                      const Os64Fs* filesystem,
                       const ShellOutput* output) {
   if (shell == nullptr || output == nullptr || output->write_char == nullptr) {
     return false;
@@ -624,6 +798,8 @@ bool initialize_shell(ShellState* shell,
   shell->allocator = allocator;
   shell->heap = heap;
   shell->boot_volume = boot_volume;
+  shell->block_device = block_device;
+  shell->filesystem = filesystem;
   shell->output = *output;
   shell->history_count = 0;
   shell->history_next_slot = 0;
@@ -698,6 +874,21 @@ ShellCommandResult shell_execute_line(ShellState* shell,
   if (command_matches(trimmed_line, "disk", &arguments) &&
       is_empty_after_trim(arguments)) {
     handle_disk_command(shell);
+    return kShellCommandExecuted;
+  }
+
+  if (command_matches(trimmed_line, "ls", &arguments)) {
+    handle_ls_command(shell, arguments);
+    return kShellCommandExecuted;
+  }
+
+  if (command_matches(trimmed_line, "cat", &arguments)) {
+    handle_cat_command(shell, arguments);
+    return kShellCommandExecuted;
+  }
+
+  if (command_matches(trimmed_line, "stat", &arguments)) {
+    handle_stat_command(shell, arguments);
     return kShellCommandExecuted;
   }
 

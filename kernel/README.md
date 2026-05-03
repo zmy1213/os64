@@ -1,6 +1,6 @@
 # kernel 目录说明
 
-现在 `kernel/` 已经按职责拆成 7 类：
+现在 `kernel/` 已经按职责拆成 8 类：
 
 ```text
 kernel/
@@ -13,6 +13,9 @@ kernel/
 │   └── console.cpp
 ├── core/
 │   └── kernel_main.cpp
+├── fs/
+│   ├── os64fs.hpp
+│   └── os64fs.cpp
 ├── interrupts/
 │   ├── interrupts.hpp
 │   ├── interrupts.cpp
@@ -34,7 +37,9 @@ kernel/
 │   └── kmemory.cpp
 ├── storage/
 │   ├── boot_volume.hpp
-│   └── boot_volume.cpp
+│   ├── boot_volume.cpp
+│   ├── block_device.hpp
+│   └── block_device.cpp
 ├── shell/
 │   ├── shell.hpp
 │   └── shell.cpp
@@ -76,7 +81,8 @@ kernel/
 - 页分配器初始化
 - 页表测试
 - 堆测试
-- boot volume / 最小按扇区读取测试
+- boot volume / 原始块设备测试
+- 只读文件系统挂载和路径读取测试
 - 定时器中断测试
 - 基于 tick 的最小等待 / sleep 测试
 - 键盘 IRQ + 字符缓冲区测试
@@ -144,12 +150,26 @@ kernel/
 
 ---
 
-## 6. `shell/`
+## 6. `fs/`
+
+这里放第一版文件系统模块：
+
+- `os64fs.cpp/.hpp`
+  负责只读 `OS64FS v1` 的挂载、路径查找、目录遍历和文件读取。
+
+一句话理解：
+
+> `fs/` 管“原始块数据怎样被解释成目录、文件和路径”。
+
+---
+
+## 7. `shell/`
 
 这里放最小 shell 模块：
 
 - `shell.cpp/.hpp`
   负责提示符、命令解析、内建命令执行，以及第一版交互循环。
+  现在已经能直接通过 `ls` / `cat` / `stat` 观察文件系统。
 
 一句话理解：
 
@@ -157,20 +177,22 @@ kernel/
 
 ---
 
-## 7. `storage/`
+## 8. `storage/`
 
 这里放和“启动介质数据如何被内核读取”有关的代码：
 
 - `boot_volume.cpp/.hpp`
-  负责把 stage2 预读进内存的一小段启动卷包装成“可以按扇区读取”的最小接口。
+  负责表示 stage2 预读进内存的一段原始连续扇区。
+- `block_device.cpp/.hpp`
+  再往上一层，把 `BootVolume` 包装成统一的块设备读接口。
 
 一句话理解：
 
-> `storage/` 管“内核现在怎样先读到一段块设备数据，即使还没有真正的磁盘控制器驱动”。
+> `storage/` 管“内核现在怎样先拿到一段原始块设备数据，即使还没有真正的磁盘控制器驱动”。
 
 ---
 
-## 8. `runtime/`
+## 9. `runtime/`
 
 这里放 freestanding 内核里最小的运行时工具：
 
@@ -195,7 +217,7 @@ kernel/
 
 ---
 
-## 9. 为什么现在这样分
+## 10. 为什么现在这样分
 
 因为如果所有文件都继续平铺在 `kernel/` 根目录，
 后面一多起来你会很快分不清：

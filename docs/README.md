@@ -44,8 +44,10 @@
    再继续往前，把“只会记历史”的 shell 扩成“能编辑、能回看、还能观察启动链状态”的真正调试终端骨架。
 20. [从可释放堆到对象分配 + 更正式的内核内存子系统](./KERNEL_MEMORY_OBJECT_GUIDE.md)
    这一步重新回到 `memory/`，把“只会分原始字节”的堆提升成“后面模块能正式调用的 kmalloc/knew 层”。
-21. [从对象分配到最小扇区读取 + 启动卷](./KERNEL_BOOT_VOLUME_GUIDE.md)
-   这一步开始进入“存储”方向，但先不硬写控制器驱动，而是先把 stage2 预读卷和内核里的 sector read 接口打通。
+21. [从对象分配到原始 Boot Volume + 块设备入口](./KERNEL_BOOT_VOLUME_GUIDE.md)
+   这一步开始进入“存储”方向，但先不硬写控制器驱动，而是先把 stage2 预读的连续扇区区间变成内核里的原始块设备入口。
+22. [从原始块设备到第一版只读文件系统](./KERNEL_FILESYSTEM_GUIDE.md)
+   再继续往前，把“只能按扇区读”提升成“能挂载、能走路径、能列目录、能读文件”的第一版只读文件系统。
 
 一句话记忆这个顺序：
 
@@ -70,5 +72,6 @@ stage1
 -> shell command history
 -> shell line editor + history browse + inspect commands
 -> kernel object allocator + formal memory subsystem
--> boot volume + minimal sector reads
+-> raw boot volume + block device entry
+-> first read-only filesystem
 ```

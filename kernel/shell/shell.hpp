@@ -5,11 +5,13 @@
 #include <stdint.h>
 
 #include "boot/boot_info.hpp"
+#include "fs/os64fs.hpp"
 #include "memory/heap.hpp"
 #include "memory/page_allocator.hpp"
+#include "storage/block_device.hpp"
 #include "storage/boot_volume.hpp"
 
-constexpr size_t kShellHistoryCapacity = 16;       // 第一版先记最近 16 条命令，够演示 ring buffer。
+constexpr size_t kShellHistoryCapacity = 24;       // 文件系统命令变多后，先记最近 24 条命令，仍然保持固定 ring buffer。
 constexpr size_t kShellHistoryEntryCapacity = 32;  // 和当前 shell 输入缓冲区保持同量级，先不做超长命令历史。
 
 // shell 只要求外界提供一个“输出 1 个字符”的最小能力。
@@ -26,7 +28,9 @@ struct ShellState {
   const BootInfo* boot_info;        // `bootinfo` / `e820` 命令要从这里看启动阶段交进来的信息。
   const PageAllocator* allocator;  // `mem` 命令会从这里拿当前页分配器状态。
   const KernelHeap* heap;          // `heap` 命令会从这里拿当前堆状态。
-  const BootVolume* boot_volume;   // `disk` 命令会从这里看 stage2 预读进来的启动卷信息。
+  const BootVolume* boot_volume;   // `bootinfo` 仍然会顺手展示这段预读卷的搬运结果。
+  const BlockDevice* block_device; // `disk` 命令现在看的是更通用的块设备抽象。
+  const Os64Fs* filesystem;        // `ls` / `cat` / `stat` 命令会从这里访问只读文件系统。
   ShellOutput output;              // 所有 shell 输出最终都走这个回调。
   uint16_t history_count;          // 当前 ring buffer 里实际存了多少条命令。
   uint16_t history_next_slot;      // 下一条命令应该写进哪个槽位。
@@ -46,6 +50,8 @@ bool initialize_shell(ShellState* shell,
                       const PageAllocator* allocator,
                       const KernelHeap* heap,
                       const BootVolume* boot_volume,
+                      const BlockDevice* block_device,
+                      const Os64Fs* filesystem,
                       const ShellOutput* output);
 
 // 打印最小提示符，让用户知道 shell 已经在等输入了。
@@ -58,6 +64,9 @@ void shell_print_prompt(const ShellState* shell);
 // - ticks
 // - heap
 // - disk
+// - ls [path]
+// - cat <path>
+// - stat <path>
 // - irq
 // - bootinfo
 // - e820

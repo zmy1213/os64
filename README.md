@@ -124,6 +124,7 @@ make clean
 - `paging ok`
 - `long mode ok`
 - `hello from os64 kernel`
+- `filesystem ok`
 - `shell ok`
 
 最后会进入最小交互 shell，
@@ -140,6 +141,9 @@ os64>
 - `ticks`
 - `heap`
 - `disk`
+- `ls [path]`
+- `cat <path>`
+- `stat <path>`
 - `irq`
 - `bootinfo`
 - `e820`
@@ -176,9 +180,9 @@ os64>
 当前存储方向也已经往前走了一步：
 
 - `stage2` 会先把一小段 `boot volume` 从启动介质读进内存
-- `BootInfo` 会把这段卷的位置和扇区信息交给 64 位内核
-- kernel 里现在已经有最小 `sector read` 接口
-- shell 里可以用 `disk` 查看这段启动卷信息
+- `BootInfo` 会把这段原始块区的位置和扇区信息交给 64 位内核
+- kernel 里现在已经有 `BootVolume -> BlockDevice -> OS64FS` 这条读路径
+- shell 里可以用 `disk` 看块设备，用 `ls` / `cat` / `stat` 看文件系统
 
 ### 一个很重要的提醒
 

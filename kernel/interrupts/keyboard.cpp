@@ -124,6 +124,8 @@ bool translate_regular_scancode(uint8_t scancode, KeyboardInputEvent* out_event)
     case 0x30: out_event->character = 'b'; return true;
     case 0x31: out_event->character = 'n'; return true;
     case 0x32: out_event->character = 'm'; return true;
+    case 0x34: out_event->character = '.'; return true;
+    case 0x35: out_event->character = '/'; return true;
 
     case 0x39: out_event->character = ' '; return true;
     case 0x1C: out_event->character = '\n'; return true;

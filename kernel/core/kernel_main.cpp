@@ -3,6 +3,7 @@
 
 #include "boot/boot_info.hpp"
 #include "console/console.hpp"
+#include "fs/os64fs.hpp"
 #include "interrupts/interrupts.hpp"
 #include "interrupts/keyboard.hpp"
 #include "interrupts/pic.hpp"
@@ -11,7 +12,9 @@
 #include "memory/kmemory.hpp"
 #include "memory/page_allocator.hpp"
 #include "memory/paging.hpp"
+#include "runtime/runtime.hpp"
 #include "shell/shell.hpp"
+#include "storage/block_device.hpp"
 #include "storage/boot_volume.hpp"
 
 namespace {
@@ -43,10 +46,12 @@ constexpr uint64_t kKernelObjectExpectedSum = 0x2222222222222222ULL;   // 这就
 constexpr uint64_t kKernelObjectCookie = 0x4B4F424A45435431ULL;        // ASCII 看起来像 "KOBJECT1"，用于校验对象真的构造过。
 constexpr uint64_t kAlignedObjectMarker = 0xA55AA55AA55AA55AULL;       // 再给高对齐对象一个单独的标记值。
 constexpr uint64_t kAlignedObjectAlignment = 64;                       // 故意把对象对齐拉到 64，证明 knew<T>() 不只会处理 16 字节对齐。
-constexpr char kBootVolumeExpectedSignature[] = "OS64VOL1";            // 启动卷头第一个字段固定就是这个 8 字节签名。
-constexpr char kBootVolumeExpectedName[] = "boot-volume";              // 给这段预读卷起一个易认的名字。
-constexpr char kBootVolumeExpectedReadme[] = "boot volume sector 1: hello from os64";
-constexpr char kBootVolumeExpectedNotes[] = "boot volume sector 2: next step is filesystem";
+constexpr char kOs64FsExpectedSignature[] = "OS64FSV1";                // superblock 的前 8 字节固定就是这个签名。
+constexpr char kOs64FsExpectedName[] = "os64-root";                    // 这就是脚本里写进 superblock 的卷名。
+constexpr char kOs64FsExpectedReadme[] =
+    "os64fs readme: the 64-bit kernel now mounts a real read-only filesystem.";
+constexpr char kOs64FsExpectedGuide[] =
+    "os64fs guide: stage2 only preloads raw sectors. the block device layer turns that memory into sector reads, and the filesystem layer resolves paths like docs/guide.txt inside the 64-bit kernel.";
 constexpr uint32_t kPitFrequencyHz = 100;                              // 先把时钟中断频率设成 100Hz，够平滑也够好测。
 constexpr uint64_t kTimerFirstLogTick = 10;                            // 先在第 10 个 tick 打一次点。
 constexpr uint64_t kTimerSecondLogTick = 20;                           // 第 20 个 tick 再打一次点，证明中断在持续发生。
@@ -55,10 +60,10 @@ constexpr uint64_t kTimerSleepTestMs = 50;                             // 第二
 constexpr uint64_t kTimerSleepMinTicks = 5;                            // 50ms 在 100Hz 下至少应该跨过 5 个 tick。
 constexpr uint8_t kKeyboardIrqLine = 1;                                // 传统 PC 键盘走主 PIC 的 IRQ1。
 constexpr uint64_t kKeyboardTestTimeoutTicks = 20;                     // 键盘测试每轮最多等 20 个 tick，避免异常时无限卡住。
-constexpr uint16_t kConsoleTestStartRow = 18;                          // 把控制台测试区域继续下移，给新增的内存/磁盘状态行留位置。
+constexpr uint16_t kConsoleTestStartRow = 19;                          // 新增文件系统状态行后，把交互测试区再往下挪一行。
 constexpr size_t kConsoleLineBufferCapacity = 32;                      // 这一轮测试只读短行，32 字节足够验证流程。
-constexpr uint16_t kShellTestStartRow = 18;                            // shell 也复用更靠下的区域，减少和状态行互相覆盖。
-constexpr size_t kShellLineBufferCapacity = 32;                        // `help`/`ticks` 这种命令很短，32 字节够第一版 shell 用。
+constexpr uint16_t kShellTestStartRow = 19;                            // shell 也跟着下移，避免覆盖新的 `filesystem ok` 状态行。
+constexpr size_t kShellLineBufferCapacity = 40;                        // 现在要测 `stat docs/guide.txt`，把命令行缓冲区稍微放大一点。
 constexpr uint8_t kKeyboardTestScancodes[] = {
     0x1E,  // A 按下 -> 'a'
     0x9E,  // A 松开 -> 这一轮应忽略，不进入字符缓冲区
@@ -101,6 +106,51 @@ constexpr uint8_t kShellHeapScancodes[] = {
 };
 constexpr uint8_t kShellDiskScancodes[] = {
     0x20, 0x17, 0x1F, 0x25, 0x1C,  // disk + Enter
+};
+constexpr uint8_t kShellLsScancodes[] = {
+    0x26, 0x1F, 0x1C,              // ls + Enter
+};
+constexpr uint8_t kShellLsDocsScancodes[] = {
+    0x26, 0x1F, 0x39,              // ls + Space
+    0x20, 0x18, 0x2E, 0x1F,        // docs
+    0x1C,                          // Enter
+};
+constexpr uint8_t kShellCatReadmeScancodes[] = {
+    0x2E, 0x1E, 0x14, 0x39,        // cat + Space
+    0x13, 0x12, 0x1E, 0x20, 0x32, 0x12,  // readme
+    0x34,                          // .
+    0x14, 0x2D, 0x14,              // txt
+    0x1C,                          // Enter
+};
+constexpr uint8_t kShellCatAbsoluteGuideScancodes[] = {
+    0x2E, 0x1E, 0x14, 0x39,        // cat + Space
+    0x35,                          // /
+    0x20, 0x18, 0x2E, 0x1F,        // docs
+    0x35,                          // /
+    0x22, 0x16, 0x17, 0x20, 0x12,  // guide
+    0x34,                          // .
+    0x14, 0x2D, 0x14,              // txt
+    0x1C,                          // Enter
+};
+constexpr uint8_t kShellStatGuideScancodes[] = {
+    0x1F, 0x14, 0x1E, 0x14, 0x39,  // stat + Space
+    0x20, 0x18, 0x2E, 0x1F,        // docs
+    0x35,                          // /
+    0x22, 0x16, 0x17, 0x20, 0x12,  // guide
+    0x34,                          // .
+    0x14, 0x2D, 0x14,              // txt
+    0x1C,                          // Enter
+};
+constexpr uint8_t kShellStatParentNotesScancodes[] = {
+    0x1F, 0x14, 0x1E, 0x14, 0x39,  // stat + Space
+    0x20, 0x18, 0x2E, 0x1F,        // docs
+    0x35,                          // /
+    0x34, 0x34,                    // ..
+    0x35,                          // /
+    0x31, 0x18, 0x14, 0x12, 0x1F,  // notes
+    0x34,                          // .
+    0x14, 0x2D, 0x14,              // txt
+    0x1C,                          // Enter
 };
 constexpr uint8_t kShellIrqScancodes[] = {
     0x17, 0x13, 0x10, 0x1C,        // irq + Enter
@@ -156,6 +206,8 @@ PageAllocator g_page_allocator;               // 第一版物理页分配器状�
 KernelHeap g_kernel_heap;                     // 第一版内核堆状态也先放成全局对象，方便后面各模块共享。
 ShellState g_shell;                           // 最小 shell 的状态也先放在全局对象里，后面交互循环会一直复用。
 BootVolume g_boot_volume;                     // 这一轮新增的启动卷状态，表示 stage2 预读进来的那段扇区数据。
+BlockDevice g_boot_block_device;             // 再往上一层，把 boot volume 包成通用块设备接口。
+Os64Fs g_os64fs;                             // 第一版只读文件系统状态也先做成全局对象，方便 shell 直接观察。
 uint64_t g_kernel_object_ctor_count = 0;      // 对象层测试里一共成功调用过多少次构造函数。
 uint64_t g_kernel_object_dtor_count = 0;      // 对象层测试里一共成功调用过多少次析构函数。
 
@@ -752,44 +804,47 @@ bool run_kernel_memory_smoke_test(PageAllocator* allocator,
          heap_failed_allocations(heap) == 0;
 }
 
-// 这一步不是“真正的磁盘控制器驱动”，
-// 而是先用 stage2 在实模式下把一小段启动卷预读进内存，
-// 再让 64 位内核按扇区去读它。
-// 这样下一步做文件系统时，先有一条稳定的 sector-read 链可用。
+bool read_inode_text(const Os64Fs* filesystem,
+                     const Os64FsInode* inode,
+                     char* buffer,
+                     size_t capacity) {
+  if (filesystem == nullptr || inode == nullptr || buffer == nullptr ||
+      capacity == 0 || inode->size_bytes >= capacity) {
+    return false;
+  }
+
+  if (!os64fs_read_inode_data(filesystem, inode, 0, buffer,
+                              inode->size_bytes)) {
+    return false;
+  }
+
+  buffer[inode->size_bytes] = '\0';
+  return true;
+}
+
+// 先把 stage2 预读进来的连续扇区区间接进内核。
+// 这一层还不谈目录和文件，它只负责证明：
+// “64 位内核现在已经有一条稳定的按扇区读取路径”。
 bool run_boot_volume_smoke_test(const BootInfo* boot_info,
-                                BootVolume* volume) {
-  if (boot_info == nullptr || volume == nullptr) {
+                                BootVolume* volume,
+                                BlockDevice* device) {
+  if (boot_info == nullptr || volume == nullptr || device == nullptr) {
     return false;
   }
 
   if (!initialize_boot_volume(volume, boot_info) ||
-      !boot_volume_is_ready(volume)) {
-    return false;
-  }
-
-  const BootVolumeHeader* const header = boot_volume_header(volume);
-  if (header == nullptr) {
+      !boot_volume_is_ready(volume) ||
+      !initialize_block_device_from_boot_volume(device, volume) ||
+      !block_device_is_ready(device)) {
     return false;
   }
 
   uint8_t sector0[kBootVolumeSectorSize];
-  uint8_t readme_sector[kBootVolumeSectorSize];
-  uint8_t notes_sector[kBootVolumeSectorSize];
-
-  if (!boot_volume_read_sector(volume, 0, sector0, sizeof(sector0)) ||
-      !boot_volume_read_sector(volume, header->readme_sector_index,
-                               readme_sector, sizeof(readme_sector)) ||
-      !boot_volume_read_sector(volume, header->notes_sector_index,
-                               notes_sector, sizeof(notes_sector))) {
+  if (!block_device_read_sector(device, 0, sector0, sizeof(sector0))) {
     return false;
   }
-
-  const auto* const sector0_header =
-      reinterpret_cast<const BootVolumeHeader*>(sector0);
-  const char* const readme_text =
-      reinterpret_cast<const char*>(readme_sector);
-  const char* const notes_text =
-      reinterpret_cast<const char*>(notes_sector);
+  uint64_t sector0_prefix = 0;
+  memory_copy(&sector0_prefix, sector0, sizeof(sector0_prefix));
 
   serial_write_string("boot_volume_ptr=0x");
   serial_write_hex64(reinterpret_cast<uint64_t>(volume->base));
@@ -800,44 +855,132 @@ bool run_boot_volume_smoke_test(const BootInfo* boot_info,
   serial_write_crlf();
 
   serial_write_string("boot_volume_sector_count=");
-  serial_write_u64(volume->sector_count);
+  serial_write_u64(device->sector_count);
   serial_write_crlf();
 
   serial_write_string("boot_volume_sector_size=");
-  serial_write_u64(volume->sector_size);
+  serial_write_u64(device->sector_size);
   serial_write_crlf();
 
-  serial_write_string("boot_volume_signature=");
-  serial_write_bounded_string(header->signature, sizeof(header->signature));
+  serial_write_string("block_device_total_bytes=");
+  serial_write_u64(block_device_total_bytes(device));
   serial_write_crlf();
 
-  serial_write_string("boot_volume_name=");
-  serial_write_bounded_string(header->volume_name, sizeof(header->volume_name));
+  serial_write_string("block_device_sector0_prefix=0x");
+  serial_write_hex64(sector0_prefix);
   serial_write_crlf();
 
-  serial_write_string("boot_volume_readme=");
+  return volume->start_lba == device->start_lba &&
+         volume->sector_count == device->sector_count &&
+         volume->sector_size == device->sector_size &&
+         block_device_total_bytes(device) ==
+             boot_volume_total_bytes(volume);
+}
+
+// 这一层才真正开始把“扇区”解释成“文件系统”。
+// 也就是：
+// sector 0 -> superblock
+// sector 1 -> inode table
+// sector 2+ -> 数据区
+bool run_filesystem_smoke_test(const BlockDevice* device,
+                               Os64Fs* filesystem) {
+  if (device == nullptr || filesystem == nullptr) {
+    return false;
+  }
+
+  if (!initialize_os64fs(filesystem, device) ||
+      !os64fs_is_mounted(filesystem)) {
+    return false;
+  }
+
+  const Os64FsSuperblock* const superblock = os64fs_superblock(filesystem);
+  if (superblock == nullptr) {
+    return false;
+  }
+
+  Os64FsInode root_inode;
+  Os64FsInode readme_inode;
+  Os64FsInode notes_inode;
+  Os64FsInode docs_inode;
+  Os64FsInode guide_inode;
+  if (!os64fs_lookup_path(filesystem, "/", &root_inode) ||
+      !os64fs_lookup_path(filesystem, "readme.txt", &readme_inode) ||
+      !os64fs_lookup_path(filesystem, "./readme.txt", &readme_inode) ||
+      !os64fs_lookup_path(filesystem, "docs", &docs_inode) ||
+      !os64fs_lookup_path(filesystem, "docs/guide.txt", &guide_inode) ||
+      !os64fs_lookup_path(filesystem, "/docs/guide.txt", &guide_inode) ||
+      !os64fs_lookup_path(filesystem, "docs/../notes.txt", &notes_inode)) {
+    return false;
+  }
+
+  char readme_text[256];
+  char guide_text[256];
+  if (!read_inode_text(filesystem, &readme_inode, readme_text,
+                       sizeof(readme_text)) ||
+      !read_inode_text(filesystem, &guide_inode, guide_text,
+                       sizeof(guide_text))) {
+    return false;
+  }
+
+  serial_write_string("os64fs_signature=");
+  serial_write_bounded_string(superblock->signature,
+                              sizeof(superblock->signature));
+  serial_write_crlf();
+
+  serial_write_string("os64fs_volume_name=");
+  serial_write_bounded_string(superblock->volume_name,
+                              sizeof(superblock->volume_name));
+  serial_write_crlf();
+
+  serial_write_string("os64fs_inode_count=");
+  serial_write_u64(superblock->inode_count);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_data_block_size=");
+  serial_write_u64(superblock->data_block_size);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_root_entries=");
+  serial_write_u64(os64fs_directory_entry_count(filesystem, &root_inode));
+  serial_write_crlf();
+
+  serial_write_string("os64fs_docs_entries=");
+  serial_write_u64(os64fs_directory_entry_count(filesystem, &docs_inode));
+  serial_write_crlf();
+
+  serial_write_string("os64fs_parent_lookup_inode=");
+  serial_write_u64(notes_inode.inode_number);
+  serial_write_crlf();
+
+  serial_write_string("os64fs_readme=");
   serial_write_string(readme_text);
   serial_write_crlf();
 
-  serial_write_string("boot_volume_notes=");
-  serial_write_string(notes_text);
+  serial_write_string("os64fs_guide=");
+  serial_write_string(guide_text);
   serial_write_crlf();
 
-  return bounded_text_equals(header->signature, kBootVolumeExpectedSignature,
-                             sizeof(header->signature)) &&
-         bounded_text_equals(sector0_header->signature,
-                             kBootVolumeExpectedSignature,
-                             sizeof(sector0_header->signature)) &&
-         strings_equal(header->volume_name, kBootVolumeExpectedName) &&
-         header->version == 1 &&
-         header->total_sectors == volume->sector_count &&
-         header->sector_size == volume->sector_size &&
-         header->readme_sector_index == 1 &&
-         header->notes_sector_index == 2 &&
-         header->readme_length == string_length(kBootVolumeExpectedReadme) &&
-         header->notes_length == string_length(kBootVolumeExpectedNotes) &&
-         strings_equal(readme_text, kBootVolumeExpectedReadme) &&
-         strings_equal(notes_text, kBootVolumeExpectedNotes);
+  return bounded_text_equals(superblock->signature,
+                             kOs64FsExpectedSignature,
+                             sizeof(superblock->signature)) &&
+         strings_equal(superblock->volume_name, kOs64FsExpectedName) &&
+         superblock->version == kOs64FsVersion &&
+         superblock->total_sectors == device->sector_count &&
+         superblock->inode_size == sizeof(Os64FsInode) &&
+         superblock->root_inode == 1 &&
+         superblock->data_block_size == 128 &&
+         root_inode.type == kOs64FsTypeDirectory &&
+         os64fs_directory_entry_count(filesystem, &root_inode) == 3 &&
+         docs_inode.type == kOs64FsTypeDirectory &&
+         os64fs_directory_entry_count(filesystem, &docs_inode) == 1 &&
+         readme_inode.type == kOs64FsTypeFile &&
+         notes_inode.type == kOs64FsTypeFile &&
+         notes_inode.inode_number == 3 &&
+         guide_inode.type == kOs64FsTypeFile &&
+         guide_inode.direct_blocks[0] != kOs64FsInvalidBlockIndex &&
+         guide_inode.direct_blocks[1] != kOs64FsInvalidBlockIndex &&
+         strings_equal(readme_text, kOs64FsExpectedReadme) &&
+         strings_equal(guide_text, kOs64FsExpectedGuide);
 }
 
 bool run_timer_smoke_test() {
@@ -1133,6 +1276,28 @@ constexpr ShellSmokeCommand kShellSmokeCommands[] = {
     {"disk", kShellDiskScancodes,
      sizeof(kShellDiskScancodes) / sizeof(kShellDiskScancodes[0]),
      kShellCommandExecuted},
+    {"ls", kShellLsScancodes,
+     sizeof(kShellLsScancodes) / sizeof(kShellLsScancodes[0]),
+     kShellCommandExecuted},
+    {"ls docs", kShellLsDocsScancodes,
+     sizeof(kShellLsDocsScancodes) / sizeof(kShellLsDocsScancodes[0]),
+     kShellCommandExecuted},
+    {"cat readme.txt", kShellCatReadmeScancodes,
+     sizeof(kShellCatReadmeScancodes) /
+         sizeof(kShellCatReadmeScancodes[0]),
+     kShellCommandExecuted},
+    {"cat /docs/guide.txt", kShellCatAbsoluteGuideScancodes,
+     sizeof(kShellCatAbsoluteGuideScancodes) /
+         sizeof(kShellCatAbsoluteGuideScancodes[0]),
+     kShellCommandExecuted},
+    {"stat docs/guide.txt", kShellStatGuideScancodes,
+     sizeof(kShellStatGuideScancodes) /
+         sizeof(kShellStatGuideScancodes[0]),
+     kShellCommandExecuted},
+    {"stat docs/../notes.txt", kShellStatParentNotesScancodes,
+     sizeof(kShellStatParentNotesScancodes) /
+         sizeof(kShellStatParentNotesScancodes[0]),
+     kShellCommandExecuted},
     {"irq", kShellIrqScancodes,
      sizeof(kShellIrqScancodes) / sizeof(kShellIrqScancodes[0]),
      kShellCommandExecuted},
@@ -1197,11 +1362,14 @@ bool inject_scancode_sequence(const char* log_prefix,
 }
 
 bool run_shell_smoke_test(const BootInfo* boot_info,
-                          const BootVolume* boot_volume) {
+                          const BootVolume* boot_volume,
+                          const BlockDevice* block_device,
+                          const Os64Fs* filesystem) {
   initialize_console(kShellTestStartRow, kShellTextColor);
 
   if (!initialize_shell(&g_shell, boot_info, &g_page_allocator, &g_kernel_heap,
-                        boot_volume, &kShellOutput)) {
+                        boot_volume, block_device, filesystem,
+                        &kShellOutput)) {
     return false;
   }
 
@@ -1346,48 +1514,57 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 
   write_status_line(12, "kernel memory ok");
 
-  if (!run_boot_volume_smoke_test(boot_info, &g_boot_volume)) {
-    write_status_line(13, "disk read bad");
+  if (!run_boot_volume_smoke_test(boot_info, &g_boot_volume,
+                                  &g_boot_block_device)) {
+    write_status_line(13, "boot volume bad");
     return;
   }
 
-  write_status_line(13, "disk read ok");
+  write_status_line(13, "boot volume ok");
+
+  if (!run_filesystem_smoke_test(&g_boot_block_device, &g_os64fs)) {
+    write_status_line(14, "filesystem bad");
+    return;
+  }
+
+  write_status_line(14, "filesystem ok");
 
   if (!run_timer_smoke_test()) {
-    write_status_line(14, "timer bad");
+    write_status_line(15, "timer bad");
     return;
   }
 
-  write_status_line(14, "timer ok");
+  write_status_line(15, "timer ok");
 
   if (!run_keyboard_smoke_test()) {
-    write_status_line(15, "keyboard bad");
+    write_status_line(16, "keyboard bad");
     return;
   }
 
-  write_status_line(15, "keyboard ok");
+  write_status_line(16, "keyboard ok");
 
   if (!run_console_input_smoke_test()) {
-    write_status_line(16, "console input bad");
+    write_status_line(17, "console input bad");
     return;
   }
 
-  write_status_line(16, "console input ok");
+  write_status_line(17, "console input ok");
 
-  if (!run_shell_smoke_test(boot_info, &g_boot_volume)) {
-    write_status_line(17, "shell bad");
+  if (!run_shell_smoke_test(boot_info, &g_boot_volume,
+                            &g_boot_block_device, &g_os64fs)) {
+    write_status_line(18, "shell bad");
     return;
   }
 
-  write_status_line(17, "shell ok");
+  write_status_line(18, "shell ok");
 
 #if defined(OS64_ENABLE_PAGE_FAULT_SMOKE)
-  write_status_line(18, "page fault smoke");
+  write_status_line(19, "page fault smoke");
   run_page_fault_smoke_test();
 #endif
 
 #if defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
-  write_status_line(18, "invalid opcode smoke");
+  write_status_line(19, "invalid opcode smoke");
   run_invalid_opcode_smoke_test();
 #endif
 

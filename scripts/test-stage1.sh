@@ -89,11 +89,19 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "boot_volume_start_lba=" "$SERIAL_LOG" \
   && grep -q "boot_volume_sector_count=4" "$SERIAL_LOG" \
   && grep -q "boot_volume_sector_size=512" "$SERIAL_LOG" \
-  && grep -q "boot_volume_signature=OS64VOL1" "$SERIAL_LOG" \
-  && grep -q "boot_volume_name=boot-volume" "$SERIAL_LOG" \
-  && grep -q "boot_volume_readme=boot volume sector 1: hello from os64" "$SERIAL_LOG" \
-  && grep -q "boot_volume_notes=boot volume sector 2: next step is filesystem" "$SERIAL_LOG" \
-  && grep -q "disk read ok" "$SERIAL_LOG" \
+  && grep -q "block_device_total_bytes=2048" "$SERIAL_LOG" \
+  && grep -q "block_device_sector0_prefix=0x" "$SERIAL_LOG" \
+  && grep -q "boot volume ok" "$SERIAL_LOG" \
+  && grep -q "os64fs_signature=OS64FSV1" "$SERIAL_LOG" \
+  && grep -q "os64fs_volume_name=os64-root" "$SERIAL_LOG" \
+  && grep -q "os64fs_inode_count=6" "$SERIAL_LOG" \
+  && grep -q "os64fs_data_block_size=128" "$SERIAL_LOG" \
+  && grep -q "os64fs_root_entries=3" "$SERIAL_LOG" \
+  && grep -q "os64fs_docs_entries=1" "$SERIAL_LOG" \
+  && grep -q "os64fs_parent_lookup_inode=3" "$SERIAL_LOG" \
+  && grep -q "os64fs_readme=os64fs readme: the 64-bit kernel now mounts a real read-only filesystem." "$SERIAL_LOG" \
+  && grep -q "os64fs_guide=os64fs guide: stage2 only preloads raw sectors." "$SERIAL_LOG" \
+  && grep -q "filesystem ok" "$SERIAL_LOG" \
   && grep -q "pic ok" "$SERIAL_LOG" \
   && grep -q "pit ok" "$SERIAL_LOG" \
   && grep -q "pit_frequency_hz=100" "$SERIAL_LOG" \
@@ -128,7 +136,10 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "mem   - show free physical pages" "$SERIAL_LOG" \
   && grep -q "ticks - show timer tick count" "$SERIAL_LOG" \
   && grep -q "heap  - show kernel heap stats" "$SERIAL_LOG" \
-  && grep -q "disk  - show boot volume info" "$SERIAL_LOG" \
+  && grep -q "disk  - show raw boot block device info" "$SERIAL_LOG" \
+  && grep -q "ls    - list directory entries" "$SERIAL_LOG" \
+  && grep -q "cat   - print file contents" "$SERIAL_LOG" \
+  && grep -q "stat  - show inode metadata" "$SERIAL_LOG" \
   && grep -q "irq   - show timer/keyboard irq stats" "$SERIAL_LOG" \
   && grep -q "bootinfo - show boot handoff info" "$SERIAL_LOG" \
   && grep -q "e820  - show boot memory map" "$SERIAL_LOG" \
@@ -154,10 +165,36 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "disk_sector_count=4" "$SERIAL_LOG" \
   && grep -q "disk_sector_size=512" "$SERIAL_LOG" \
   && grep -q "disk_total_bytes=2048" "$SERIAL_LOG" \
-  && grep -q "disk_signature=OS64VOL1" "$SERIAL_LOG" \
-  && grep -q "disk_volume_name=boot-volume" "$SERIAL_LOG" \
-  && grep -q "disk_readme_sector=1" "$SERIAL_LOG" \
-  && grep -q "disk_notes_sector=2" "$SERIAL_LOG" \
+  && grep -q "shell_line=ls" "$SERIAL_LOG" \
+  && grep -q "ls_path=/" "$SERIAL_LOG" \
+  && grep -q "ls_entry_count=3" "$SERIAL_LOG" \
+  && grep -q "ls\\[0\\]=file readme.txt size=" "$SERIAL_LOG" \
+  && grep -q "ls\\[1\\]=file notes.txt size=" "$SERIAL_LOG" \
+  && grep -q "ls\\[2\\]=dir docs size=" "$SERIAL_LOG" \
+  && grep -q "shell_line=ls docs" "$SERIAL_LOG" \
+  && grep -q "ls_path=docs" "$SERIAL_LOG" \
+  && grep -q "ls_entry_count=1" "$SERIAL_LOG" \
+  && grep -q "ls\\[0\\]=file guide.txt size=" "$SERIAL_LOG" \
+  && grep -q "shell_line=cat readme.txt" "$SERIAL_LOG" \
+  && grep -q "cat_path=readme.txt" "$SERIAL_LOG" \
+  && grep -q "cat_size=" "$SERIAL_LOG" \
+  && grep -q "os64fs readme: the 64-bit kernel now mounts a real read-only filesystem." "$SERIAL_LOG" \
+  && grep -q "shell_line=cat /docs/guide.txt" "$SERIAL_LOG" \
+  && grep -q "cat_path=/docs/guide.txt" "$SERIAL_LOG" \
+  && grep -q "os64fs guide: stage2 only preloads raw sectors." "$SERIAL_LOG" \
+  && grep -q "shell_line=stat docs/guide.txt" "$SERIAL_LOG" \
+  && grep -q "stat_path=docs/guide.txt" "$SERIAL_LOG" \
+  && grep -q "stat_inode=5" "$SERIAL_LOG" \
+  && grep -q "stat_type=file" "$SERIAL_LOG" \
+  && grep -q "stat_links=1" "$SERIAL_LOG" \
+  && grep -q "stat_blocks=2" "$SERIAL_LOG" \
+  && grep -q "stat_block_0=4" "$SERIAL_LOG" \
+  && grep -q "stat_block_1=5" "$SERIAL_LOG" \
+  && grep -q "shell_line=stat docs/../notes.txt" "$SERIAL_LOG" \
+  && grep -q "stat_path=docs/../notes.txt" "$SERIAL_LOG" \
+  && grep -q "stat_inode=3" "$SERIAL_LOG" \
+  && grep -q "stat_blocks=1" "$SERIAL_LOG" \
+  && grep -q "stat_block_0=2" "$SERIAL_LOG" \
   && grep -q "shell_line=irq" "$SERIAL_LOG" \
   && grep -q "irq_timer_ticks=" "$SERIAL_LOG" \
   && grep -q "irq_timer_frequency_hz=100" "$SERIAL_LOG" \
@@ -188,33 +225,39 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "uptime_frequency_hz=100" "$SERIAL_LOG" \
   && grep -q "uptime_ms=" "$SERIAL_LOG" \
   && grep -q "shell_line=history" "$SERIAL_LOG" \
-  && grep -q "history_buffered=12" "$SERIAL_LOG" \
-  && grep -q "history_total=12" "$SERIAL_LOG" \
+  && grep -q "history_buffered=18" "$SERIAL_LOG" \
+  && grep -q "history_total=18" "$SERIAL_LOG" \
   && grep -Fq "history[1]=help" "$SERIAL_LOG" \
   && grep -Fq "history[2]=mem" "$SERIAL_LOG" \
   && grep -Fq "history[3]=ticks" "$SERIAL_LOG" \
   && grep -Fq "history[4]=heap" "$SERIAL_LOG" \
   && grep -Fq "history[5]=disk" "$SERIAL_LOG" \
-  && grep -Fq "history[6]=irq" "$SERIAL_LOG" \
-  && grep -Fq "history[7]=bootinfo" "$SERIAL_LOG" \
-  && grep -Fq "history[8]=e820" "$SERIAL_LOG" \
-  && grep -Fq "history[9]=cpu" "$SERIAL_LOG" \
-  && grep -Fq "history[10]=echo hi42" "$SERIAL_LOG" \
-  && grep -Fq "history[11]=uptime" "$SERIAL_LOG" \
-  && grep -Fq "history[12]=history" "$SERIAL_LOG" \
-  && grep -q "history_buffered=13" "$SERIAL_LOG" \
-  && grep -q "history_total=13" "$SERIAL_LOG" \
-  && grep -Fq "history[13]=history" "$SERIAL_LOG" \
+  && grep -Fq "history[6]=ls" "$SERIAL_LOG" \
+  && grep -Fq "history[7]=ls docs" "$SERIAL_LOG" \
+  && grep -Fq "history[8]=cat readme.txt" "$SERIAL_LOG" \
+  && grep -Fq "history[9]=cat /docs/guide.txt" "$SERIAL_LOG" \
+  && grep -Fq "history[10]=stat docs/guide.txt" "$SERIAL_LOG" \
+  && grep -Fq "history[11]=stat docs/../notes.txt" "$SERIAL_LOG" \
+  && grep -Fq "history[12]=irq" "$SERIAL_LOG" \
+  && grep -Fq "history[13]=bootinfo" "$SERIAL_LOG" \
+  && grep -Fq "history[14]=e820" "$SERIAL_LOG" \
+  && grep -Fq "history[15]=cpu" "$SERIAL_LOG" \
+  && grep -Fq "history[16]=echo hi42" "$SERIAL_LOG" \
+  && grep -Fq "history[17]=uptime" "$SERIAL_LOG" \
+  && grep -Fq "history[18]=history" "$SERIAL_LOG" \
+  && grep -q "history_buffered=19" "$SERIAL_LOG" \
+  && grep -q "history_total=19" "$SERIAL_LOG" \
+  && grep -Fq "history[19]=history" "$SERIAL_LOG" \
   && grep -q "shell_line=clear" "$SERIAL_LOG" \
   && grep -q "shell_line=bad" "$SERIAL_LOG" \
   && grep -q "shell_result=unknown" "$SERIAL_LOG" \
   && grep -q "unknown command: bad" "$SERIAL_LOG" \
   && grep -q "shell ok" "$SERIAL_LOG"; then
-  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->kmemory->boot-volume->pic->pit->timer->sleep->keyboard->char-input->console-line->shell serial test passed"
+  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->kmemory->boot-volume->filesystem->pic->pit->timer->sleep->keyboard->char-input->console-line->shell serial test passed"
   cat "$SERIAL_LOG"
   exit 0
 fi
 
-echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->kmemory->boot-volume->pic->pit->timer->sleep->keyboard->char-input->console-line->shell serial test failed" >&2
+echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->kmemory->boot-volume->filesystem->pic->pit->timer->sleep->keyboard->char-input->console-line->shell serial test failed" >&2
 cat "$SERIAL_LOG" >&2
 exit 1

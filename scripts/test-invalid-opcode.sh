@@ -38,7 +38,8 @@ fi
 
 if grep -q "heap alloc ok" "$SERIAL_LOG" \
   && grep -q "boot volume loaded ok" "$SERIAL_LOG" \
-  && grep -q "disk read ok" "$SERIAL_LOG" \
+  && grep -q "boot volume ok" "$SERIAL_LOG" \
+  && grep -q "filesystem ok" "$SERIAL_LOG" \
   && grep -q "keyboard ok" "$SERIAL_LOG" \
   && grep -q "console input ok" "$SERIAL_LOG" \
   && grep -q "shell ok" "$SERIAL_LOG" \

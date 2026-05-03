@@ -22,6 +22,8 @@ KERNEL_KEYBOARD_SRC="$ROOT_DIR/kernel/interrupts/keyboard.cpp"
 KERNEL_HEAP_SRC="$ROOT_DIR/kernel/memory/heap.cpp"
 KERNEL_KMEMORY_SRC="$ROOT_DIR/kernel/memory/kmemory.cpp"
 KERNEL_BOOT_VOLUME_SRC="$ROOT_DIR/kernel/storage/boot_volume.cpp"
+KERNEL_BLOCK_DEVICE_SRC="$ROOT_DIR/kernel/storage/block_device.cpp"
+KERNEL_OS64FS_SRC="$ROOT_DIR/kernel/fs/os64fs.cpp"
 KERNEL_LINKER_SCRIPT="$ROOT_DIR/kernel/boot/linker.ld"
 STAGE1_BIN="$BUILD_DIR/stage1.bin"
 STAGE2_BIN="$BUILD_DIR/stage2.bin"
@@ -40,6 +42,8 @@ KERNEL_KEYBOARD_OBJ="$BUILD_DIR/keyboard.o"
 KERNEL_HEAP_OBJ="$BUILD_DIR/heap.o"
 KERNEL_KMEMORY_OBJ="$BUILD_DIR/kmemory.o"
 KERNEL_BOOT_VOLUME_OBJ="$BUILD_DIR/boot_volume.o"
+KERNEL_BLOCK_DEVICE_OBJ="$BUILD_DIR/block_device.o"
+KERNEL_OS64FS_OBJ="$BUILD_DIR/os64fs.o"
 KERNEL_ELF="$BUILD_DIR/kernel.elf"
 KERNEL_BIN="$BUILD_DIR/kernel.bin"
 BOOT_VOLUME_BIN="$BUILD_DIR/boot_volume.bin"
@@ -53,9 +57,19 @@ BOOT_VOLUME_LOAD_ADDR=0x00020000
 BOOT_VOLUME_LOAD_SEGMENT=0x2000
 BOOT_VOLUME_LOAD_OFFSET=0x0000
 BOOT_VOLUME_BYTES=$((BOOT_VOLUME_SECTORS * 512))
-BOOT_VOLUME_NAME="boot-volume"
-BOOT_VOLUME_README="boot volume sector 1: hello from os64"
-BOOT_VOLUME_NOTES="boot volume sector 2: next step is filesystem"
+OS64FS_VOLUME_NAME="os64-root"
+OS64FS_SIGNATURE="OS64FSV1"
+OS64FS_INODE_COUNT=6
+OS64FS_INODE_SIZE=32
+OS64FS_INODE_TABLE_START_SECTOR=1
+OS64FS_DATA_START_SECTOR=2
+OS64FS_DATA_SECTOR_COUNT=2
+OS64FS_DATA_BLOCK_SIZE=128
+OS64FS_ROOT_INODE=1
+OS64FS_INVALID_BLOCK=4294967295
+OS64FS_README="os64fs readme: the 64-bit kernel now mounts a real read-only filesystem."
+OS64FS_NOTES="os64fs notes: next steps are write support, cache, and real disk drivers."
+OS64FS_GUIDE="os64fs guide: stage2 only preloads raw sectors. the block device layer turns that memory into sector reads, and the filesystem layer resolves paths like docs/guide.txt inside the 64-bit kernel."
 
 CLANGXX_BIN="${CLANGXX_BIN:-$(command -v clang++)}"
 LD_BIN="${LD_BIN:-$(command -v ld.lld)}"
@@ -74,8 +88,56 @@ write_le32() {
 \\$(printf '%03o' $(((value >> 24) & 0xff)))"
 }
 
+write_le16() {
+  local value="$1"
+  printf '%b' \
+    "\\$(printf '%03o' $(( value       & 0xff )))\
+\\$(printf '%03o' $(((value >> 8) & 0xff)))"
+}
+
+write_u8() {
+  local value="$1"
+  printf '%b' "\\$(printf '%03o' $(( value & 0xff )))"
+}
+
+write_inode() {
+  local base_offset="$1"
+  local inode_number="$2"
+  local type="$3"
+  local link_count="$4"
+  local size_bytes="$5"
+  local block0="$6"
+  local block1="$7"
+  local block2="$8"
+  local block3="$9"
+
+  write_le32 "$inode_number" | dd of="$BOOT_VOLUME_BIN" bs=1 seek="$base_offset" conv=notrunc status=none
+  write_le16 "$type" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 4)) conv=notrunc status=none
+  write_le16 "$link_count" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 6)) conv=notrunc status=none
+  write_le32 "$size_bytes" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 8)) conv=notrunc status=none
+  write_le32 "$block0" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 12)) conv=notrunc status=none
+  write_le32 "$block1" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 16)) conv=notrunc status=none
+  write_le32 "$block2" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 20)) conv=notrunc status=none
+  write_le32 "$block3" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 24)) conv=notrunc status=none
+  write_le32 0 | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 28)) conv=notrunc status=none
+}
+
+write_dir_entry() {
+  local base_offset="$1"
+  local inode_number="$2"
+  local type="$3"
+  local name="$4"
+  local name_length="${#name}"
+
+  write_le32 "$inode_number" | dd of="$BOOT_VOLUME_BIN" bs=1 seek="$base_offset" conv=notrunc status=none
+  write_le16 "$type" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 4)) conv=notrunc status=none
+  write_u8 "$name_length" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 6)) conv=notrunc status=none
+  write_u8 0 | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 7)) conv=notrunc status=none
+  printf '%s' "$name" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=$((base_offset + 8)) conv=notrunc status=none
+}
+
 # Stage1 must remain a single 512-byte BIOS boot sector.
-echo "[1/24] assembling stage1"
+echo "[1/26] assembling stage1"
 nasm -f bin "$STAGE1_SRC" -o "$STAGE1_BIN"
 
 size="$(wc -c < "$STAGE1_BIN" | tr -d ' ')"
@@ -86,14 +148,14 @@ fi
 
 # 现在内核不再只是一份入口汇编和一份 C++ 文件，
 # 但整体仍然保持“没有宿主 libc、没有第三方运行时”的最小 freestanding 形态。
-echo "[2/24] assembling kernel entry"
+echo "[2/26] assembling kernel entry"
 nasm -f elf64 "$KERNEL_ENTRY_SRC" -o "$KERNEL_ENTRY_OBJ"
 
-echo "[3/24] assembling interrupt_stubs.asm"
+echo "[3/26] assembling interrupt_stubs.asm"
 nasm -f elf64 "$KERNEL_INTERRUPT_STUBS_SRC" -o "$KERNEL_INTERRUPT_STUBS_OBJ"
 
 # Compile the kernel with a freestanding x86_64-elf target so the host OS ABI does not leak in.
-echo "[4/24] compiling kernel_main.cpp"
+echo "[4/26] compiling kernel_main.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -111,7 +173,7 @@ echo "[4/24] compiling kernel_main.cpp"
   -c "$KERNEL_MAIN_SRC" \
   -o "$KERNEL_MAIN_OBJ"
 
-echo "[5/24] compiling console.cpp"
+echo "[5/26] compiling console.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -129,7 +191,7 @@ echo "[5/24] compiling console.cpp"
   -c "$KERNEL_CONSOLE_SRC" \
   -o "$KERNEL_CONSOLE_OBJ"
 
-echo "[6/24] compiling shell.cpp"
+echo "[6/26] compiling shell.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -147,7 +209,7 @@ echo "[6/24] compiling shell.cpp"
   -c "$KERNEL_SHELL_SRC" \
   -o "$KERNEL_SHELL_OBJ"
 
-echo "[7/24] compiling page_allocator.cpp"
+echo "[7/26] compiling page_allocator.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -165,7 +227,7 @@ echo "[7/24] compiling page_allocator.cpp"
   -c "$KERNEL_PAGE_ALLOCATOR_SRC" \
   -o "$KERNEL_PAGE_ALLOCATOR_OBJ"
 
-echo "[8/24] compiling paging.cpp"
+echo "[8/26] compiling paging.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -183,7 +245,7 @@ echo "[8/24] compiling paging.cpp"
   -c "$KERNEL_PAGING_SRC" \
   -o "$KERNEL_PAGING_OBJ"
 
-echo "[9/24] compiling runtime.cpp"
+echo "[9/26] compiling runtime.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -201,7 +263,7 @@ echo "[9/24] compiling runtime.cpp"
   -c "$KERNEL_RUNTIME_SRC" \
   -o "$KERNEL_RUNTIME_OBJ"
 
-echo "[10/24] compiling interrupts.cpp"
+echo "[10/26] compiling interrupts.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -219,7 +281,7 @@ echo "[10/24] compiling interrupts.cpp"
   -c "$KERNEL_INTERRUPTS_SRC" \
   -o "$KERNEL_INTERRUPTS_OBJ"
 
-echo "[11/24] compiling pic.cpp"
+echo "[11/26] compiling pic.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -237,7 +299,7 @@ echo "[11/24] compiling pic.cpp"
   -c "$KERNEL_PIC_SRC" \
   -o "$KERNEL_PIC_OBJ"
 
-echo "[12/24] compiling pit.cpp"
+echo "[12/26] compiling pit.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -255,7 +317,7 @@ echo "[12/24] compiling pit.cpp"
   -c "$KERNEL_PIT_SRC" \
   -o "$KERNEL_PIT_OBJ"
 
-echo "[13/24] compiling keyboard.cpp"
+echo "[13/26] compiling keyboard.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -273,7 +335,7 @@ echo "[13/24] compiling keyboard.cpp"
   -c "$KERNEL_KEYBOARD_SRC" \
   -o "$KERNEL_KEYBOARD_OBJ"
 
-echo "[14/24] compiling heap.cpp"
+echo "[14/26] compiling heap.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -291,7 +353,7 @@ echo "[14/24] compiling heap.cpp"
   -c "$KERNEL_HEAP_SRC" \
   -o "$KERNEL_HEAP_OBJ"
 
-echo "[15/24] compiling kmemory.cpp"
+echo "[15/26] compiling kmemory.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -309,7 +371,7 @@ echo "[15/24] compiling kmemory.cpp"
   -c "$KERNEL_KMEMORY_SRC" \
   -o "$KERNEL_KMEMORY_OBJ"
 
-echo "[16/24] compiling boot_volume.cpp"
+echo "[16/26] compiling boot_volume.cpp"
 "$CLANGXX_BIN" \
   --target=x86_64-elf \
   -I "$KERNEL_INCLUDE_DIR" \
@@ -327,9 +389,45 @@ echo "[16/24] compiling boot_volume.cpp"
   -c "$KERNEL_BOOT_VOLUME_SRC" \
   -o "$KERNEL_BOOT_VOLUME_OBJ"
 
+echo "[17/26] compiling block_device.cpp"
+"$CLANGXX_BIN" \
+  --target=x86_64-elf \
+  -I "$KERNEL_INCLUDE_DIR" \
+  -ffreestanding \
+  -fno-exceptions \
+  -fno-rtti \
+  -fno-stack-protector \
+  -fno-pic \
+  -mno-red-zone \
+  -mcmodel=kernel \
+  -O0 \
+  -Wall \
+  -Wextra \
+  $KERNEL_EXTRA_CXXFLAGS \
+  -c "$KERNEL_BLOCK_DEVICE_SRC" \
+  -o "$KERNEL_BLOCK_DEVICE_OBJ"
+
+echo "[18/26] compiling os64fs.cpp"
+"$CLANGXX_BIN" \
+  --target=x86_64-elf \
+  -I "$KERNEL_INCLUDE_DIR" \
+  -ffreestanding \
+  -fno-exceptions \
+  -fno-rtti \
+  -fno-stack-protector \
+  -fno-pic \
+  -mno-red-zone \
+  -mcmodel=kernel \
+  -O0 \
+  -Wall \
+  -Wextra \
+  $KERNEL_EXTRA_CXXFLAGS \
+  -c "$KERNEL_OS64FS_SRC" \
+  -o "$KERNEL_OS64FS_OBJ"
+
 # Link the kernel to a fixed address. For this learning round we intentionally keep it low
 # so stage2 can keep using the simplest BIOS CHS read path.
-echo "[17/24] linking kernel.elf"
+echo "[19/26] linking kernel.elf"
 "$LD_BIN" \
   -m elf_x86_64 \
   -T "$KERNEL_LINKER_SCRIPT" \
@@ -348,39 +446,75 @@ echo "[17/24] linking kernel.elf"
   "$KERNEL_KEYBOARD_OBJ" \
   "$KERNEL_HEAP_OBJ" \
   "$KERNEL_KMEMORY_OBJ" \
-  "$KERNEL_BOOT_VOLUME_OBJ"
+  "$KERNEL_BOOT_VOLUME_OBJ" \
+  "$KERNEL_BLOCK_DEVICE_OBJ" \
+  "$KERNEL_OS64FS_OBJ"
 
 # Stage2 wants a raw blob on disk, so we strip the ELF container and keep only the loadable bytes.
-echo "[18/24] generating kernel.bin"
+echo "[20/26] generating kernel.bin"
 "$OBJCOPY_BIN" -O binary "$KERNEL_ELF" "$KERNEL_BIN"
 
 kernel_size="$(wc -c < "$KERNEL_BIN" | tr -d ' ')"
 kernel_sectors="$(((kernel_size + 511) / 512))"
 boot_volume_start_sector="$((KERNEL_START_SECTOR + kernel_sectors))"
-boot_volume_readme_length="${#BOOT_VOLUME_README}"
-boot_volume_notes_length="${#BOOT_VOLUME_NOTES}"
+os64fs_readme_length="${#OS64FS_README}"
+os64fs_notes_length="${#OS64FS_NOTES}"
+os64fs_guide_length="${#OS64FS_GUIDE}"
+os64fs_root_dir_bytes=$((3 * 32))
+os64fs_docs_dir_bytes=$((1 * 32))
+os64fs_inode_table_offset=$((OS64FS_INODE_TABLE_START_SECTOR * 512))
+os64fs_data_offset=$((OS64FS_DATA_START_SECTOR * 512))
+os64fs_root_dir_offset=$((os64fs_data_offset + 0 * OS64FS_DATA_BLOCK_SIZE))
+os64fs_readme_offset=$((os64fs_data_offset + 1 * OS64FS_DATA_BLOCK_SIZE))
+os64fs_notes_offset=$((os64fs_data_offset + 2 * OS64FS_DATA_BLOCK_SIZE))
+os64fs_docs_dir_offset=$((os64fs_data_offset + 3 * OS64FS_DATA_BLOCK_SIZE))
+os64fs_guide_offset=$((os64fs_data_offset + 4 * OS64FS_DATA_BLOCK_SIZE))
 
 if [ "$kernel_sectors" -le 0 ] || [ "$kernel_sectors" -gt 127 ]; then
   echo "kernel.bin must occupy between 1 and 127 sectors in this CHS-only round, got $kernel_sectors sectors" >&2
   exit 1
 fi
 
-echo "[19/24] generating boot_volume.bin"
+if [ "$os64fs_readme_length" -gt "$OS64FS_DATA_BLOCK_SIZE" ] || \
+   [ "$os64fs_notes_length" -gt "$OS64FS_DATA_BLOCK_SIZE" ] || \
+   [ "$os64fs_guide_length" -le "$OS64FS_DATA_BLOCK_SIZE" ] || \
+   [ "$os64fs_guide_length" -gt $((OS64FS_DATA_BLOCK_SIZE * 2)) ]; then
+  echo "os64fs file sizes do not match the planned data block layout" >&2
+  exit 1
+fi
+
+echo "[21/26] generating boot_volume.bin"
 truncate -s "$BOOT_VOLUME_BYTES" "$BOOT_VOLUME_BIN"
-printf 'OS64VOL1' | dd of="$BOOT_VOLUME_BIN" bs=1 seek=0 conv=notrunc status=none
+printf '%s' "$OS64FS_SIGNATURE" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=0 conv=notrunc status=none
 write_le32 1 | dd of="$BOOT_VOLUME_BIN" bs=1 seek=8 conv=notrunc status=none
 write_le32 "$BOOT_VOLUME_SECTORS" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=12 conv=notrunc status=none
-write_le32 512 | dd of="$BOOT_VOLUME_BIN" bs=1 seek=16 conv=notrunc status=none
-printf '%s' "$BOOT_VOLUME_NAME" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=20 conv=notrunc status=none
-write_le32 1 | dd of="$BOOT_VOLUME_BIN" bs=1 seek=36 conv=notrunc status=none
-write_le32 "$boot_volume_readme_length" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=40 conv=notrunc status=none
-write_le32 2 | dd of="$BOOT_VOLUME_BIN" bs=1 seek=44 conv=notrunc status=none
-write_le32 "$boot_volume_notes_length" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=48 conv=notrunc status=none
-printf '%s' "$BOOT_VOLUME_README" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=512 conv=notrunc status=none
-printf '%s' "$BOOT_VOLUME_NOTES" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=1024 conv=notrunc status=none
+write_le32 "$OS64FS_INODE_TABLE_START_SECTOR" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=16 conv=notrunc status=none
+write_le32 "$OS64FS_INODE_COUNT" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=20 conv=notrunc status=none
+write_le32 "$OS64FS_INODE_SIZE" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=24 conv=notrunc status=none
+write_le32 "$OS64FS_DATA_START_SECTOR" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=28 conv=notrunc status=none
+write_le32 "$OS64FS_DATA_SECTOR_COUNT" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=32 conv=notrunc status=none
+write_le32 "$OS64FS_DATA_BLOCK_SIZE" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=36 conv=notrunc status=none
+write_le32 "$OS64FS_ROOT_INODE" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=40 conv=notrunc status=none
+printf '%s' "$OS64FS_VOLUME_NAME" | dd of="$BOOT_VOLUME_BIN" bs=1 seek=44 conv=notrunc status=none
+
+write_inode $((os64fs_inode_table_offset + 0 * OS64FS_INODE_SIZE)) 0 0 0 0 0 0 0 0
+write_inode $((os64fs_inode_table_offset + 1 * OS64FS_INODE_SIZE)) 1 2 1 "$os64fs_root_dir_bytes" 0 "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK"
+write_inode $((os64fs_inode_table_offset + 2 * OS64FS_INODE_SIZE)) 2 1 1 "$os64fs_readme_length" 1 "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK"
+write_inode $((os64fs_inode_table_offset + 3 * OS64FS_INODE_SIZE)) 3 1 1 "$os64fs_notes_length" 2 "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK"
+write_inode $((os64fs_inode_table_offset + 4 * OS64FS_INODE_SIZE)) 4 2 1 "$os64fs_docs_dir_bytes" 3 "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK"
+write_inode $((os64fs_inode_table_offset + 5 * OS64FS_INODE_SIZE)) 5 1 1 "$os64fs_guide_length" 4 5 "$OS64FS_INVALID_BLOCK" "$OS64FS_INVALID_BLOCK"
+
+write_dir_entry "$os64fs_root_dir_offset" 2 1 "readme.txt"
+write_dir_entry $((os64fs_root_dir_offset + 32)) 3 1 "notes.txt"
+write_dir_entry $((os64fs_root_dir_offset + 64)) 4 2 "docs"
+write_dir_entry "$os64fs_docs_dir_offset" 5 1 "guide.txt"
+
+printf '%s' "$OS64FS_README" | dd of="$BOOT_VOLUME_BIN" bs=1 seek="$os64fs_readme_offset" conv=notrunc status=none
+printf '%s' "$OS64FS_NOTES" | dd of="$BOOT_VOLUME_BIN" bs=1 seek="$os64fs_notes_offset" conv=notrunc status=none
+printf '%s' "$OS64FS_GUIDE" | dd of="$BOOT_VOLUME_BIN" bs=1 seek="$os64fs_guide_offset" conv=notrunc status=none
 
 # Stage2 needs to know how many sectors to read and what fixed address the kernel expects.
-echo "[20/24] generating kernel metadata for stage2"
+echo "[22/26] generating kernel metadata for stage2"
 cat > "$KERNEL_META_INC" <<EOF
 %define KERNEL_LOAD_ADDR 0x00010000
 %define KERNEL_LOAD_SEGMENT 0x1000
@@ -395,7 +529,7 @@ cat > "$KERNEL_META_INC" <<EOF
 EOF
 
 # Stage2 now spans eight sectors because it also sets up A20/E820/GDT/page tables/long mode.
-echo "[21/24] assembling stage2"
+echo "[23/26] assembling stage2"
 nasm -f bin -i "$BUILD_DIR/" "$STAGE2_SRC" -o "$STAGE2_BIN"
 
 size="$(wc -c < "$STAGE2_BIN" | tr -d ' ')"
@@ -405,7 +539,7 @@ if [ "$size" -ne "$STAGE2_EXPECTED_SIZE" ]; then
 fi
 
 # Create a raw floppy-sized image and place stage1/stage2/kernel in the first sectors.
-echo "[22/24] creating raw disk image"
+echo "[24/26] creating raw disk image"
 truncate -s "$IMAGE_SIZE" "$DISK_IMG"
 dd if="$STAGE1_BIN" of="$DISK_IMG" bs=512 count=1 conv=notrunc status=none
 dd if="$STAGE2_BIN" of="$DISK_IMG" bs=512 seek=1 count=8 conv=notrunc status=none
@@ -413,7 +547,7 @@ dd if="$KERNEL_BIN" of="$DISK_IMG" bs=512 seek=9 conv=notrunc status=none
 dd if="$BOOT_VOLUME_BIN" of="$DISK_IMG" bs=512 seek=$((boot_volume_start_sector - 1)) conv=notrunc status=none
 
 # BIOS boot sectors must end with the 0x55aa signature.
-echo "[23/24] verifying boot signature"
+echo "[25/26] verifying boot signature"
 signature="$(hexdump -n 2 -s 510 -e '2/1 "%02x"' "$STAGE1_BIN")"
 if [ "$signature" != "55aa" ]; then
   echo "boot signature mismatch: expected 55aa, got $signature" >&2
@@ -421,7 +555,7 @@ if [ "$signature" != "55aa" ]; then
 fi
 
 # Emit the key output paths so manual runs can inspect the artifacts directly.
-echo "[24/24] build complete"
+echo "[26/26] build complete"
 echo "stage1.bin: $STAGE1_BIN"
 echo "stage2.bin: $STAGE2_BIN"
 echo "kernel.elf: $KERNEL_ELF"
