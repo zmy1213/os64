@@ -43,6 +43,7 @@ if grep -q "heap alloc ok" "$SERIAL_LOG" \
   && grep -q "directory_layer ok" "$SERIAL_LOG" \
   && grep -q "vfs_layer ok" "$SERIAL_LOG" \
   && grep -q "fd_layer ok" "$SERIAL_LOG" \
+  && grep -q "syscall_layer ok" "$SERIAL_LOG" \
   && grep -q "filesystem ok" "$SERIAL_LOG" \
   && grep -q "keyboard ok" "$SERIAL_LOG" \
   && grep -q "console input ok" "$SERIAL_LOG" \

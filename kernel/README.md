@@ -1,6 +1,6 @@
 # kernel 目录说明
 
-现在 `kernel/` 已经按职责拆成 8 类：
+现在 `kernel/` 已经按职责拆成 10 类：
 
 ```text
 kernel/
@@ -51,6 +51,9 @@ kernel/
 ├── shell/
 │   ├── shell.hpp
 │   └── shell.cpp
+├── syscall/
+│   ├── syscall.hpp
+│   └── syscall.cpp
 └── runtime/
     ├── runtime.hpp
     └── runtime.cpp
@@ -95,6 +98,7 @@ kernel/
 - 目录句柄 open/read/rewind/close 测试
 - VFS mount/stat/open/read/close 测试
 - 文件描述符表 fd_open/fd_read/fd_close 测试
+- 系统调用外观 sys_open/sys_read/sys_close 测试
 - 定时器中断测试
 - 基于 tick 的最小等待 / sleep 测试
 - 键盘 IRQ + 字符缓冲区测试
@@ -213,7 +217,21 @@ kernel/
 
 ---
 
-## 9. `runtime/`
+## 9. `syscall/`
+
+这里放第一版系统调用外观：
+
+- `syscall.cpp/.hpp`
+  现在先提供 `SyscallContext`，以及 `sys_open`、`sys_read`、`sys_stat`、`sys_seek`、`sys_close`。
+  它还不是 CPU 的 `syscall` 指令入口，而是先把“上层通过 fd 和错误码访问内核服务”的形状定下来。
+
+一句话理解：
+
+> `syscall/` 管“以后用户程序请求内核服务时，先看到什么统一入口”。
+
+---
+
+## 10. `runtime/`
 
 这里放 freestanding 内核里最小的运行时工具：
 
@@ -238,7 +256,7 @@ kernel/
 
 ---
 
-## 10. 为什么现在这样分
+## 11. 为什么现在这样分
 
 因为如果所有文件都继续平铺在 `kernel/` 根目录，
 后面一多起来你会很快分不清：

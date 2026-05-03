@@ -58,6 +58,8 @@
    再继续往前，把 `cat` 从“直接拿 VFS 文件对象”升级成“先拿 fd 小整数，再用 fd_read/fd_close 操作打开文件”。
 27. [从文件描述符表到 shell 当前工作目录](./KERNEL_SHELL_CWD_GUIDE.md)
    再继续往前，让 shell 支持 `pwd` / `cd`，并把相对路径按当前目录解析成绝对路径再交给 VFS。
+28. [从 shell cwd 到第一版系统调用形状](./KERNEL_SYSCALL_SHAPE_GUIDE.md)
+   再继续往前，把 `open/read/stat/seek/close` 收口成 `sys_*` 入口，为后面的用户态和真正 syscall 指令铺路。
 
 一句话记忆这个顺序：
 
@@ -89,4 +91,5 @@ stage1
 -> first VFS layer
 -> file descriptor table
 -> shell cwd + relative paths
+-> first syscall facade
 ```

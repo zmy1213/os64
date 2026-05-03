@@ -129,6 +129,7 @@ make clean
 - `directory_layer ok`
 - `vfs_layer ok`
 - `fd_layer ok`
+- `syscall_layer ok`
 - `shell ok`
 
 最后会进入最小交互 shell，
@@ -192,10 +193,11 @@ os64>
 - kernel 里还在 `OS64FS` 上面补了 `DirectoryHandle` 目录句柄层
 - kernel 里现在又在文件句柄和目录句柄上面补了第一版 `VFS`
 - kernel 里现在还在 `VFS` 上面补了第一版 `FileDescriptorTable` 文件描述符表
+- kernel 里现在又在 fd 表上面补了第一版 `SyscallContext` 和 `sys_open` / `sys_read` / `sys_stat` / `sys_seek` / `sys_close`
 - shell 里可以用 `disk` 看块设备，用 `pwd` / `cd` 管当前目录，用 `ls` / `cat` / `stat` 看文件系统
 - 其中 `ls` / `stat` 走 `vfs_*` 接口，`cat` 进一步走 `fd_open` / `fd_read` / `fd_close`
 - shell 会先把相对路径按 cwd 解析成绝对路径，例如 `cd docs` 后 `cat guide.txt` 会解析成 `/docs/guide.txt`
-- 这样 shell 不再直接调用底层 `OS64FS` / `FileHandle` / `DirectoryHandle`，读文件和路径解析的形状开始接近真实系统调用模型
+- 这样 shell 不再直接调用底层 `OS64FS` / `FileHandle` / `DirectoryHandle`，内核也开始有一层更接近真实系统调用模型的 `sys_*` 入口
 
 ### 一个很重要的提醒
 
@@ -1079,10 +1081,9 @@ second stage 是整个“从零启动”最关键的一段。
 
 下面这些事都可以做，但不是现在：
 
-- 文件系统
+- 完整可写文件系统
 - ELF 完整加载器
 - 用户态
-- syscall
 - SMP
 - 网络栈
 - AI 策略系统

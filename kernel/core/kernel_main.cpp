@@ -20,6 +20,7 @@
 #include "shell/shell.hpp"
 #include "storage/block_device.hpp"
 #include "storage/boot_volume.hpp"
+#include "syscall/syscall.hpp"
 
 namespace {
 
@@ -229,6 +230,7 @@ BlockDevice g_boot_block_device;             // 再往上一层，把 boot volum
 Os64Fs g_os64fs;                             // 第一版只读文件系统状态也先做成全局对象。
 VfsMount g_vfs;                              // VFS 根挂载点，shell 以后从这里而不是直接从 OS64FS 进入。
 FileDescriptorTable g_fd_table;              // 第一版全局 fd 表；以后有进程后会变成每个进程一张表。
+SyscallContext g_syscall_context;            // 第一版系统调用上下文；现在先包住全局 fd 表。
 uint64_t g_kernel_object_ctor_count = 0;      // 对象层测试里一共成功调用过多少次构造函数。
 uint64_t g_kernel_object_dtor_count = 0;      // 对象层测试里一共成功调用过多少次析构函数。
 
@@ -1397,6 +1399,104 @@ bool run_file_descriptor_smoke_test(FileDescriptorTable* table,
   return ok;
 }
 
+// syscall 这一层先不碰 CPU 的 `syscall` 指令。
+// 它的目标是把 open/read/stat/seek/close 收口成一组“像系统调用”的内核入口：
+// 上层只拿 fd 和错误码，底层仍然由 fd 表、VFS、OS64FS 一层层执行真实工作。
+bool run_syscall_smoke_test(SyscallContext* context,
+                            FileDescriptorTable* fd_table) {
+  if (context == nullptr ||
+      !initialize_syscall_context(context, fd_table) ||
+      !syscall_context_is_ready(context)) {
+    return false;
+  }
+
+  serial_write_string("syscall_context ok");
+  serial_write_crlf();
+
+  const int32_t guide_fd = sys_open(context, "/docs/guide.txt");
+  if (guide_fd < 0) {
+    return false;
+  }
+
+  serial_write_string("sys_open=");
+  serial_write_u64(static_cast<uint64_t>(guide_fd));
+  serial_write_crlf();
+
+  VfsStat guide_stat;
+  if (sys_stat(context, guide_fd, &guide_stat) != kSyscallOk ||
+      guide_stat.type != kVfsNodeTypeFile) {
+    (void)sys_close(context, guide_fd);
+    return false;
+  }
+
+  serial_write_string("sys_stat_inode=");
+  serial_write_u64(guide_stat.inode_number);
+  serial_write_crlf();
+
+  const size_t expected_guide_length = string_length(kOs64FsExpectedGuide);
+  char guide_text[256];
+  if (expected_guide_length >= sizeof(guide_text)) {
+    (void)sys_close(context, guide_fd);
+    return false;
+  }
+
+  size_t total_read = 0;
+  while (total_read < expected_guide_length) {
+    const int32_t bytes_read =
+        sys_read(context, guide_fd, guide_text + total_read, 19);
+    if (bytes_read <= 0) {
+      (void)sys_close(context, guide_fd);
+      return false;
+    }
+
+    total_read += static_cast<size_t>(bytes_read);
+  }
+  guide_text[total_read] = '\0';
+
+  uint8_t eof_byte = 0;
+  const int32_t eof_read = sys_read(context, guide_fd, &eof_byte, 1);
+
+  const bool seek_ok = sys_seek(context, guide_fd, 0) == kSyscallOk;
+  char prefix[8];
+  const int32_t prefix_read =
+      seek_ok ? sys_read(context, guide_fd, prefix, sizeof(prefix)) : -1;
+
+  const SyscallStatus close_status = sys_close(context, guide_fd);
+  const uint32_t open_count_after_close = fd_open_count(fd_table);
+
+  serial_write_string("sys_read_total=");
+  serial_write_u64(total_read);
+  serial_write_crlf();
+
+  serial_write_string("sys_eof_read=");
+  serial_write_u64(static_cast<uint64_t>(eof_read));
+  serial_write_crlf();
+
+  serial_write_string("sys_open_count=");
+  serial_write_u64(open_count_after_close);
+  serial_write_crlf();
+
+  const bool ok =
+      guide_fd == 0 &&
+      guide_stat.inode_number == 5 &&
+      guide_stat.size_bytes == expected_guide_length &&
+      total_read == expected_guide_length &&
+      eof_read == 0 &&
+      seek_ok &&
+      prefix_read == static_cast<int32_t>(sizeof(prefix)) &&
+      bounded_text_equals(prefix, "os64fs g", sizeof(prefix)) &&
+      close_status == kSyscallOk &&
+      open_count_after_close == 0 &&
+      strings_equal(guide_text, kOs64FsExpectedGuide);
+
+  if (ok) {
+    serial_write_string("syscall_layer ok");
+    serial_write_crlf();
+  }
+
+  return ok;
+}
+
 bool run_timer_smoke_test() {
   // 先初始化 PIC，让外部硬件中断有地方可去，并避开 CPU 异常向量区。
   if (!initialize_pic()) {
@@ -1974,6 +2074,11 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 
   if (!run_file_descriptor_smoke_test(&g_fd_table, &g_vfs)) {
     write_status_line(14, "fd layer bad");
+    return;
+  }
+
+  if (!run_syscall_smoke_test(&g_syscall_context, &g_fd_table)) {
+    write_status_line(14, "syscall layer bad");
     return;
   }
 
