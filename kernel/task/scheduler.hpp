@@ -136,29 +136,37 @@ struct SchedulerState {
 // - ELF loader 解析出的 entry / segment 信息
 // - 映射成用户栈的那张物理页
 struct SchedulerElfThreadLoadResult {
-  ProcessControlBlock* process;
-  ThreadControlBlock* thread;
-  LoadedUserElfProgram program;
-  uint64_t stack_physical_page;
+  ProcessControlBlock* process;   // 新创建出来的用户进程对象。
+  ThreadControlBlock* thread;     // 挂到 ready queue 里的那条用户线程对象。
+  LoadedUserElfProgram program;   // ELF loader 解析和映射出的关键信息摘要。
+  uint64_t stack_physical_page;   // 这条用户线程初始用户栈对应的物理页地址。
 };
 
+// 初始化调度器总状态。
+// 这一步会顺手创建 0 号 idle process / idle thread。
 bool initialize_scheduler(SchedulerState* scheduler,
                           uint32_t time_slice_ticks);
 bool scheduler_is_ready(const SchedulerState* scheduler);
 bool scheduler_set_active(SchedulerState* scheduler);
 
+// 创建 kernel process：共享当前内核地址空间视图，不自己克隆用户页表根。
 ProcessControlBlock* scheduler_create_kernel_process(
     SchedulerState* scheduler,
     const char* name);
+// 创建 user process：克隆当前页表根，并准备独立的用户地址空间骨架。
 ProcessControlBlock* scheduler_create_user_process(
     SchedulerState* scheduler,
     PageAllocator* allocator,
     const char* name);
+// 给进程挂上它自己的 fd 表和 syscall 上下文。
+// 这是“进程第一次拥有自己的 cwd / fd / stdout 视图”的地方。
 bool scheduler_initialize_process_syscall_view(
     ProcessControlBlock* process,
     const VfsMount* vfs,
     SyscallWriteHandler write_handler,
     void* write_context);
+// 这是 `run <path>` 最核心的总装配入口：
+// ELF 文件 -> user process -> 用户栈页 -> user thread -> ready queue。
 bool scheduler_create_user_elf_thread(
     SchedulerState* scheduler,
     PageAllocator* allocator,
@@ -182,6 +190,9 @@ ThreadControlBlock* scheduler_create_kernel_thread(
     void* entry_context,
     size_t stack_bytes,
     ThreadPriority priority);
+// 创建一条 user thread。
+// 注意它和 kernel thread 的最大区别不是“入口地址不同”，
+// 而是它最终会通过 `user_mode_enter()` 真正进入 ring 3。
 ThreadControlBlock* scheduler_create_user_thread(
     SchedulerState* scheduler,
     ProcessControlBlock* owner,

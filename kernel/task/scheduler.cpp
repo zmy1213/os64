@@ -19,6 +19,7 @@ extern "C" void scheduler_switch_context_and_root(
     uint64_t load_root_physical);
 extern "C" void scheduler_thread_bootstrap();
 
+// 调度器里的这批 helper，大多都在服务“线程切换前后，栈和地址空间根要怎么保存/恢复”。
 uint64_t align_down(uint64_t value, uint64_t alignment) {
   if (alignment == 0) {
     return value;
@@ -28,6 +29,8 @@ uint64_t align_down(uint64_t value, uint64_t alignment) {
 }
 
 void copy_name(char* destination, const char* source) {
+  // 调度器里 process/thread 的名字只用于日志和观察，
+  // 所以这里做一个最小安全拷贝，保证一定以 `\0` 结尾。
   if (destination == nullptr) {
     return;
   }
@@ -53,6 +56,8 @@ uint8_t thread_slot_index(const SchedulerState* scheduler,
 
   for (uint8_t i = 0; i < kSchedulerMaxThreadCount; ++i) {
     if (&scheduler->threads[i] == thread) {
+      // ready queue 里存的是“槽位号”，不是裸指针，
+      // 所以这里负责把真实 TCB 指针反查成固定数组下标。
       return i;
     }
   }
@@ -83,6 +88,8 @@ bool page_is_directly_accessible_in_boot_identity_map(uint64_t physical_address)
 }
 
 uint64_t scheduler_kernel_root_physical(const SchedulerState* scheduler) {
+  // 调度器视角里的“kernel root”通常就是 0 号内核进程那份地址空间根。
+  // 这样线程切回 bootstrap 或普通 kernel thread 时，就知道该恢复哪份 CR3。
   if (scheduler != nullptr &&
       scheduler->processes[0].in_use &&
       scheduler->processes[0].address_space.ready &&
@@ -125,6 +132,8 @@ bool push_ready_thread(SchedulerState* scheduler,
     return false;
   }
 
+  // ready queue 里存的不是裸指针，而是线程槽位编号。
+  // 这样固定数组实现更简单，也更方便做一致性检查。
   const uint8_t slot = thread_slot_index(scheduler, thread);
   if (slot == kInvalidReadySlot) {
     return false;
@@ -148,6 +157,8 @@ ThreadControlBlock* pop_ready_thread_from_priority(
   }
 
   const uint8_t priority_index = static_cast<uint8_t>(priority);
+  // 这里即使队列里有历史残留槽位，也会在真正取出时再做一轮状态过滤，
+  // 只有“槽位有效 + 线程仍是 ready + 优先级匹配”的线程才会被选中。
   while (scheduler->ready_count_by_priority[priority_index] > 0) {
     const uint8_t slot =
         scheduler->ready_queue_thread_slots[priority_index]
@@ -350,6 +361,7 @@ void update_owner_ready_state(ProcessControlBlock* owner) {
     return;
   }
 
+  // 线程让出 CPU / sleep / block 以后，所属进程也应该从 running 回到 ready。
   if (owner->state == kProcessStateRunning) {
     owner->state = kProcessStateReady;
   }
@@ -360,6 +372,9 @@ ThreadControlBlock* select_next_runnable_thread(SchedulerState* scheduler) {
     return nullptr;
   }
 
+  // 选线程顺序很简单：
+  // 1. 先按优先级从 ready queue 找普通线程
+  // 2. 如果一个普通线程都没有，但系统里还有活线程，就退回 idle thread
   ThreadControlBlock* const next_thread = pop_highest_ready_thread(scheduler);
   if (next_thread != nullptr) {
     return next_thread;
@@ -433,6 +448,8 @@ void wake_sleeping_threads(SchedulerState* scheduler) {
 }
 
 void idle_thread_entry(void*) {
+  // idle thread 不做业务逻辑，它的意义只是：
+  // 当没有普通线程能跑时，让 CPU 进入“等中断 + 看看是否该切换”的保底循环。
   for (;;) {
     wait_for_interrupt();
     (void)scheduler_yield_if_requested();
@@ -464,6 +481,8 @@ bool initialize_scheduler(SchedulerState* scheduler,
     }
   }
 
+  // 调度器初始化时，最关键的一件事不是“马上有普通线程”，
+  // 而是先确保系统永远至少有一条可退回的 idle thread。
   ProcessControlBlock* const idle_process = &scheduler->processes[0];
   memory_set(idle_process, 0, sizeof(*idle_process));
   idle_process->in_use = true;
@@ -510,6 +529,8 @@ bool scheduler_set_active(SchedulerState* scheduler) {
     return false;
   }
 
+  // 当前教学版本全局只允许 1 个活跃调度器，
+  // 所以这里本质上是在切换全局单例指针。
   g_active_scheduler = scheduler;
   return true;
 }
@@ -531,6 +552,9 @@ ProcessControlBlock* scheduler_create_kernel_process(
   process->is_kernel_process = true;
   process->pid = scheduler->next_pid++;
   process->state = kProcessStateReady;
+
+  // kernel process 不需要 clone 新页表，
+  // 先直接“观察当前内核根页表”就够了。
   if (!initialize_kernel_address_space_view(&process->address_space)) {
     memory_set(process, 0, sizeof(*process));
     return nullptr;
@@ -557,6 +581,9 @@ ProcessControlBlock* scheduler_create_user_process(
   process->is_kernel_process = false;
   process->pid = scheduler->next_pid++;
   process->state = kProcessStateReady;
+
+  // user process 和 kernel process 最大区别就在这里：
+  // 它要 clone 一份独立页表根，以后才能真的拥有“自己的用户地址空间”。
   if (!clone_current_address_space(&process->address_space, allocator)) {
     memory_set(process, 0, sizeof(*process));
     return nullptr;
@@ -574,6 +601,7 @@ bool scheduler_initialize_process_syscall_view(
     return false;
   }
 
+  // 这里把“进程自己的文件视图”和“进程自己的 syscall 视图”第一次绑在一起。
   if (!initialize_file_descriptor_table(&process->file_descriptors, vfs) ||
       !initialize_syscall_context(&process->syscall_context,
                                   &process->file_descriptors)) {
@@ -636,6 +664,7 @@ bool scheduler_create_user_elf_thread(
 
   LoadedUserElfProgram program;
   memory_set(&program, 0, sizeof(program));
+  // 先把 ELF 文件内容和段布局真正装进这份 user process 的地址空间。
   if (!load_elf_user_program(allocator, &process->address_space,
                              filesystem, elf_path, &program)) {
     return false;
@@ -656,6 +685,7 @@ bool scheduler_create_user_elf_thread(
   // 所以真正要映射的是它下面那页页框起点。
   const uint64_t stack_page_virtual_address =
       align_down(user_stack_pointer - 1, kPagingPageSize);
+  // 再补 1 页初始用户栈，这样线程第一次进 ring 3 时就有可用栈顶。
   if (!address_space_map_user_page(&process->address_space, allocator,
                                    stack_page_virtual_address,
                                    stack_physical_page,
@@ -732,6 +762,8 @@ ThreadControlBlock* scheduler_create_kernel_thread(
   prepare_initial_thread_stack(thread);
   initialize_thread_saved_root(scheduler, thread);
 
+  // 到这里线程对象只是“准备好了”；
+  // 真正想被调度到，还要进 ready queue。
   ++owner->live_thread_count;
   ++scheduler->live_thread_count;
 
@@ -827,6 +859,8 @@ ThreadControlBlock* scheduler_create_user_thread(
   prepare_initial_thread_stack(thread);
   initialize_thread_saved_root(scheduler, thread);
 
+  // user thread 也要先进 ready queue，
+  // 之后第一次被切进去时，才会真正通过 bootstrap -> user_mode_enter() 落到 ring 3。
   ++owner->live_thread_count;
   ++scheduler->live_thread_count;
 
@@ -845,6 +879,8 @@ bool scheduler_run_until_idle(SchedulerState* scheduler) {
     return false;
   }
 
+  // 这条路径主要给 smoke test 用：
+  // 从 bootstrap 栈切进第一条 ready 线程，然后一路跑到系统里再也没有活线程/睡眠线程/阻塞线程。
   ThreadControlBlock* const next_thread = select_next_runnable_thread(scheduler);
   if (next_thread == nullptr) {
     return false;
@@ -862,12 +898,15 @@ bool scheduler_yield_current_thread() {
     return false;
   }
 
+  // `yield` 的核心语义是：
+  // 当前线程自己把 CPU 还回去，如果 ready queue 里还有别人，就让别人先跑。
   ThreadControlBlock* const current_thread = scheduler->current_thread;
   if (current_thread->state != kThreadStateRunning) {
     return false;
   }
 
   if (current_thread->is_idle_thread) {
+    // idle thread 的 yield 语义是“看看有没有普通线程已经准备好了”。
     ThreadControlBlock* const next_thread = pop_highest_ready_thread(scheduler);
     if (next_thread == nullptr) {
       scheduler->preempt_requested = false;
@@ -890,6 +929,7 @@ bool scheduler_yield_current_thread() {
   ++scheduler->total_yields;
   update_owner_ready_state(current_thread->owner);
 
+  // 把自己重新塞回 ready queue 末尾，才能形成同优先级 round-robin。
   if (!push_ready_thread(scheduler, current_thread)) {
     current_thread->state = kThreadStateRunning;
     return false;
@@ -913,6 +953,8 @@ bool scheduler_yield_if_requested() {
     return false;
   }
 
+  // timer IRQ 不直接在中断里切线程，而是先把“该切换了”记成一个请求位。
+  // 这里就是在线程上下文里真正兑现这个请求。
   return scheduler_yield_current_thread();
 }
 
@@ -923,6 +965,9 @@ bool scheduler_sleep_current_thread(uint64_t ticks) {
     return false;
   }
 
+  // `sleep` 和 `yield` 的区别是：
+  // yield 立刻还能被选回 ready，
+  // sleep 则要等 timer tick 到了 wake_tick 才能被唤醒。
   if (ticks == 0) {
     return scheduler_yield_current_thread();
   }
@@ -957,6 +1002,9 @@ bool block_current_thread_internal(bool enable_interrupts_before_switch) {
     return false;
   }
 
+  // `blocked` 和 `sleeping` 的区别是：
+  // sleeping 等时间，
+  // blocked 等事件，比如键盘输入到来。
   ThreadControlBlock* const current_thread = scheduler->current_thread;
   current_thread->state = kThreadStateBlocked;
   current_thread->wake_tick = 0;
@@ -980,6 +1028,7 @@ bool block_current_thread_internal(bool enable_interrupts_before_switch) {
   ++scheduler->total_switches;
 
   if (enable_interrupts_before_switch) {
+    // 这个分支专门服务“先登记等待，再让 IRQ 真能把我唤醒”的场景。
     enable_interrupts();
   }
 
@@ -1001,6 +1050,7 @@ bool scheduler_wake_thread(ThreadControlBlock* thread) {
     return false;
   }
 
+  // 对外公开的 wake 接口，本质上只是包了一层 active scheduler 查找。
   return wake_thread_internal(scheduler, thread, true);
 }
 
@@ -1012,6 +1062,8 @@ bool scheduler_wake_thread(ThreadControlBlock* thread) {
     }
   }
 
+  // 线程结束时，不是直接把整个进程立刻抹掉，
+  // 而是先减 live_thread_count；只有最后一条线程退出时，进程才标成 exited。
   ThreadControlBlock* const current_thread = scheduler->current_thread;
   current_thread->state = kThreadStateFinished;
   current_thread->wake_tick = 0;
@@ -1036,6 +1088,8 @@ bool scheduler_wake_thread(ThreadControlBlock* thread) {
 
   ThreadControlBlock* const next_thread = select_next_runnable_thread(scheduler);
   if (next_thread != nullptr) {
+    // 如果还有别人能跑，就直接切过去；
+    // 当前这条 finished 线程不会再回来。
     switch_thread_context(scheduler, current_thread, next_thread);
   }
 
@@ -1055,6 +1109,9 @@ void scheduler_handle_timer_tick() {
     return;
   }
 
+  // timer tick 这层先只做两类事：
+  // 1. 记账和唤醒 sleep 线程
+  // 2. 时间片耗尽时，发出一个“应该尽快切换”的请求
   ++scheduler->total_ticks;
   wake_sleeping_threads(scheduler);
 
@@ -1090,6 +1147,8 @@ void scheduler_handle_timer_tick() {
     return;
   }
 
+  // 真正切换不在 IRQ 里直接做，而是只打一个请求位，
+  // 后面在更安全的线程上下文里通过 `scheduler_yield_if_requested()` 完成。
   scheduler->remaining_slice_ticks = scheduler->time_slice_ticks;
   if (scheduler->ready_count == 0) {
     return;
@@ -1200,6 +1259,8 @@ void run_current_user_thread(ThreadControlBlock* current_thread) {
     return;
   }
 
+  // 到这里，调度器已经把“下一条该跑的线程”选好了；
+  // `user_mode_enter()` 才是真正把 CPU 从内核态送进 ring 3 的最后一步。
   current_thread->user_mode.kernel_root_physical =
       scheduler_kernel_root_physical(active_scheduler());
   current_thread->user_mode.user_root_physical =
@@ -1218,12 +1279,17 @@ extern "C" void scheduler_thread_bootstrap() {
     }
   }
 
+  // 每条线程第一次被调度进来时，都会先落到这个统一 bootstrap：
+  // - user thread：走 `run_current_user_thread()`
+  // - kernel thread：调它自己的 entry(context)
   ThreadControlBlock* const current_thread = scheduler->current_thread;
   if (current_thread == nullptr) {
     scheduler_exit_current_thread();
   }
 
   if (current_thread->execution_mode == kThreadExecutionModeUser) {
+    // user thread 没有普通的 C++ entry 函数，
+    // 它的“入口”就是准备好的 user RIP/RSP 和那份用户地址空间。
     run_current_user_thread(current_thread);
     scheduler_exit_current_thread();
   }

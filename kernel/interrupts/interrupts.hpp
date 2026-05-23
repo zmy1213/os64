@@ -64,6 +64,8 @@ bool tss_is_ready();
 uint16_t tss_task_register_selector();
 uint64_t tss_kernel_rsp0();
 uint64_t tss_default_kernel_rsp0();
+// 运行中的调度器会在“当前线程变化”时动态改这个值。
+// 这样下一次 ring3 -> ring0 时，CPU 才会先切到“当前这条 user thread 自己的内核进入栈”。
 bool tss_set_kernel_rsp0(uint64_t rsp0);
 uint64_t tss_double_fault_ist1();
 uint16_t tss_io_map_base();

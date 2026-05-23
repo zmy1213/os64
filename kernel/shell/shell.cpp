@@ -21,6 +21,9 @@ struct CpuidResult {
   uint32_t edx;
 };
 
+// 下面这一组 helper 先统一 shell 的最小输出能力。
+// shell 自己不直接操作 VGA 或串口，
+// 它只知道“我要输出字符/字符串/数字”，真正写到哪里由外部注入。
 void write_char(const ShellState* shell, char ch) {
   if (shell == nullptr || shell->output.write_char == nullptr) {
     return;
@@ -145,6 +148,9 @@ const char* path_leaf_name(const char* path) {
     return nullptr;
   }
 
+  // 例如：
+  // `/docs/hello.elf` -> `hello.elf`
+  // 这样 `run` 在给新进程命名时，就能直接取文件名当默认进程名。
   const char* leaf = path;
   for (size_t i = 0; path[i] != '\0'; ++i) {
     if (path[i] == '/') {
@@ -193,11 +199,15 @@ bool split_path_and_text(const char* arguments,
     return false;
   }
 
+  // `write path text...` / `append path text...` 这类命令要先拆成两段：
+  // 第一段当路径，剩余整段都保留成正文文本。
   const char* path_begin = skip_spaces(arguments);
   if (path_begin == nullptr || path_begin[0] == '\0') {
     return false;
   }
 
+  // 这里故意只把“第一个空白前”的部分当路径，
+  // 因为后面的整段文本要原样保留给 write/append 当文件内容。
   const char* path_end = path_begin;
   while (path_end[0] != '\0' && !is_space_char(path_end[0])) {
     ++path_end;
@@ -247,6 +257,9 @@ size_t history_slot_index(const ShellState* shell, size_t history_index) {
     return 0;
   }
 
+  // 历史缓冲还没装满时，逻辑顺序和物理槽位顺序一样；
+  // 装满以后，`history_next_slot` 就是“最老记录的下一个位置”，
+  // 这时要把“按时间顺序的第 N 条”重新映射回 ring buffer 槽位。
   if (shell->history_count < kShellHistoryCapacity) {
     return history_index;
   }
@@ -265,6 +278,8 @@ const char* history_provider_entry_text(const void* context, size_t index) {
     return nullptr;
   }
 
+  // console 层完全不知道 shell 内部 ring buffer 怎么排，
+  // 它只通过这个 provider 拿“按时间顺序的第 N 条历史文本”。
   return shell->history_entries[history_slot_index(shell, index)];
 }
 
@@ -338,6 +353,8 @@ bool command_matches(const char* line,
     return true;
   }
 
+  // 这里故意要求命令名后面要么结束，要么真的是空白。
+  // 这样 `mem` 不会误匹配到 `memory`。
   if (!is_space_char(cursor[index])) {
     return false;
   }
@@ -467,6 +484,8 @@ void handle_disk_command(const ShellState* shell) {
     write_newline(shell);
     return;
   }
+  // `disk` 不是直接去读文件内容，
+  // 它主要用来告诉你：当前 shell 背后到底挂的是哪块卷、多少扇区、文件系统统计如何。
   write_string(shell, "disk_start_lba=");
   write_u64(shell, shell->block_device->start_lba);
   write_newline(shell);
@@ -537,6 +556,9 @@ void handle_pwd_command(const ShellState* shell) {
     return;
   }
 
+  // `pwd` 故意不直接读 shell 私有字段，
+  // 而是复用 syscall 层的 cwd 视图。
+  // 这样以后从用户态发起 `getcwd` 时，和 shell 看到的语义就是同一套。
   char cwd[kSyscallPathCapacity];
   if (sys_getcwd(shell->syscall_context, cwd, sizeof(cwd)) < 0) {
     write_string(shell, "pwd unavailable");
@@ -556,6 +578,8 @@ void handle_cd_command(ShellState* shell, const char* arguments) {
     return;
   }
 
+  // `cd` 的关键路径是：
+  // raw input -> sys_chdir -> syscall_resolve_path + stat_path -> 更新 syscall_context.cwd
   const char* path = skip_spaces(arguments);
   if (path == nullptr || path[0] == '\0') {
     path = "/";
@@ -597,6 +621,9 @@ void handle_ls_command(const ShellState* shell, const char* arguments) {
     return;
   }
 
+  // `ls` 这一步看起来像纯显示命令，
+  // 实际上它完整穿过了：
+  // shell -> syscall path resolve -> stat_path -> listdir -> VFS -> directory handle
   const char* path = skip_spaces(arguments);
   char implicit_path[kSyscallPathCapacity];
   if (path == nullptr || path[0] == '\0') {
@@ -685,6 +712,8 @@ void handle_cat_command(const ShellState* shell, const char* arguments) {
     return;
   }
 
+  // `cat` 的完整链路是：
+  // shell path -> sys_open -> fd -> sys_read(loop) -> 逐块打印内容 -> sys_close
   const char* path = skip_spaces(arguments);
   if (path == nullptr || path[0] == '\0') {
     write_string(shell, "usage: cat <path>");
@@ -770,6 +799,8 @@ void handle_stat_command(const ShellState* shell, const char* arguments) {
     return;
   }
 
+  // `stat` 是最适合观察分层的命令之一：
+  // 它不读文件内容，只把 VFS 看到的 inode / block / size / type 元数据打印出来。
   const char* path = skip_spaces(arguments);
   if (path == nullptr || path[0] == '\0') {
     write_string(shell, "usage: stat <path>");
@@ -853,6 +884,8 @@ void handle_touch_command(ShellState* shell, const char* arguments) {
     return;
   }
 
+  // `touch` 这一版只负责“确保这个文件存在”。
+  // 如果文件本来就有，它不会像 Unix 那样更新时间戳，因为当前文件系统还没有时间字段逻辑。
   const char* path = skip_spaces(arguments);
   if (path == nullptr || path[0] == '\0') {
     write_string(shell, "usage: touch <path>");
@@ -954,6 +987,8 @@ void handle_write_command(ShellState* shell, const char* arguments) {
     return;
   }
 
+  // `write` 是覆盖写：
+  // 路径后面的剩余文本全部原样作为文件新内容。
   char path[kSyscallPathCapacity];
   const char* text = nullptr;
   if (!split_path_and_text(arguments, path, sizeof(path), &text)) {
@@ -995,6 +1030,8 @@ void handle_append_command(ShellState* shell, const char* arguments) {
     return;
   }
 
+  // `append` 和 `write` 的解析形状一样，
+  // 唯一区别是底层落到 `vfs_append_file`，把内容拼到文件末尾。
   char path[kSyscallPathCapacity];
   const char* text = nullptr;
   if (!split_path_and_text(arguments, path, sizeof(path), &text)) {
@@ -1036,6 +1073,8 @@ void handle_rm_command(ShellState* shell, const char* arguments) {
     return;
   }
 
+  // 当前 `rm` 统一走 `vfs_unlink`，
+  // 底层再决定目标是普通文件还是空目录，以及是否允许删除。
   const char* path = skip_spaces(arguments);
   if (path == nullptr || path[0] == '\0') {
     write_string(shell, "usage: rm <path>");
@@ -1071,6 +1110,9 @@ void handle_sync_command(ShellState* shell) {
     return;
   }
 
+  // `sync` 对当前教学文件系统很重要：
+  // 它的意义不是“看起来成功了”，而是把 metadata 真正刷回卷，
+  // 这样重挂载之后结果还在。
   if (!vfs_sync(shell->vfs)) {
     write_string(shell, "sync failed");
     write_newline(shell);
@@ -1095,6 +1137,9 @@ void handle_run_command(ShellState* shell, const char* arguments) {
     return;
   }
 
+  // `run` 是这版 shell 里最像“真正操作系统命令”的一条：
+  // 它不是简单打印状态，而是把 ELF 文件真正装进用户地址空间，
+  // 再交给 scheduler 作为一条 user thread 去运行。
   const char* path = skip_spaces(arguments);
   if (path == nullptr || path[0] == '\0') {
     write_string(shell, "usage: run <path>");
@@ -1130,6 +1175,9 @@ void handle_run_command(ShellState* shell, const char* arguments) {
   SchedulerElfThreadLoadResult launch_result;
   memory_set(&launch_result, 0, sizeof(launch_result));
   const char* const process_name = path_leaf_name(resolved_path);
+  // 这里真正进入的是：
+  // shell -> scheduler_create_user_elf_thread ->
+  // ELF loader -> address space mapping -> scheduler ready queue
   if (!scheduler_create_user_elf_thread(
           shell->scheduler,
           shell->allocator,
@@ -1186,6 +1234,11 @@ void handle_run_command(ShellState* shell, const char* arguments) {
   write_u64(shell, launch_result.program.mapped_page_count);
   write_newline(shell);
 
+  // 如果此刻 shell 不是在某条调度线程里跑的，说明这是早期 smoke/直接调用路径，
+  // 那就直接把调度器跑到 idle，直到这条用户线程结束。
+  //
+  // 如果 shell 自己已经挂在调度器里，那就只主动 yield 一次，
+  // 让新创建的用户线程有机会接过 CPU。
   if (scheduler_current_thread(shell->scheduler) == nullptr) {
     (void)scheduler_run_until_idle(shell->scheduler);
   } else {
@@ -1424,6 +1477,8 @@ bool initialize_shell(ShellState* shell,
     return false;
   }
 
+  // shell 自己并不“拥有”这些大对象，
+  // 它只是把启动阶段已经准备好的各层对象接到一起。
   shell->boot_info = boot_info;
   shell->allocator = allocator;
   shell->heap = heap;
@@ -1440,6 +1495,8 @@ bool initialize_shell(ShellState* shell,
   memory_set(shell->history_sequence_numbers, 0,
              sizeof(shell->history_sequence_numbers));
   memory_set(shell->history_entries, 0, sizeof(shell->history_entries));
+
+  // 启动后先把 cwd 归一到 `/`，这样 shell 和用户态第一眼看到的工作目录一致。
   return sys_chdir(shell->syscall_context, "/") == kSyscallOk;
 }
 
@@ -1480,6 +1537,9 @@ ShellCommandResult shell_execute_line(ShellState* shell,
 
   const char* arguments = nullptr;
 
+  // 这一长串 if 的本质是第一版命令分发表。
+  // 现在先用最直接的线性匹配保持可读性，
+  // 等命令继续变多时，再考虑命令表或函数指针数组。
   if (command_matches(trimmed_line, "help", &arguments) &&
       is_empty_after_trim(arguments)) {
     handle_help_command(shell);
@@ -1615,6 +1675,8 @@ ShellCommandResult shell_execute_line(ShellState* shell,
 
   if (command_matches(trimmed_line, "clear", &arguments) &&
       is_empty_after_trim(arguments)) {
+    // `clear` 是少数不走 syscall/VFS 的命令，
+    // 它直接调用输出后端的 clear 回调，把 console 视口清空。
     clear_output(shell);
     return kShellCommandExecuted;
   }
@@ -1650,10 +1712,16 @@ ShellCommandResult shell_run_once(ShellState* shell,
   }
 
   ConsoleHistoryProvider history_provider;
+  // console 层不直接依赖 shell 内部历史数组，
+  // 而是通过 provider 回调拿“有多少条历史、每条是什么”。
   history_provider.entry_count = history_provider_entry_count;
   history_provider.entry_text = history_provider_entry_text;
   history_provider.context = shell;
 
+  // 这一层把“交互式 shell 的一轮生命周期”固定成 3 步：
+  // 1. 打提示符
+  // 2. 读一行（带历史/编辑）
+  // 3. 执行这一行
   shell_print_prompt(shell);
   const size_t line_length =
       console_read_line_with_history(line_buffer, capacity, &history_provider);
@@ -1672,6 +1740,7 @@ void shell_run_forever(ShellState* shell,
   }
 
   for (;;) {
+    // 这一层故意很薄：真正的一轮交互逻辑已经收口到 shell_run_once。
     (void)shell_run_once(shell, line_buffer, capacity, nullptr);
   }
 }

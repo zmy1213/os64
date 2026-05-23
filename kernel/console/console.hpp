@@ -12,6 +12,12 @@ struct ConsoleHistoryProvider {
   const void* context;
 };
 
+// console 这层只做“最小行编辑终端”：
+// - 往 VGA 控制台写字符
+// - 维护一行输入草稿
+// - 处理左右移动、删除、历史浏览
+// 它不理解 shell 命令，也不理解文件系统。
+
 // 初始化最小 VGA 控制台。
 // 这里的 start_row 不是“屏幕从哪开始显示 BIOS”，
 // 而是告诉控制台：前面这些行可能已经被状态日志占用，你从哪一行开始作为自己的输入/输出区域。
@@ -59,6 +65,7 @@ size_t console_read_line(char* buffer, size_t capacity);
 // - Home / End
 // - Delete
 // - 上下方向键浏览历史
+// shell 现在真正用的是这条路径。
 size_t console_read_line_with_history(char* buffer,
                                       size_t capacity,
                                       const ConsoleHistoryProvider* history);

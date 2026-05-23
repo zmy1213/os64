@@ -32,6 +32,8 @@ bool initialize_kernel_memory_system(PageAllocator* page_allocator,
     return false;
   }
 
+  // 这里没有自己创建堆或页分配器，
+  // 只是把上层已经初始化好的两块状态对象登记成“全局默认内存入口”。
   g_kernel_memory.page_allocator = page_allocator;
   g_kernel_memory.heap = heap;
   g_kernel_memory.ready = true;
@@ -69,6 +71,8 @@ void* kmalloc_aligned(size_t size, size_t alignment) {
     return nullptr;
   }
 
+  // `kmalloc_*` 本身不重新发明分配逻辑，
+  // 只是统一从“默认内核堆”进去。
   return heap_alloc(heap, size, alignment);
 }
 

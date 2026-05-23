@@ -80,11 +80,25 @@ static_assert(offsetof(UserModeLaunchContext, user_stack_selector) == 56,
 static_assert(offsetof(UserModeLaunchContext, return_value) == 64,
               "UserModeLaunchContext layout must match user_mode_enter");
 
+// 真正把 CPU 从当前内核线程上下文送进 ring 3。
+// 这个函数表面上长得像普通 `uint64_t f(ctx)`，
+// 但中间不是正常 call/ret，而是：
+// 1. 保存当前内核恢复点
+// 2. 切到用户 CR3
+// 3. 伪造 iretq 帧
+// 4. 真的落进用户态
+// 5. 最后再由 `user_mode_resume_kernel()` 把它“伪装成一次返回”
 extern "C" uint64_t user_mode_enter(UserModeLaunchContext* context);
+
+// 这是 `exit` 以后专门用来“接回内核调用点”的恢复器。
+// 它不会回到自己的调用者，而是直接把控制流接回最初 `user_mode_enter()` 的下一条指令。
 extern "C" [[noreturn]] void user_mode_resume_kernel(
     uint64_t kernel_resume_stack_pointer,
     uint64_t kernel_root_physical,
     uint64_t return_value);
+
+// 下面这几段符号不是普通函数，而是“会被内核按原始字节范围复制出去”的用户态教学程序镜像。
+// 之所以导出 start/end，是因为内核当前要把它们当作一段机器码文件内容来搬运。
 extern "C" uint8_t user_mode_smoke_program_start;
 extern "C" uint8_t user_mode_smoke_program_end;
 extern "C" uint8_t user_mode_yield_program_start;

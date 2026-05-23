@@ -26,9 +26,20 @@ struct KernelHeap {
   KernelHeapFreeRegion* free_list;  // 所有空闲区按地址顺序串成一条链。
 };
 
+// 建好一份“还没真正映射任何页”的空堆。
+// 这里只是把状态清干净，并记住以后要向哪个页分配器要物理页。
 bool initialize_kernel_heap(KernelHeap* heap, PageAllocator* allocator);
+
+// 分配一块堆内存。
+// `size` 是调用者真正想要的 payload 大小；
+// `alignment` 是这块内存起始地址至少要满足的对齐要求。
 void* heap_alloc(KernelHeap* heap, size_t size, size_t alignment);
+
+// 释放之前由 `heap_alloc()` 返回的块。
+// 成功返回 `true`，失败通常意味着传进来的指针不是合法堆块。
 bool heap_free(KernelHeap* heap, void* allocation);
+
+// 下面这些都是“观察堆当前状态”的接口，主要给调试日志和 smoke test 用。
 uint64_t heap_used_bytes(const KernelHeap* heap);
 uint64_t heap_mapped_bytes(const KernelHeap* heap);
 uint64_t heap_free_bytes(const KernelHeap* heap);

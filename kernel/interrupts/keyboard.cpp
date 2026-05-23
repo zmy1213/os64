@@ -46,6 +46,9 @@ void restore_interrupt_flags(uint64_t flags) {
   asm volatile("pushq %0; popfq" : : "r"(flags) : "memory", "cc");
 }
 
+// 这一层的 ring buffer 同时服务两类消费者：
+// - console：想看完整输入事件，方向键/删除键也要保留
+// - stdin：只想看字符流，方向键这类事件会被忽略
 uint16_t advance_buffer_index(uint16_t index) {
   ++index;
   if (index == kKeyboardInputBufferCapacity) {
@@ -169,6 +172,8 @@ bool translate_extended_scancode(uint8_t scancode, KeyboardInputEvent* out_event
 bool translate_scancode_to_input_event(uint8_t scancode,
                                        KeyboardInputEvent* out_event) {
   if (scancode == 0xE0) {
+    // 扩展键（方向键、Delete、Home、End 等）通常先来一个 0xE0 前缀，
+    // 所以这里先把状态记住，等下一个字节再决定真正是什么键。
     g_keyboard_has_extended_prefix = 1;
     return false;
   }
@@ -216,6 +221,8 @@ bool try_dequeue_input_event(KeyboardInputEvent* out_event,
       g_keyboard_input_buffer[g_keyboard_input_read_index].character;
 
   if (characters_only && buffered_event.kind != kKeyboardInputCharacter) {
+    // 这一步故意“不消费”非字符事件。
+    // 这样 stdin 流读取不会把方向键偷偷吞掉，console 仍然有机会之后把它取走。
     return false;
   }
 
@@ -254,6 +261,8 @@ bool register_stream_waiter(ThreadControlBlock* thread) {
     return true;
   }
 
+  // 这一轮先不做链表或更复杂的等待队列，
+  // 直接用固定数组记“有哪些线程正在等下一个字符事件”。
   for (size_t i = 0; i < kSchedulerMaxThreadCount; ++i) {
     if (g_keyboard_stream_waiters[i] == nullptr) {
       g_keyboard_stream_waiters[i] = thread;
@@ -299,6 +308,9 @@ bool register_input_waiter(ThreadControlBlock* thread) {
     return true;
   }
 
+  // 和 stream waiters 分开存，是因为 console 和 stdin 的语义不一样：
+  // - console 等“任意输入事件”
+  // - stdin 只等“字符型事件”
   for (size_t i = 0; i < kSchedulerMaxThreadCount; ++i) {
     if (g_keyboard_input_waiters[i] == nullptr) {
       g_keyboard_input_waiters[i] = thread;
@@ -328,6 +340,7 @@ void wake_input_waiters() {
       continue;
     }
 
+    // 只要有新输入事件到来，等 console 事件的线程都可以先被唤醒重试。
     (void)scheduler_wake_thread(waiter);
     g_keyboard_input_waiters[i] = nullptr;
   }
@@ -340,6 +353,8 @@ void wake_stream_waiters() {
       continue;
     }
 
+    // 这里专门只在“字符型事件”入队时调用。
+    // 这样 read(0) 不会因为单纯按了方向键就被错误唤醒。
     (void)scheduler_wake_thread(waiter);
     g_keyboard_stream_waiters[i] = nullptr;
   }
@@ -386,6 +401,8 @@ void handle_keyboard_irq() {
   translated_event.character = '\0';
   if (translate_scancode_to_input_event(g_keyboard_last_scancode,
                                         &translated_event)) {
+    // 真正的主链是：
+    // IRQ1 -> 读扫描码 -> 翻译成输入事件 -> 入队 -> 唤醒等待者
     enqueue_input_event(translated_event);
     wake_input_waiters();
 
@@ -416,6 +433,8 @@ bool keyboard_try_read_input_event(KeyboardInputEvent* out_event) {
     return false;
   }
 
+  // 出队时先短暂关中断，避免 IRQ 路径一边修改 ring buffer，
+  // 这边一边读/改读写索引造成竞争。
   const uint64_t flags = save_interrupt_flags_and_disable();
   const bool success = try_dequeue_input_event(out_event, false);
   restore_interrupt_flags(flags);
@@ -432,6 +451,9 @@ bool keyboard_wait_for_input_event() {
     return false;
   }
 
+  // 这条路径给 console 用：
+  // 如果当前没有事件，就把当前线程挂进“任意输入事件等待队列”，
+  // 然后真正 block，等下一次键盘 IRQ 来 wake。
   const uint64_t flags = save_interrupt_flags_and_disable();
   if (g_keyboard_input_count != 0) {
     restore_interrupt_flags(flags);
@@ -444,6 +466,8 @@ bool keyboard_wait_for_input_event() {
   }
 
   if (g_keyboard_input_count != 0) {
+    // 双重检查：
+    // 防止“刚发现为空，正准备登记等待者”这几条指令之间，IRQ 已经把新事件塞进来了。
     unregister_input_waiter(current_thread);
     restore_interrupt_flags(flags);
     return true;
@@ -488,6 +512,8 @@ bool keyboard_try_read_stream_char(char* out_char) {
   event.kind = kKeyboardInputCharacter;
   event.character = '\0';
 
+  // 这条路径给 stdin 用：
+  // 它会顺着输入队列往后找，直到找到真正的字符型事件为止。
   const uint64_t flags = save_interrupt_flags_and_disable();
   bool success = false;
   while (try_dequeue_input_event(&event, false)) {
@@ -513,6 +539,8 @@ bool keyboard_wait_for_stream_char() {
     return false;
   }
 
+  // 这条路径和 `keyboard_wait_for_input_event()` 很像，
+  // 区别只是它只关心“字符型事件是否已经可读”。
   const uint64_t flags = save_interrupt_flags_and_disable();
   if (g_keyboard_char_count != 0) {
     restore_interrupt_flags(flags);

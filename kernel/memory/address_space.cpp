@@ -37,6 +37,12 @@ uint64_t allocate_clone_table_page(PageAllocator* allocator) {
   return page;
 }
 
+// 递归克隆一层页表：
+// - `source_physical_address` 指向原页表
+// - `remaining_levels` 说明还剩几层要继续往下复制
+//
+// 它不会复制真正的普通数据页内容，
+// 只是复制“描述映射关系的页表树”。
 uint64_t clone_page_table_level(PageAllocator* allocator,
                                 uint64_t source_physical_address,
                                 uint8_t remaining_levels) {
@@ -67,6 +73,8 @@ uint64_t clone_page_table_level(PageAllocator* allocator,
       continue;
     }
 
+    // 还没到最后一级、而且这项不是大页时，
+    // 继续把“下一层页表页”也克隆出来。
     if (remaining_levels > 1 && (entry & kPageLarge) == 0) {
       const uint64_t child_physical_address = entry & kPageMask;
       const uint64_t cloned_child = clone_page_table_level(
@@ -90,6 +98,8 @@ void fill_common_layout(AddressSpace* space) {
     return;
   }
 
+  // 这些字段描述的是“用户区的大轮廓”，
+  // 不管是观察当前内核地址空间，还是新克隆一份用户地址空间，都共用同一套约定。
   space->user_region_base = kUserAddressSpaceBase;
   space->user_region_limit = kUserAddressSpaceLimit;
   space->default_user_stack_top = kUserAddressSpaceDefaultStackTop;
@@ -118,6 +128,7 @@ bool initialize_kernel_address_space_view(AddressSpace* space) {
     return false;
   }
 
+  // 这里只是“借用当前内核那份页表根来观察”，所以不拥有它。
   space->ready = true;
   space->owns_page_table_root = false;
   return true;
@@ -138,6 +149,8 @@ bool clone_current_address_space(AddressSpace* space, PageAllocator* allocator) 
     return false;
   }
 
+  // 从这里开始，`space` 就不再只是“看一看当前 CR3”，
+  // 而是真的拥有一棵独立页表树，后面可以安全地往里面挂用户页。
   space->root_physical_address = cloned_root;
   space->root_virtual_address = table_from_physical_address(cloned_root);
   if (space->root_virtual_address == nullptr) {
@@ -171,6 +184,7 @@ bool address_space_map_user_page(AddressSpace* space, PageAllocator* allocator,
     return false;
   }
 
+  // 只有“原来没有映射，现在新挂上了”的情况才算新增用户页数量。
   if (!already_mapped) {
     ++space->mapped_user_pages;
   }

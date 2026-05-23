@@ -45,6 +45,7 @@ bool initialize_page_allocator(PageAllocator* allocator, const BootInfo* boot_in
       reinterpret_cast<const E820Entry*>(static_cast<uintptr_t>(boot_info->memory_map_ptr));
 
   // 把 E820 里的 usable 区域筛一遍，只留下真正适合“按页分配”的那部分。
+  // 这里做完以后，`allocator->ranges[]` 就变成内核后续真正会消费的“可用页池”。
   for (uint16_t i = 0; i < boot_info->memory_map_count; ++i) {
     const E820Entry& entry = entries[i];
     if (!is_usable_entry(entry)) {
@@ -86,6 +87,7 @@ uint64_t alloc_page(PageAllocator* allocator) {
   }
 
   // 从当前 active_range 开始找，哪一段还有空页就从哪一段拿。
+  // 这就是第一版最朴素的“顺序分配”策略：不回收、不合并，只是一直往前切页。
   for (uint16_t i = allocator->active_range; i < allocator->range_count; ++i) {
     PageAllocatorRange& range = allocator->ranges[i];
     if (range.next_free + kPageSize > range.limit) {
@@ -107,6 +109,8 @@ uint64_t count_free_pages(const PageAllocator* allocator) {
     return 0;
   }
 
+  // 每一段还能拿多少页 = (limit - next_free) / 4096，
+  // 最后把所有 usable 段的剩余页数加起来。
   uint64_t total = 0;
   for (uint16_t i = 0; i < allocator->range_count; ++i) {
     const PageAllocatorRange& range = allocator->ranges[i];

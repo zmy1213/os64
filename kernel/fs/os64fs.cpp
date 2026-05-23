@@ -8,6 +8,8 @@ constexpr char kOs64FsSignature[8] = {
     'O', 'S', '6', '4', 'F', 'S', 'V', '3',
 };
 
+// superblock 里的前 8 个字节应该固定写着 "OS64FSV3"。
+// 这是挂载文件系统时最先做的“身份检查”之一。
 bool signature_matches(const char* actual) {
   if (actual == nullptr) {
     return false;
@@ -26,6 +28,8 @@ bool is_path_separator(char ch) {
   return ch == '/';
 }
 
+// 跳过路径里连续出现的 `/`。
+// 这样 `/docs//guide.txt` 这种写法也能被归一化处理。
 const char* skip_path_separators(const char* path) {
   if (path == nullptr) {
     return nullptr;
@@ -88,6 +92,9 @@ uint32_t filesystem_data_block_count(const Os64Fs* filesystem) {
   const uint64_t total_data_bytes =
       static_cast<uint64_t>(filesystem->superblock.data_sector_count) *
       filesystem->device->sector_size;
+
+  // “总数据块数”不是 superblock 直接给的字段，
+  // 而是用“数据区总字节数 / 每块大小”现场算出来。
   return static_cast<uint32_t>(
       total_data_bytes / filesystem->superblock.data_block_size);
 }
@@ -113,6 +120,8 @@ bool bitmap_bit_is_set(const uint8_t* bitmap,
 
   const uint32_t byte_index = bit_index / 8u;
   const uint8_t bit_mask = static_cast<uint8_t>(1u << (bit_index % 8u));
+
+  // 一个 bit 对应“一个 inode / 一个数据块是否已占用”。
   return byte_index < bitmap_bytes &&
          (bitmap[byte_index] & bit_mask) != 0;
 }
@@ -159,6 +168,7 @@ bool read_superblock(Os64Fs* filesystem) {
     return false;
   }
 
+  // superblock 约定就放在逻辑扇区 0。
   memory_copy(&filesystem->superblock, sector, sizeof(filesystem->superblock));
   return true;
 }
@@ -194,6 +204,8 @@ bool read_inode_table(Os64Fs* filesystem) {
 
   memory_set(filesystem->inode_table_cache, 0,
              sizeof(filesystem->inode_table_cache));
+
+  // inode table 可能跨多个扇区，所以这里按扇区整段预读进缓存。
   for (uint32_t sector_offset = 0;
        sector_offset < inode_table_sector_count;
        ++sector_offset) {
@@ -232,6 +244,8 @@ bool read_bitmap(Os64Fs* filesystem,
     return false;
   }
 
+  // 和 inode table 一样，位图也先整个缓存到内存里，
+  // 后面 create/unlink/write 才能直接改内存副本再统一 sync 回去。
   memory_set(cache, 0, cache_capacity);
   for (uint32_t sector_offset = 0; sector_offset < sector_count;
        ++sector_offset) {
@@ -307,6 +321,9 @@ bool filesystem_layout_is_valid(const Os64Fs* filesystem) {
       bitmap_required_bytes(sb.inode_count);
   const uint32_t data_bitmap_required_bytes =
       bitmap_required_bytes(total_data_blocks);
+
+  // 这一大串判断是在做“挂载前的体检”：
+  // 签名、版本、各区域起止扇区、inode 大小、目录项大小、空闲计数，都先过一遍。
   if (!signature_matches(sb.signature) ||
       sb.version != kOs64FsVersion ||
       sb.total_sectors != filesystem->device->sector_count ||
@@ -359,6 +376,9 @@ bool filesystem_layout_is_valid(const Os64Fs* filesystem) {
       sb.data_bitmap_start_sector + sb.data_bitmap_sector_count;
   const uint32_t inode_table_end_sector =
       sb.inode_table_start_sector + sb.inode_table_sector_count;
+
+  // 这里进一步检查“磁盘布局有没有互相重叠”：
+  // inode bitmap -> data bitmap -> inode table -> data area 必须按顺序排开。
   if (inode_bitmap_end_sector > sb.data_bitmap_start_sector ||
       data_bitmap_end_sector > sb.inode_table_start_sector ||
       inode_table_end_sector > sb.data_start_sector) {
@@ -437,6 +457,9 @@ bool read_u32_from_data_block(const Os64Fs* filesystem,
       filesystem->superblock.data_start_sector +
       (byte_offset_in_volume / sector_size);
   const uint32_t sector_offset = byte_offset_in_volume % sector_size;
+
+  // 单个 uint32_t 不能跨扇区读取；
+  // 这个 helper 专门给“间接块里存的 block index 数组”用。
   if (sector_index >= filesystem->superblock.total_sectors ||
       sector_offset + sizeof(uint32_t) > sector_size) {
     return false;
@@ -462,10 +485,12 @@ bool inode_block_index_for_file_block(const Os64Fs* filesystem,
   }
 
   if (file_block_index < kOs64FsDirectBlockCount) {
+    // 先看 inode 里直接塞着的 direct block 指针。
     *out_block_index = inode->direct_blocks[file_block_index];
     return data_block_index_is_valid(filesystem, *out_block_index);
   }
 
+  // direct 不够时，再去间接块里找第 N 个 block 指针。
   const uint32_t indirect_block_slot =
       file_block_index - static_cast<uint32_t>(kOs64FsDirectBlockCount);
   if (indirect_block_slot >= filesystem_indirect_entry_capacity(filesystem)) {
@@ -506,6 +531,8 @@ bool read_inode_block_bytes(const Os64Fs* filesystem,
   auto* destination = static_cast<uint8_t*>(buffer);
   size_t copied = 0;
 
+  // 这一层做的是“按文件偏移读字节”：
+  // 先把文件偏移拆成“第几个文件块 + 块内偏移”，再换算到真正的磁盘扇区。
   while (copied < bytes_to_read) {
     const uint32_t absolute_offset = offset + static_cast<uint32_t>(copied);
     const uint32_t file_block_slot = absolute_offset / block_size;
@@ -643,6 +670,11 @@ bool validate_allocation_maps_and_collect_stats(Os64Fs* filesystem) {
 
   uint32_t used_inode_count = 0;
   uint32_t used_data_block_count = 0;
+
+  // 核心思路：
+  // 1. 按 inode bitmap 找出“哪些 inode 被标记为已分配”
+  // 2. 再顺着这些 inode 真的去遍历 direct/indirect block 引用
+  // 3. 最后把“实际看到的占用”与 data bitmap / free count 做交叉核对
   for (uint32_t inode_number = 1;
        inode_number < filesystem->superblock.inode_count;
        ++inode_number) {
@@ -771,6 +803,9 @@ bool find_child_inode(const Os64Fs* filesystem,
 
   const uint32_t entry_count =
       os64fs_directory_entry_count(filesystem, directory_inode);
+
+  // 目录本质上就是“目录项数组”；
+  // 所以找子节点的过程就是把目录项一条条读出来做名字匹配。
   for (uint32_t entry_index = 0; entry_index < entry_count; ++entry_index) {
     Os64FsDirEntry entry;
     if (!os64fs_read_directory_entry(filesystem, directory_inode, entry_index,
@@ -899,6 +934,10 @@ bool split_parent_path_and_name(const char* path,
     return false;
   }
 
+  // 例子：
+  // `/lab/note.txt` 会被拆成：
+  // - parent = `/lab`
+  // - leaf   = `note.txt`
   size_t leaf_begin = path_length;
   while (leaf_begin > 0 && !is_path_separator(path[leaf_begin - 1])) {
     --leaf_begin;
@@ -964,6 +1003,11 @@ bool lookup_mutation_target(Os64Fs* filesystem,
     return false;
   }
 
+  // create / unlink / write 这类“会改目录结构”的操作，
+  // 都先靠这个 helper 找到：
+  // 1. 父目录 inode
+  // 2. 目标名字
+  // 3. 目标是否已经存在
   const uint32_t entry_count =
       os64fs_directory_entry_count(filesystem, &out_target->parent_inode);
   for (uint32_t entry_index = 0; entry_index < entry_count; ++entry_index) {
@@ -1008,6 +1052,8 @@ bool write_data_block_bytes(Os64Fs* filesystem,
   const uint32_t sector_size = filesystem->device->sector_size;
   const auto* source = static_cast<const uint8_t*>(buffer);
   size_t written = 0;
+
+  // 和读路径对称：按“数据块 -> 扇区 -> 扇区内偏移”去落盘。
   while (written < bytes_to_write) {
     const uint32_t absolute_block_offset =
         block_offset + static_cast<uint32_t>(written);
@@ -1027,6 +1073,7 @@ bool write_data_block_bytes(Os64Fs* filesystem,
 
     uint8_t sector_buffer[512];
     if (sector_offset != 0 || bytes_this_round != sector_size) {
+      // 只改扇区里的一部分时，要先把原扇区读回来，再在内存里局部改写。
       if (!block_device_read_sector(filesystem->device, sector_index,
                                     sector_buffer, sizeof(sector_buffer))) {
         return false;
@@ -1083,6 +1130,8 @@ bool write_u32_to_data_block(Os64Fs* filesystem,
 }
 
 bool sync_metadata(Os64Fs* filesystem) {
+  // 这一版先用最容易理解的策略：
+  // inode bitmap、data bitmap、inode table、superblock 全部顺序写回。
   return filesystem != nullptr &&
          write_inode_bitmap(filesystem) &&
          write_data_bitmap(filesystem) &&
@@ -1108,6 +1157,9 @@ bool allocate_inode_number(Os64Fs* filesystem, uint32_t* out_inode_number) {
                    filesystem->inode_bitmap_bytes, inode_number);
     --filesystem->superblock.free_inode_count;
     refresh_runtime_stats_from_superblock(filesystem);
+
+    // 注意这里只是“在内存里的位图缓存上先占位”，
+    // 真正落盘要等后面的 `sync_metadata()`。
     *out_inode_number = inode_number;
     return true;
   }
@@ -1192,6 +1244,8 @@ bool ensure_indirect_block_initialized(Os64Fs* filesystem, Os64FsInode* inode) {
     return false;
   }
 
+  // 新间接块拿到手后，先把里面每个槽位都写成 invalid，
+  // 这样后面还没用到的位置就不会误指向乱七八糟的数据块。
   const uint32_t entry_capacity =
       filesystem_indirect_entry_capacity(filesystem);
   for (uint32_t entry_index = 0; entry_index < entry_capacity; ++entry_index) {
@@ -1216,11 +1270,14 @@ bool ensure_inode_file_block(Os64Fs* filesystem,
   }
 
   if (file_block_index < inode->block_count) {
+    // 目标文件块已经存在时，直接查现有映射即可。
     return inode_block_index_for_file_block(filesystem, inode,
                                             file_block_index,
                                             out_block_index);
   }
 
+  // 现在这一步只允许“顺着文件尾巴继续长一块”，
+  // 不支持跳着在中间挖洞。
   if (file_block_index != inode->block_count) {
     return false;
   }
@@ -1292,6 +1349,8 @@ bool truncate_inode_to_size(Os64Fs* filesystem,
   }
 
   const uint32_t required_blocks = block_count_for_size(filesystem, new_size);
+
+  // 缩文件时就从尾巴开始一块块回收，直到块数正好够新大小为止。
   while (inode->block_count > required_blocks) {
     const uint32_t file_block_index = inode->block_count - 1;
     if (!free_inode_file_block(filesystem, inode, file_block_index)) {
@@ -1331,6 +1390,9 @@ bool write_inode_bytes(Os64Fs* filesystem,
   const uint32_t block_size = filesystem->superblock.data_block_size;
   const auto* source = static_cast<const uint8_t*>(buffer);
   size_t written = 0;
+
+  // 这是文件写路径最核心的一层：
+  // 按偏移算出目标文件块，不够就扩容，新块准备好后再把字节写进去。
   while (written < bytes_to_write) {
     const uint32_t absolute_offset = offset + static_cast<uint32_t>(written);
     const uint32_t file_block_index = absolute_offset / block_size;
@@ -1367,6 +1429,7 @@ bool write_inode_bytes(Os64Fs* filesystem,
 bool append_directory_entry(Os64Fs* filesystem,
                             Os64FsInode* directory_inode,
                             const Os64FsDirEntry* entry) {
+  // 目录在这版文件系统里就是“若干固定大小目录项拼起来的普通文件”。
   return filesystem != nullptr &&
          directory_inode != nullptr &&
          entry != nullptr &&
@@ -1389,6 +1452,8 @@ bool remove_directory_entry(Os64Fs* filesystem,
   }
 
   if (entry_index + 1 < entry_count) {
+    // 为了避免中间留洞，这里用最后一条目录项覆盖被删位置，
+    // 然后再把目录文件整体缩短一项。
     Os64FsDirEntry last_entry;
     if (!os64fs_read_directory_entry(filesystem, directory_inode,
                                      entry_count - 1, &last_entry) ||
@@ -1433,6 +1498,13 @@ bool initialize_os64fs(Os64Fs* filesystem, BlockDevice* device) {
   memory_set(filesystem, 0, sizeof(*filesystem));
   filesystem->device = device;
 
+  // 挂载主线：
+  // 1. 读 superblock
+  // 2. 验布局
+  // 3. 读 inode/data 位图
+  // 4. 读 inode table
+  // 5. 验 root inode
+  // 6. 交叉校验位图和真实引用关系
   if (!read_superblock(filesystem)) {
     filesystem->mount_error = kOs64FsMountReadSuperblockFailed;
     filesystem->device = nullptr;
@@ -1589,6 +1661,9 @@ bool os64fs_lookup_path(const Os64Fs* filesystem, const char* path,
     return true;
   }
 
+  // 路径解析主线：
+  // 从 root inode 开始，一段一段吃掉 `docs/guide.txt` 这样的 component，
+  // 每走一步就把“当前 inode”推进到下一级。
   while (cursor[0] != '\0') {
     const size_t current_component_length = component_length(cursor);
     if (current_component_length == 0) {
@@ -1600,11 +1675,14 @@ bool os64fs_lookup_path(const Os64Fs* filesystem, const char* path,
     }
 
     if (component_is_dot(cursor, current_component_length)) {
+      // `.` 表示“留在当前目录”。
       cursor = skip_path_separators(cursor + current_component_length);
       continue;
     }
 
     if (component_is_dot_dot(cursor, current_component_length)) {
+      // `..` 表示“退回父目录”；
+      // 这里靠 `inode_stack` 记住之前走过的路径。
       if (depth > 1) {
         --depth;
       }
@@ -1693,6 +1771,12 @@ bool os64fs_create_file(Os64Fs* filesystem, const char* path) {
     return false;
   }
 
+  // 创建文件的最小流程：
+  // 1. 找父目录
+  // 2. 分配新 inode 号
+  // 3. 写入一个空文件 inode
+  // 4. 往父目录追加一条目录项
+  // 5. 同步元数据
   uint32_t inode_number = 0;
   if (!allocate_inode_number(filesystem, &inode_number)) {
     return false;
@@ -1738,6 +1822,7 @@ bool os64fs_create_directory(Os64Fs* filesystem, const char* path) {
     return false;
   }
 
+  // 和 create file 类似，只是 inode/目录项的 type 变成 directory。
   uint32_t inode_number = 0;
   if (!allocate_inode_number(filesystem, &inode_number)) {
     return false;
@@ -1787,6 +1872,8 @@ bool write_file_common(Os64Fs* filesystem,
 
   Os64FsInode file_inode;
   if (!target.child_exists) {
+    // 这一步让“write 一个还不存在的文件路径”也能直接成功，
+    // 相当于自动做了“先 create，再写”。
     if (!os64fs_create_file(filesystem, path) ||
         !os64fs_read_inode(filesystem, target.parent_inode.inode_number,
                            &target.parent_inode) ||
@@ -1806,6 +1893,8 @@ bool write_file_common(Os64Fs* filesystem,
     return false;
   }
 
+  // append 模式从文件尾部接着写；
+  // 普通 write 模式先清空旧内容，再从偏移 0 重写。
   if (bytes_to_write > 0 &&
       (buffer == nullptr ||
        !write_inode_bytes(filesystem, &file_inode, write_offset,
@@ -1848,9 +1937,15 @@ bool os64fs_unlink(Os64Fs* filesystem, const char* path) {
   memory_copy(&child_inode, &target.child_inode, sizeof(child_inode));
   if (child_inode.type == kOs64FsTypeDirectory &&
       os64fs_directory_entry_count(filesystem, &child_inode) != 0) {
+    // 第一版只允许删除空目录，避免先处理递归删除的复杂性。
     return false;
   }
 
+  // 删除主线：
+  // 1. 先把文件/目录自己的数据块清空回收
+  // 2. 从父目录目录项数组里删掉它
+  // 3. 释放 inode 号
+  // 4. 最后同步位图 / inode table / superblock
   if (!truncate_inode_to_size(filesystem, &child_inode, 0) ||
       !write_inode_to_cache(filesystem, &child_inode) ||
       !remove_directory_entry(filesystem, &target.parent_inode,

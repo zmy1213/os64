@@ -29,6 +29,8 @@ uint16_t pml4_index(uint64_t address) {
   return static_cast<uint16_t>((address >> 39) & 0x1FF);
 }
 
+// 下面这几个 helper 都是在做同一件事：
+// 从一个 48 位 canonical 虚拟地址里，拆出四级页表各自使用的 9 位索引。
 uint16_t pdpt_index(uint64_t address) {
   return static_cast<uint16_t>((address >> 30) & 0x1FF);
 }
@@ -46,6 +48,8 @@ uint64_t* table_from_physical_address(uint64_t physical_address) {
       static_cast<uintptr_t>(physical_address & kPageMask));
 }
 
+// 页表项里同时混着“物理地址 + 标志位”，
+// 所以先掐掉低位 flags，才能重新把它当作下一层页表地址来访问。
 uint64_t* table_from_entry(uint64_t entry) {
   return table_from_physical_address(entry);
 }
@@ -78,6 +82,8 @@ uint64_t* ensure_next_level(PageAllocator* allocator, uint64_t* table,
     return nullptr;
   }
 
+  // 如果这一层已经有下级页表，就直接复用；
+  // 但要顺手把“父级至少应该具备的权限位”补齐，不然下面的用户页可能实际走不过去。
   uint64_t entry = table[index];
   if ((entry & kPagePresent) != 0) {
     if ((entry & kPageLarge) != 0) {
@@ -147,9 +153,12 @@ bool map_page_in_root(PageAllocator* allocator, uint64_t root_physical_address,
     return false;
   }
 
+  // 真的“把最后一格 PTE 填进去”的时刻就在这里。
   const uint16_t index = pt_index(virtual_address);
   pt[index] = (physical_address & kPageMask) | flags | kPagePresent;
 
+  // 如果改的是当前正在运行的页表，TLB 里旧缓存可能还在，
+  // 所以要用 `invlpg` 把这一个虚拟页的旧翻译作废。
   if (root_physical_address == paging_current_root_physical()) {
     invalidate_page(virtual_address);
   }
@@ -163,6 +172,7 @@ bool map_identity_range(PageAllocator* allocator, uint64_t start, uint64_t end,
     return false;
   }
 
+  // 一页一页循环挂上“虚拟地址 == 物理地址”的映射。
   for (uint64_t address = start; address < end; address += kPagingPageSize) {
     if (!map_page(allocator, address, address, flags)) {
       return false;
@@ -178,6 +188,8 @@ uint64_t resolve_physical_address_in_root(uint64_t root_physical_address,
     return 0;
   }
 
+  // 这整个函数就是在“手工走页表”：
+  // PML4 -> PDPT -> PD -> PT，途中任何一级没 present 都说明映射不存在。
   auto* const pml4 = table_from_physical_address(root_physical_address);
   const uint64_t pml4e = pml4[pml4_index(virtual_address)];
   if ((pml4e & kPagePresent) == 0) {

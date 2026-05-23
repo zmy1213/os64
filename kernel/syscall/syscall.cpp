@@ -13,6 +13,9 @@ SyscallContext* g_active_syscall_context = nullptr;  // 早期 boot/smoke 还会
 extern "C" bool kernel_user_mode_exit_is_armed();
 extern "C" [[noreturn]] void kernel_handle_user_mode_exit(uint64_t return_value);
 
+// 下面这一组小函数先不碰文件系统或中断，
+// 只负责最基础的“路径字符串清洗和拼接”。
+// 这样后面的 `cd` / `open` / `stat` / `ls` 都能复用同一套路径规则。
 bool is_space_char(char ch) {
   return ch == ' ' || ch == '\t';
 }
@@ -127,6 +130,8 @@ bool append_path_component(char* path,
     return false;
   }
 
+  // 根路径 `/` 后面直接拼组件名即可；
+  // 其它路径则要先补一个 `/` 再拼组件。
   if (!path_is_root) {
     path[current_length++] = '/';
   }
@@ -163,6 +168,13 @@ void pop_path_component(char* path) {
   path[index - 1] = '\0';
 }
 
+// 下面这一组小函数处理“公开 syscall fd”和“内核内部 fd 表槽位”的转换。
+// 用户态以后看到的是：
+// - 0 stdin
+// - 1 stdout
+// - 2 stderr
+// - 3+ 普通文件
+// 但内核自己的 fd 表还是从 0 开始算，所以这里要做一层平移。
 bool syscall_fd_is_open(SyscallContext* context, int32_t fd) {
   return syscall_context_is_ready(context) &&
          fd_is_open(context->fd_table, fd);
@@ -203,6 +215,9 @@ bool syscall_write_handler_is_ready(const SyscallContext* context) {
 }
 
 uint64_t encode_syscall_result(int64_t value) {
+  // 当前返回值协议很简单：
+  // 正数/0 表示成功结果，
+  // 负数直接当作错误码塞回 RAX。
   return static_cast<uint64_t>(value);
 }
 
@@ -218,6 +233,8 @@ int32_t read_stdin_stream(void* buffer, size_t bytes_to_read) {
   char* out_buffer = static_cast<char*>(buffer);
   size_t total_read = 0;
 
+  // stdin 这层想模拟的是“终端输入流”而不是“文件 EOF”：
+  // 如果现在没字符，不代表结束，而是应该继续等用户敲键盘。
   for (;;) {
     char character = '\0';
     while (total_read < bytes_to_read &&
@@ -242,6 +259,8 @@ int32_t read_stdin_stream(void* buffer, size_t bytes_to_read) {
       continue;
     }
 
+    // 退化路径里虽然没有真正 block 住线程，
+    // 但依然尽量把 CPU 交还出去，避免在内核里纯忙等。
     // 如果当前还没有线程上下文，或者暂时没法真正 block，
     // 那就退回到旧的“hlt 等中断 + 安全点 yield”路径。
     wait_for_interrupt();
@@ -249,14 +268,18 @@ int32_t read_stdin_stream(void* buffer, size_t bytes_to_read) {
   }
 }
 
+// 现在 syscall 分发优先看“当前线程所属进程”的上下文；
+// 只有在还没进入正式线程/进程运行期时，才退回到早期全局上下文。
 SyscallContext* current_dispatch_context() {
   ThreadControlBlock* const current_thread = scheduler_active_thread();
   if (current_thread != nullptr &&
       current_thread->owner != nullptr &&
       syscall_context_is_ready(&current_thread->owner->syscall_context)) {
+    // 正常运行期优先走“当前线程所属进程”的 syscall 视图。
     return &current_thread->owner->syscall_context;
   }
 
+  // 只有最早期 boot/smoke 还没真正跑在线程里时，才回退到全局上下文。
   return g_active_syscall_context;
 }
 
@@ -273,6 +296,9 @@ void capture_current_user_trap_frame(const SyscallInterruptFrame* frame) {
   }
 
   UserTrapFrame& trap_frame = current_thread->user_trap_frame;
+  // 这里做的事情可以简单理解成：
+  // “把这次从 ring 3 打进内核时，CPU 暂停下来的用户态现场完整抄一份出来”。
+  // 这样线程以后 yield / block / 被抢占之后，才有机会恢复回原来的用户态位置继续跑。
   trap_frame.r15 = frame->r15;
   trap_frame.r14 = frame->r14;
   trap_frame.r13 = frame->r13;
@@ -313,6 +339,11 @@ int64_t dispatch_syscall_registers(uint64_t syscall_number,
     return syscall_status_result(kSyscallInvalidArgument);
   }
 
+  // 这一层就是“寄存器 ABI -> C++ 接口”的总翻译器。
+  // 它不直接做文件系统或调度逻辑，只负责：
+  // 1. 按 syscall 编号选目标
+  // 2. 把整数寄存器参数转回指针/size/fd
+  // 3. 把结果重新编码回寄存器返回值
   switch (syscall_number) {
     case kSyscallNumberGetCwd:
       return static_cast<int64_t>(
@@ -338,6 +369,9 @@ int64_t dispatch_syscall_registers(uint64_t syscall_number,
                     reinterpret_cast<const void*>(argument1),
                     static_cast<size_t>(argument2)));
     case kSyscallNumberExit:
+      // `exit` 比普通 syscall 特殊：
+      // 它不会像 read/open 那样“返回到用户态继续下一条指令”，
+      // 而是直接把这条用户线程的生命周期结束掉。
       if (!kernel_user_mode_exit_is_armed()) {
         return syscall_status_result(kSyscallUnsupported);
       }
@@ -350,6 +384,9 @@ int64_t dispatch_syscall_registers(uint64_t syscall_number,
       }
 
       ++current_thread->user_yield_count;
+
+      // `yield` 的重点不是返回某个数据，
+      // 而是让这条用户线程主动把 CPU 交出去，之后再有机会恢复回来继续跑。
       (void)scheduler_yield_current_thread();
       return syscall_status_result(kSyscallOk);
     }
@@ -403,6 +440,8 @@ SyscallStatus stat_path_internal(SyscallContext* context, const char* path,
     path_capacity = resolved_capacity;
   }
 
+  // 这层的价值是把“路径解析 + vfs_stat + 错误码翻译”收口到一个内部 helper，
+  // 这样 `chdir` / `stat_path` / `listdir` 这些基于路径的 syscall 都不用重复写一遍。
   if (!syscall_resolve_path(context, path, path_buffer, path_capacity)) {
     return kSyscallInvalidArgument;
   }
@@ -454,6 +493,8 @@ bool install_syscall_dispatch_context(SyscallContext* context) {
     return false;
   }
 
+  // 这只是“早期默认上下文安装位”。
+  // 真正进入线程/进程运行期后，分发器优先走 current thread -> owner -> syscall_context。
   g_active_syscall_context = context;
   return true;
 }
@@ -498,13 +539,20 @@ bool syscall_resolve_path(const SyscallContext* context,
 
   const bool absolute = is_path_separator(begin[0]);
   if (absolute) {
+    // 绝对路径从 `/` 开始重新算，不继承当前 cwd。
     if (!set_root_path(out_path, capacity)) {
       return false;
     }
   } else if (!copy_string(out_path, capacity, base_path)) {
+    // 相对路径先拿 cwd 当起点，再往后拼组件。
     return false;
   }
 
+  // 这里做的就是“最小版路径规范化”：
+  // - 连续 `/` 压成一个分隔效果
+  // - `.` 直接跳过
+  // - `..` 回退到上一级
+  // - 其它名字就正常追加
   const char* cursor =
       absolute ? skip_path_separators(begin, end) : begin;
   while (cursor < end) {
@@ -543,6 +591,7 @@ int32_t sys_getcwd(SyscallContext* context, char* buffer, size_t capacity) {
     return kSyscallInvalidArgument;
   }
 
+  // 第一版先直接把内核里维护的 cwd 文本复制给调用者。
   const char* cwd = syscall_current_working_directory(context);
   if (cwd == nullptr || !copy_string(buffer, capacity, cwd)) {
     return kSyscallInvalidArgument;
@@ -556,6 +605,8 @@ SyscallStatus sys_chdir(SyscallContext* context, const char* path) {
     return kSyscallInvalidArgument;
   }
 
+  // `chdir` 的关键不是简单改字符串，
+  // 而是先确认这个路径真的存在，而且目标对象真的是目录。
   char resolved[kSyscallPathCapacity];
   VfsStat stat;
   const SyscallStatus status =
@@ -580,6 +631,8 @@ int32_t sys_open(SyscallContext* context, const char* path) {
     return kSyscallInvalidArgument;
   }
 
+  // 先把相对路径按当前 cwd 展开成绝对路径，
+  // 后面 fd 层和 VFS 层都只面对统一后的路径。
   char resolved[kSyscallPathCapacity];
   if (!syscall_resolve_path(context, path, resolved, sizeof(resolved))) {
     return kSyscallInvalidArgument;
@@ -600,6 +653,9 @@ int32_t sys_open(SyscallContext* context, const char* path) {
     return kSyscallIoError;
   }
 
+  // 用户态最终看到的不是内核 fd 表里的 0/1/2/...，
+  // 而是经过保留位平移后的公开 fd：
+  // 0 stdin, 1 stdout, 2 stderr, 3+ 普通文件。
   return table_fd_to_syscall_fd(fd);
 }
 
@@ -618,6 +674,7 @@ int32_t sys_read(SyscallContext* context, int32_t fd,
   }
 
   if (fd == kSyscallStandardInputFd) {
+    // `read(0, ...)` 走的是键盘字符流，而不是文件系统。
     return read_stdin_stream(buffer, bytes_to_read);
   }
 
@@ -625,6 +682,7 @@ int32_t sys_read(SyscallContext* context, int32_t fd,
     return kSyscallUnsupported;
   }
 
+  // 其它 `3+` 的 fd 再映射回内核真实 fd 表槽位。
   const int32_t table_fd = syscall_fd_to_table_fd(fd);
   if (!syscall_fd_is_open(context, table_fd)) {
     return kSyscallBadFileDescriptor;
@@ -658,6 +716,8 @@ int32_t sys_write(SyscallContext* context, int32_t fd,
       return kSyscallUnsupported;
     }
 
+    // 当前 stdout/stderr 还没有真正 TTY 设备，
+    // 所以先把字节流交给外部注入的 write_handler。
     const size_t bytes_written =
         context->write_handler(fd, buffer, bytes_to_write,
                                context->write_context);
@@ -693,6 +753,8 @@ int32_t sys_listdir(SyscallContext* context, const char* path,
     return kSyscallInvalidArgument;
   }
 
+  // `ls` 这一类操作先验证路径确实指向目录，
+  // 再一次性把目录项平铺到调用者提供的数组里。
   char resolved[kSyscallPathCapacity];
   VfsStat stat;
   const SyscallStatus status =
@@ -714,6 +776,8 @@ int32_t sys_listdir(SyscallContext* context, const char* path,
       vfs_directory_entry_count(&directory);
 
   if (out_entries == nullptr && entry_capacity == 0) {
+    // 两阶段接口：
+    // 第一步允许调用者只问“这个目录有多少项”，先不真正拷贝目录项。
     (void)vfs_close_directory(&directory);
     return static_cast<int32_t>(entry_count);
   }
@@ -725,6 +789,8 @@ int32_t sys_listdir(SyscallContext* context, const char* path,
   }
 
   for (uint32_t entry_index = 0; entry_index < entry_count; ++entry_index) {
+    // 这一版先做成“整批拷贝目录项数组”，
+    // 还没有做像 Linux `getdents` 那种更底层的字节打包 ABI。
     if (!vfs_read_directory(&directory,
                             &out_entries[static_cast<size_t>(entry_index)])) {
       (void)vfs_close_directory(&directory);
@@ -744,6 +810,7 @@ SyscallStatus sys_close(SyscallContext* context, int32_t fd) {
     return kSyscallInvalidArgument;
   }
 
+  // 标准输入输出这些保留 fd 当前不允许走普通 close 语义。
   if (syscall_fd_is_reserved(fd)) {
     return kSyscallUnsupported;
   }
@@ -761,6 +828,7 @@ SyscallStatus sys_seek(SyscallContext* context, int32_t fd, uint32_t offset) {
     return kSyscallInvalidArgument;
   }
 
+  // seek 只对真正打开的普通文件 fd 生效。
   if (syscall_fd_is_reserved(fd)) {
     return kSyscallUnsupported;
   }
@@ -800,6 +868,8 @@ extern "C" void kernel_handle_syscall(SyscallInterruptFrame* frame) {
     return;
   }
 
+  // 先把“这次从用户态打进来的寄存器现场”留档，
+  // 这样后面就算线程在 syscall 里 yield/block，也还有机会恢复回原来的用户态位置。
   capture_current_user_trap_frame(frame);
 
   // `int 0x80` 现在走的是 DPL=3 的 interrupt gate。
@@ -821,6 +891,8 @@ extern "C" void kernel_handle_syscall(SyscallInterruptFrame* frame) {
     enable_interrupts();
   }
 
+  // 真正的 syscall 分发只有这一句：
+  // 拆寄存器 -> 调 C++ `sys_*` -> 再把结果塞回 `frame->rax`。
   frame->rax = encode_syscall_result(
       dispatch_syscall_registers(frame->rax,
                                  frame->rdi,

@@ -56,6 +56,8 @@ uint64_t minimum_growth_bytes(uint64_t payload_bytes, uint64_t alignment) {
          sizeof(KernelHeapFreeRegion);
 }
 
+// 如果两段空闲区在地址上正好紧挨着，就把它们合成更大的一段。
+// 这就是最基础的“空闲块合并”，否则堆会越来越碎。
 void merge_forward(KernelHeapFreeRegion* region) {
   while (region != nullptr && region->next != nullptr &&
          free_region_end(region) == free_region_start(region->next)) {
@@ -83,6 +85,7 @@ void insert_free_region(KernelHeap* heap, uint64_t region_start,
     current = current->next;
   }
 
+  // 保持 free list 按地址升序，后面判断“是否和前后块相邻”才会简单很多。
   inserted_region->next = current;
   if (previous == nullptr) {
     heap->free_list = inserted_region;
@@ -115,6 +118,8 @@ bool ensure_heap_mapping(KernelHeap* heap, uint64_t additional_bytes) {
     return false;
   }
 
+  // 堆眼下还不够大时，就一页一页往后扩：
+  // 先找物理页，再把这张物理页映射到堆虚拟区间里。
   while (heap->mapped_limit < required_end) {
     const uint64_t physical_page = alloc_page(heap->page_allocator);
     if (physical_page == 0) {
@@ -152,6 +157,8 @@ bool try_allocate_from_region(KernelHeap* heap, KernelHeapFreeRegion* region,
   uint64_t header_start = payload_start - sizeof(KernelHeapAllocationHeader);
   uint64_t prefix_bytes = header_start - region_start;
 
+  // 如果前缀太小，小到连一个新的 free region 头都放不下，
+  // 那这点碎片就不能独立保留，只能继续把 payload 往后挪。
   while (prefix_bytes != 0 && prefix_bytes < sizeof(KernelHeapFreeRegion)) {
     payload_start = align_up(payload_start + sizeof(KernelHeapFreeRegion),
                              alignment);
@@ -191,6 +198,8 @@ bool try_allocate_from_region(KernelHeap* heap, KernelHeapFreeRegion* region,
   header->payload_bytes = payload_bytes;
   header->magic = kAllocationMagic;
 
+  // 头部留给 `free()` 时逆向找回整块区域用；
+  // 真正交给调用者的是 header 后面的 payload。
   *allocation = reinterpret_cast<void*>(static_cast<uintptr_t>(payload_start));
   heap->used_bytes += payload_bytes;
   return true;
@@ -234,6 +243,8 @@ void* heap_alloc(KernelHeap* heap, size_t size, size_t alignment) {
     alignment = kHeapAlignment;
   }
 
+  // 内部统一按 16 字节粒度记账，
+  // 这样 metadata 和普通对象的布局会更规整一些。
   const uint64_t payload_bytes =
       align_up(static_cast<uint64_t>(size), kHeapAlignment);
   if (payload_bytes < size) {
@@ -302,6 +313,9 @@ bool heap_free(KernelHeap* heap, void* allocation) {
     --heap->active_allocations;
   }
   header->magic = 0;
+
+  // 释放并不是“把页还给页分配器”，
+  // 只是把这块区域重新挂回堆自己的 free list，供后续复用。
   insert_free_region(heap, region_start, region_bytes);
   return true;
 }
@@ -327,6 +341,7 @@ uint64_t heap_free_bytes(const KernelHeap* heap) {
     return 0;
   }
 
+  // 把 free list 上每一段空闲区的总字节数累加起来。
   uint64_t total = 0;
   for (KernelHeapFreeRegion* region = heap->free_list; region != nullptr;
        region = region->next) {

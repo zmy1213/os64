@@ -4,6 +4,7 @@
 
 namespace {
 
+// 把底层目录项 + 子 inode 元数据，整理成更适合上层直接显示的 DirectoryEntry。
 bool copy_dir_entry_to_public_entry(const Os64FsDirEntry* source,
                                     const Os64FsInode* child_inode,
                                     DirectoryEntry* out_entry) {
@@ -34,12 +35,14 @@ bool directory_open(const Os64Fs* filesystem, const char* path,
     return false;
   }
 
+  // 先清空输出句柄，避免失败时带着旧目录状态。
   memory_set(out_handle, 0, sizeof(*out_handle));
 
   if (!os64fs_is_mounted(filesystem) || path == nullptr) {
     return false;
   }
 
+  // 目录句柄只接受真正的目录 inode。
   Os64FsInode inode;
   if (!os64fs_lookup_path(filesystem, path, &inode) ||
       inode.type != kOs64FsTypeDirectory) {
@@ -49,6 +52,7 @@ bool directory_open(const Os64Fs* filesystem, const char* path,
   out_handle->filesystem = filesystem;
   memory_copy(&out_handle->inode, &inode, sizeof(inode));
   out_handle->next_entry_index = 0;
+  // 打开时先把目录总项数记下来，后面顺序读取时可以直接做边界检查。
   out_handle->entry_count =
       os64fs_directory_entry_count(filesystem, &inode);
   out_handle->open = true;
@@ -85,6 +89,8 @@ bool directory_read(DirectoryHandle* handle, DirectoryEntry* out_entry) {
     return false;
   }
 
+  // 先读原始目录项，再读它指向的子 inode，
+  // 因为上层想看到的往往不只是名字，还包括类型和大小。
   Os64FsDirEntry raw_entry;
   Os64FsInode child_inode;
   if (!os64fs_read_directory_entry(handle->filesystem, &handle->inode,
@@ -95,6 +101,7 @@ bool directory_read(DirectoryHandle* handle, DirectoryEntry* out_entry) {
     return false;
   }
 
+  // 成功读出一项后，把游标移到下一项。
   ++handle->next_entry_index;
   return true;
 }

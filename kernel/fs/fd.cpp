@@ -4,11 +4,13 @@
 
 namespace {
 
+// 先确认一个 fd 小整数有没有落在当前表容量范围内。
 bool fd_index_is_valid(int32_t fd) {
   return fd >= 0 &&
          static_cast<size_t>(fd) < kFileDescriptorCapacity;
 }
 
+// 取可写槽位指针。
 FileDescriptorEntry* mutable_entry(FileDescriptorTable* table, int32_t fd) {
   if (table == nullptr || !fd_index_is_valid(fd)) {
     return nullptr;
@@ -17,6 +19,7 @@ FileDescriptorEntry* mutable_entry(FileDescriptorTable* table, int32_t fd) {
   return &table->entries[static_cast<size_t>(fd)];
 }
 
+// 取只读槽位指针。
 const FileDescriptorEntry* const_entry(const FileDescriptorTable* table,
                                        int32_t fd) {
   if (table == nullptr || !fd_index_is_valid(fd)) {
@@ -55,6 +58,7 @@ int32_t fd_open(FileDescriptorTable* table, const char* path) {
     return kInvalidFileDescriptor;
   }
 
+  // 从前往后找第一个空槽位。
   for (size_t i = 0; i < kFileDescriptorCapacity; ++i) {
     FileDescriptorEntry& entry = table->entries[i];
     if (entry.open) {
@@ -106,6 +110,7 @@ bool fd_close(FileDescriptorTable* table, int32_t fd) {
     return false;
   }
 
+  // 真正关闭成功后，把槽位清空，表示这个 fd 编号可以再次复用。
   memory_set(entry, 0, sizeof(*entry));
   if (table->open_count > 0) {
     --table->open_count;

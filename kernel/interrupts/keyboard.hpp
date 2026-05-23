@@ -20,6 +20,11 @@ struct KeyboardInputEvent {
   char character;  // 只有 `kKeyboardInputCharacter` 时才真的使用它。
 };
 
+// keyboard 这层的职责可以简单理解成 3 件事：
+// 1. IRQ1 到来时读扫描码
+// 2. 把扫描码翻译成“字符事件 / 方向键事件 / 删除键事件”
+// 3. 维护一个可被 console/stdin 消费的 FIFO 队列和等待队列
+
 // 初始化最小键盘状态。
 // 这一轮先不做完整键盘驱动，只清理旧数据、清零计数器，方便后面做 IRQ1 测试。
 bool initialize_keyboard();
@@ -71,6 +76,9 @@ bool keyboard_try_read_stream_char(char* out_char);
 // 如果当前已经有字符可读，它会直接返回 true，让调用方马上重试读取。
 bool keyboard_wait_for_stream_char();
 
+// 测试注入入口不会直接把事件塞进软件队列，
+// 而是尽量模拟真实硬件路径：让 8042 看起来像“刚收到一枚扫描码”，
+// 然后仍由 IRQ1 路径去读它、翻译它、入队它。
 // 给当前测试环境注入一个“像是键盘刚发来的扫描码”。
 // 这一轮主要给 QEMU 里的自动测试自举使用。
 bool keyboard_inject_test_scancode(uint8_t scancode);

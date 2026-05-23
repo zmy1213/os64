@@ -177,6 +177,9 @@ section .text
 syscall_interrupt_stub:
     push 0                          ; 软中断没有 CPU 自动错误码，先补一个 0。
     push 128                        ; 再把向量号 0x80 也压进去，方便日志和后续统一扩展。
+    ; 这里和普通异常最大的不同是：
+    ; 我们希望 C++ syscall 层能看到“完整寄存器现场”，
+    ; 所以后面会把通用寄存器全都按固定顺序压进去，拼成 RegisterInterruptFrame。
     push rax                        ; 从这里开始把通用寄存器全部保存起来。
     push rcx                        ; 当前 ABI 里第 4 个参数先约定放在 RCX。
     push rdx
@@ -195,6 +198,8 @@ syscall_interrupt_stub:
     mov rdi, rsp                    ; 第 1 个参数：整个 syscall 寄存器帧的起始地址。
     cld
     call kernel_handle_syscall
+    ; 注意这里不会像异常路径那样直接停机；
+    ; syscall 处理完以后，目标就是恢复现场并继续回到触发 `int 0x80` 的下一条用户/内核指令。
     pop r15                         ; 处理完后按相反顺序恢复寄存器。
     pop r14
     pop r13

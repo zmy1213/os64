@@ -1920,6 +1920,11 @@ bool read_inode_text(const Os64Fs* filesystem,
                      const Os64FsInode* inode,
                      char* buffer,
                      size_t capacity) {
+  // 这是一个很小的辅助函数：
+  // 给它一个 inode，它就尝试把整份文件内容读进 buffer，并补一个字符串结束符 `\0`。
+  //
+  // 这里故意要求 `capacity > inode->size_bytes`，
+  // 因为我们不是单纯想拿“原始字节数组”，而是想把它当 C 字符串直接打印出来。
   if (filesystem == nullptr || inode == nullptr || buffer == nullptr ||
       capacity == 0 || inode->size_bytes >= capacity) {
     return false;
@@ -1951,6 +1956,7 @@ bool run_boot_volume_smoke_test(const BootInfo* boot_info,
     return false;
   }
 
+  // 先真的读一下第 0 个扇区，证明这条“内核按扇区访问卷数据”的路径已经打通。
   uint8_t sector0[kBootVolumeSectorSize];
   if (!block_device_read_sector(device, 0, sector0, sizeof(sector0))) {
     return false;
@@ -2055,6 +2061,10 @@ bool run_filesystem_smoke_test(BlockDevice* device,
     return false;
   }
 
+  // 到这里说明：
+  // 1. 根目录能找到
+  // 2. 相对路径、绝对路径、带 `.` / `..` 的路径都已经能解析
+  // 3. 文件系统里那几份关键演示文件都真的存在
   serial_write_string("os64fs_lookup ok");
   serial_write_crlf();
 
@@ -2254,6 +2264,11 @@ bool run_file_handle_smoke_test(const Os64Fs* filesystem) {
     return false;
   }
 
+  // 这里先读一小块，再 seek 回开头，
+  // 目的是同时验证：
+  // - read 会推进 offset
+  // - seek 能把 offset 改回去
+  // - tell 读出来的位置和我们预期一致
   uint8_t first_chunk[8];
   const size_t first_read =
       file_read(&readme_handle, first_chunk, sizeof(first_chunk));
@@ -2360,6 +2375,8 @@ bool run_directory_handle_smoke_test(const Os64Fs* filesystem) {
       directory_read(&root_handle, &notes_entry) &&
       directory_read(&root_handle, &docs_entry);
 
+  // 目录 EOF 语义和文件 EOF 很像：
+  // 已经读到最后一项以后，再读应该失败，而且游标不应该乱跳。
   const uint32_t root_read_count = directory_tell(&root_handle);
   const bool root_eof_ok =
       root_read_ok &&
@@ -2487,6 +2504,8 @@ bool run_vfs_smoke_test(VfsMount* mount, Os64Fs* filesystem) {
     return false;
   }
 
+  // 这里故意重新走一遍“打开文件 -> 顺序读完 -> 读到 EOF”的流程，
+  // 目的是证明 VFS 没有把下面 FileHandle 的行为弄坏。
   const size_t expected_readme_length = string_length(kOs64FsExpectedReadme);
   char readme_text[256];
   if (expected_readme_length >= sizeof(readme_text)) {
@@ -2560,6 +2579,9 @@ bool run_vfs_smoke_test(VfsMount* mount, Os64Fs* filesystem) {
 }
 
 bool run_filesystem_write_smoke_test(BlockDevice* device, VfsMount* mount) {
+  // 这一段是当前文件系统链路里最重要的“写路径总烟测”：
+  // mkdir -> create -> write -> append -> unlink -> sync -> remount -> reread
+  // 全部串起来，目的是确认“不是只在内存里看起来成功”，而是重挂载以后依然成立。
   const bool mount_ok = vfs_is_mounted(mount);
   serial_write_string("os64fs_write_enter=1");
   serial_write_crlf();
@@ -2806,6 +2828,8 @@ bool run_file_descriptor_smoke_test(FileDescriptorTable* table,
   serial_write_u64(static_cast<uint64_t>(readme_fd));
   serial_write_crlf();
 
+  // 这一层和前面的 FileHandle / VFS 本质做的是同一类事，
+  // 但用户态以后看到的不会是 `VfsFile`，而是 `3`、`4`、`5` 这种小整数 fd。
   VfsStat readme_stat;
   if (!fd_stat(table, readme_fd, &readme_stat) ||
       readme_stat.type != kVfsNodeTypeFile) {
@@ -4367,6 +4391,10 @@ bool run_stdin_blocking_scheduler_smoke_test(SyscallContext* context) {
     return false;
   }
 
+  // 这段测试专门验证：
+  // 1. 一条线程在 `read(0)` 没字符时，真的会进 blocked
+  // 2. 另一条线程稍后注入扫描码
+  // 3. 键盘 IRQ 到来后，reader 线程真的会被唤醒并读到那个字符
   StdinBlockingReaderContext reader_context;
   memory_set(&reader_context, 0, sizeof(reader_context));
   reader_context.syscall_context = context;
@@ -4456,6 +4484,8 @@ bool wait_for_keyboard_irq_count(uint64_t target_count,
 }
 
 bool run_keyboard_smoke_test() {
+  // 这是整个输入链最底层的烟测：
+  // 注入扫描码 -> IRQ1 -> 翻译 -> 入 FIFO -> 再逐个取出来核对。
   if (!initialize_keyboard()) {
     return false;
   }
@@ -4569,6 +4599,9 @@ bool run_keyboard_smoke_test() {
 
 bool run_stdin_syscall_smoke_test(SyscallContext* context,
                                   FileDescriptorTable* fd_table) {
+  // 这段是在“键盘 FIFO 没问题”的基础上，再往上证明两层：
+  // 1. `sys_read(context, 0, ...)` 这条 stdin 路径能读通
+  // 2. `int 0x80` 版本的 read(0) 也能读通
   if (context == nullptr ||
       fd_table == nullptr ||
       !keyboard_is_ready() ||
@@ -4716,6 +4749,8 @@ bool run_stdin_syscall_smoke_test(SyscallContext* context,
 }
 
 bool run_console_input_smoke_test() {
+  // 这段测试再往上走一层：
+  // 键盘事件不只是能被 sys_read 消费，还能被 console 行编辑器组装成一整行文本。
   if (keyboard_buffered_char_count() != 0) {
     return false;  // 先确认上一轮字符测试已经把缓冲区消费干净。
   }
@@ -4908,6 +4943,8 @@ bool run_shell_smoke_test(const BootInfo* boot_info,
                           const BootVolume* boot_volume,
                           const BlockDevice* block_device,
                           SyscallContext* syscall_context) {
+  // shell 烟测本质上就是把前面所有层都真正串起来：
+  // 键盘注入 -> console 读行 -> shell 解析 -> syscall/VFS/fs/scheduler 等具体命令逻辑。
   console_set_viewport(kConsoleInsetStartColumn, kConsoleInsetEndColumn);
   initialize_console(kShellTestStartRow, kShellTextColor);
 
@@ -5074,6 +5111,8 @@ extern "C" bool kernel_user_mode_exit_is_armed() {
 extern "C" [[noreturn]] void kernel_handle_user_mode_exit(
     uint64_t return_value) {
   if (g_active_user_mode_session != nullptr) {
+    // 这是最早期“一次性 user mode smoke”那条返回路：
+    // 用户态 `exit` 以后，直接回到 `run_user_mode_smoke_test()` 等待的那次调用点。
     UserModeLaunchContext* const session = g_active_user_mode_session;
     session->return_value = return_value;
     g_active_user_mode_session = nullptr;
@@ -5085,6 +5124,9 @@ extern "C" [[noreturn]] void kernel_handle_user_mode_exit(
   ThreadControlBlock* const current_thread = scheduler_active_thread();
   if (current_thread != nullptr &&
       current_thread->execution_mode == kThreadExecutionModeUser) {
+    // 这是正式 scheduler-managed user thread 的返回路：
+    // 先把用户线程这次 `exit(...)` 的结果记进 TCB，
+    // 再沿着它当初保存的“返回内核栈 + kernel CR3”恢复回去。
     current_thread->user_mode.return_value = return_value;
     user_mode_resume_kernel(current_thread->user_mode.kernel_resume_stack_pointer,
                             current_thread->user_mode.kernel_root_physical,
@@ -5100,6 +5142,12 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
   draw_terminal_chrome();
   write_status_line(3, "hello from os64 kernel");
 
+  // `kernel_main()` 不是“上来就启动 shell”，
+  // 而是故意按依赖关系一层层烟测：
+  // 1. 先把最底层的 CPU/内存/页表/堆打通
+  // 2. 再把 boot volume / 文件系统 / fd / syscall 打通
+  // 3. 再往上接 timer / scheduler / keyboard / console
+  // 4. 最后才把 shell 当成真实线程交给调度器
   if (!run_tss_smoke_test()) {
     write_status_line(kCoreStatusRow, "tss bad");
     return;
@@ -5171,6 +5219,13 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 
   write_status_line(kMemoryStatusRow, "kernel memory ok");
 
+  // 到这里，内核已经不只是“能跑 C++”了，
+  // 而是已经有：
+  // - 物理页分配器
+  // - 页表映射能力
+  // - 地址空间骨架
+  // - 可释放堆
+  // - kmalloc/knew 这一层正式内存入口
   if (!run_boot_volume_smoke_test(boot_info, &g_boot_volume,
                                   &g_boot_block_device)) {
     write_status_line(kStorageStatusRow, "boot volume bad");
@@ -5237,6 +5292,8 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
     return;
   }
 
+  // 这一段通过后，说明“从 boot volume 到用户程序”的整条链已经闭环：
+  // 原始扇区 -> BlockDevice -> OS64FS -> fd/syscall -> ring3 程序 -> int80/exit 回内核。
   write_status_line(kStorageStatusRow, "filesystem ok");
 
   if (!run_timer_smoke_test()) {
@@ -5259,6 +5316,7 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
     return;
   }
 
+  // runtime 这一段通过后，系统才第一次具备“多线程 + 时间流逝 + 睡眠/唤醒/抢占”这些 OS 味道很重的能力。
   write_status_line(kRuntimeStatusRow, "scheduler ok");
 
   if (!run_keyboard_smoke_test()) {
@@ -5298,6 +5356,12 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
     return;
   }
 
+  // 走到这里时，前面的所有能力已经串成一个能交互的最小系统：
+  // - 能读写文件
+  // - 能跑用户程序
+  // - 能调度线程
+  // - 能收键盘输入
+  // - 能进入 shell
   write_status_line(kStorageStatusRow, "fs write ok");
   write_status_line(kShellStatusRow, "shell ok");
 

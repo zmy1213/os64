@@ -21,12 +21,23 @@ struct AddressSpace {
   uint64_t mapped_user_pages;               // 这份地址空间里已经额外挂了多少张用户页，方便烟测和观察。
 };
 
+// 只“观察”当前内核已经在用的那份页表根，不复制它。
+// 适合早期烟测或调试：我们想知道当前 CR3 是谁，但还不打算新建进程。
 bool initialize_kernel_address_space_view(AddressSpace* space);
+
+// 深拷贝当前页表层级，生成一份“将来可以挂用户页”的独立地址空间。
+// 这一步是从“只有一个全局内核地址空间”走向“每进程一份页表”的关键过渡。
 bool clone_current_address_space(AddressSpace* space, PageAllocator* allocator);
+
+// 在这份地址空间的用户区里挂一张用户页。
+// `virtual_address` 必须落在约定好的用户窗口中；
+// `physical_address` 必须是页对齐的真实物理页。
 bool address_space_map_user_page(AddressSpace* space, PageAllocator* allocator,
                                  uint64_t virtual_address,
                                  uint64_t physical_address,
                                  uint64_t flags);
+
+// 反查一条用户映射，看看某个虚拟地址当前到底对应哪张物理页。
 uint64_t address_space_resolve_mapping(const AddressSpace* space,
                                        uint64_t virtual_address);
 

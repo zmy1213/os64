@@ -31,6 +31,9 @@ struct FileHandle {
 
 // 打开普通文件。
 // 目前第一版只读文件系统还没有目录句柄，所以打开目录会失败。
+// `filesystem` 必须是已经挂载好的文件系统。
+// `path` 是要打开的路径。
+// `out_handle` 是输出参数，成功后里面会保存 inode 副本和当前 offset。
 bool file_open(const Os64Fs* filesystem, const char* path,
                FileHandle* out_handle);
 
@@ -43,6 +46,7 @@ bool file_close(FileHandle* handle);
 
 // 通过路径拿元数据。
 // 和 file_open 不同，file_stat 允许查看目录，因为 `stat docs` 这种行为本来就合理。
+// `out_stat` 会拿到一份适合上层直接打印的元数据快照。
 bool file_stat(const Os64Fs* filesystem, const char* path,
                FileStat* out_stat);
 
@@ -51,6 +55,7 @@ bool file_handle_stat(const FileHandle* handle, FileStat* out_stat);
 
 // 从当前 offset 开始读，成功读到多少字节就返回多少，并自动推进 offset。
 // 到达 EOF 时返回 0。
+// `bytes_to_read` 是“最多想读多少字节”，不是保证值。
 size_t file_read(FileHandle* handle, void* buffer, size_t bytes_to_read);
 
 // 调整下一次 read 的位置。

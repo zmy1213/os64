@@ -23,8 +23,16 @@ struct PageAllocator {
   uint16_t active_range;                        // 当前正在从哪一段里分配。
 };
 
+// 读 BootInfo 里的 E820 表，把“可用物理内存”整理成若干可分配区间。
+// `allocator` 是要被填好的分配器状态对象；
+// `boot_info` 提供 BIOS -> stage2 -> kernel 传下来的内存地图。
 bool initialize_page_allocator(PageAllocator* allocator, const BootInfo* boot_info);
+
+// 真正分配 1 个 4 KiB 物理页。
+// 成功返回物理地址；失败返回 0。
 uint64_t alloc_page(PageAllocator* allocator);
+
+// 统计“目前还剩下多少张没被拿走的页”，主要给调试和状态输出用。
 uint64_t count_free_pages(const PageAllocator* allocator);
 
 #endif

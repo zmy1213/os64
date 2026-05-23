@@ -6,6 +6,7 @@
 
 // 初始化经典 PIT 定时器。
 // 传入的是你希望每秒产生多少次 IRQ0，比如 100Hz。
+// 简单理解：频率越高，时钟 tick 越密，sleep/yield 的颗粒度也越细。
 bool initialize_pit(uint32_t frequency_hz);
 
 // 每次收到 IRQ0 时，由中断路径调用它，把全局 tick 计数加 1。

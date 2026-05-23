@@ -83,6 +83,8 @@ void timer_wait_ticks(uint64_t ticks) {
   // 后面只要差值还没到目标，就继续睡到下一次中断。
   const uint64_t start_tick = g_timer_ticks;
   while ((g_timer_ticks - start_tick) < ticks) {
+    // `hlt` 会把 CPU 挂起到下一次中断，
+    // 所以这不是“空转忙等”，而是最朴素的省 CPU 等待法。
     wait_for_interrupt();
 
     // 当前版本还不在 IRQ 里直接做抢占式切栈，

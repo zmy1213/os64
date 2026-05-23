@@ -36,6 +36,7 @@ uint16_t vga_cell(char ch, uint8_t color) {
 void clear_row(uint16_t row) {
   volatile uint16_t* const vga = vga_buffer();
 
+  // VGA 文本模式里，每个 cell = 字符 + 颜色属性。
   for (uint16_t column = 0; column < kVgaColumns; ++column) {
     vga[row * kVgaColumns + column] = vga_cell(' ', g_console_color);
   }
@@ -66,6 +67,7 @@ void put_visible_char(char ch) {
   vga[g_console_row * kVgaColumns + g_console_column] =
       vga_cell(ch, g_console_color);
 
+  // 写完 1 个字符后，控制台自己负责推进“逻辑光标”。
   ++g_console_column;
   if (g_console_column >= g_console_end_column) {
     g_console_column = g_console_start_column;
@@ -75,6 +77,7 @@ void put_visible_char(char ch) {
 }
 
 void newline() {
+  // 换行不是简单 `row++`，还要回到视口左边界。
   g_console_column = g_console_start_column;
   ++g_console_row;
   scroll_if_needed();
@@ -137,6 +140,8 @@ void redraw_input_line(const ConsoleCursor& line_start,
     total_cells = *rendered_length;
   }
 
+  // 这一步是当前最关键的“行编辑重绘”逻辑：
+  // 不去做复杂终端转义，而是直接把这一整行在 VGA 上按最新草稿重新画一遍。
   set_cursor(line_start);
   for (size_t i = 0; i < total_cells; ++i) {
     const char ch = (i < length) ? buffer[i] : ' ';
@@ -178,6 +183,8 @@ size_t history_entry_count(const ConsoleHistoryProvider* history) {
 }  // namespace
 
 void console_set_viewport(uint16_t start_column, uint16_t end_column) {
+  // 这个接口只是在规定“控制台正文能写屏幕的哪一段列范围”，
+  // 这样状态区、边距、终端正文就能互相不打架。
   if (start_column >= kVgaColumns) {
     start_column = 0;
   }
@@ -282,6 +289,10 @@ size_t console_read_line_with_history(char* buffer,
   char draft_buffer[kConsoleEditorDraftCapacity];
   size_t draft_length = 0;
 
+  // 一行输入的核心状态就 3 个：
+  // - `length`：当前草稿实际长度
+  // - `cursor`：光标位于第几个字符前面
+  // - `history_cursor`：当前是在看某条历史，还是还停在新草稿上
   buffer[0] = '\0';
   draft_buffer[0] = '\0';
 
@@ -309,6 +320,9 @@ size_t console_read_line_with_history(char* buffer,
       (void)scheduler_yield_if_requested();
     }
 
+    // 下面这一大段就是“最小行编辑器”的状态机：
+    // 不同按键事件分别去改 `buffer/length/cursor/history_cursor`，
+    // 然后在需要时把整行重新画到 VGA 上。
     if (event.kind == kKeyboardInputArrowLeft) {
       if (cursor > 0) {
         --cursor;
@@ -326,18 +340,22 @@ size_t console_read_line_with_history(char* buffer,
     }
 
     if (event.kind == kKeyboardInputHome) {
+      // Home：把编辑光标直接跳到这一行开头。
       cursor = 0;
       set_cursor_to_line_offset(line_start, cursor);
       continue;
     }
 
     if (event.kind == kKeyboardInputEnd) {
+      // End：把编辑光标直接跳到当前草稿末尾。
       cursor = length;
       set_cursor_to_line_offset(line_start, cursor);
       continue;
     }
 
     if (event.kind == kKeyboardInputDelete) {
+      // Delete 删除“光标所在位置的字符”，
+      // 所以后面所有字符都要整体左移一格再重绘。
       if (cursor < length) {
         for (size_t i = cursor; i < length; ++i) {
           buffer[i] = buffer[i + 1];
@@ -357,6 +375,8 @@ size_t console_read_line_with_history(char* buffer,
       }
 
       if (history_cursor == available_history_count) {
+        // 第一次进入历史浏览前，先把当前正在编辑但还没提交的草稿保存下来，
+        // 这样按 Down 回来时，能回到原来的未提交输入。
         copy_line_text(draft_buffer, sizeof(draft_buffer), &draft_length,
                        buffer);
       }
@@ -366,6 +386,9 @@ size_t console_read_line_with_history(char* buffer,
       }
 
       --history_cursor;
+
+      // 上翻历史后，当前 buffer 不再表示“新草稿”，
+      // 而是临时改成“某一条历史命令的副本”，因此要整体替换并重绘。
       copy_line_text(buffer, capacity, &length,
                      history->entry_text(history->context, history_cursor));
       cursor = length;
@@ -383,6 +406,7 @@ size_t console_read_line_with_history(char* buffer,
 
       ++history_cursor;
       if (history_cursor == available_history_count) {
+        // Down 一直翻回到“历史末尾”时，要回到原来那份还没提交的新草稿。
         copy_line_text(buffer, capacity, &length, draft_buffer);
       } else {
         copy_line_text(buffer, capacity, &length,
@@ -401,6 +425,8 @@ size_t console_read_line_with_history(char* buffer,
     const char ch = event.character;
 
     if (ch == '\b') {
+      // Backspace 删除“光标左边那个字符”，
+      // 所以和 Delete 一样，也需要整体左移并重绘，只是起点不同。
       if (cursor > 0) {
         for (size_t i = cursor - 1; i < length; ++i) {
           buffer[i] = buffer[i + 1];
@@ -414,6 +440,7 @@ size_t console_read_line_with_history(char* buffer,
     }
 
     if (ch == '\n') {
+      // Enter 真正结束这一轮输入，把这一行交还给上层 shell。
       console_write_char('\n');
       buffer[length] = '\0';
       return length;
@@ -428,6 +455,8 @@ size_t console_read_line_with_history(char* buffer,
     }
 
     for (size_t i = length; i > cursor; --i) {
+      // 中间插入字符时，要先把后面的内容整体右移一格，
+      // 这样左右移动编辑才不会只支持“在行尾输入”。
       buffer[i] = buffer[i - 1];
     }
     buffer[cursor] = ch;

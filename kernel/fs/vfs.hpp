@@ -55,30 +55,53 @@ struct VfsDirectoryEntry {
   uint32_t size_bytes;
 };
 
+// 用一个已经挂载好的 OS64FS 初始化 VFS 入口。
+// 这一版 VFS 还很薄，但它已经开始承担“统一上层接口、隔离底层文件系统格式”的作用。
 bool initialize_vfs(VfsMount* mount, Os64Fs* filesystem);
+// 判断 VFS 根挂载是否可用。
 bool vfs_is_mounted(const VfsMount* mount);
+// 把统一 VFS 节点类型翻译成文本，给 shell `stat` / `ls` 之类的输出使用。
 const char* vfs_node_type_name(uint16_t type);
 
+// 按路径拿一个统一的 stat 结果。
+// 上层只看 VfsStat，不需要知道底下其实是 Os64FsInode。
 bool vfs_stat(const VfsMount* mount, const char* path, VfsStat* out_stat);
 
+// 打开普通文件。
+// 成功后 `out_file` 里会保存一个 VFS 层文件句柄。
 bool vfs_open_file(const VfsMount* mount, const char* path,
                    VfsFile* out_file);
+// 判断文件句柄是否可用。
 bool vfs_file_is_open(const VfsFile* file);
+// 关闭文件句柄。
 bool vfs_close_file(VfsFile* file);
+// 读取已经打开文件的元数据。
 bool vfs_file_stat(const VfsFile* file, VfsStat* out_stat);
+// 从当前 offset 开始读文件，并推进 offset。
 size_t vfs_read_file(VfsFile* file, void* buffer, size_t bytes_to_read);
+// 调整文件读指针。
 bool vfs_seek_file(VfsFile* file, uint32_t offset);
+// 返回当前文件读指针位置。
 uint32_t vfs_tell_file(const VfsFile* file);
 
+// 打开目录。
 bool vfs_open_directory(const VfsMount* mount, const char* path,
                         VfsDirectory* out_directory);
+// 判断目录句柄是否可用。
 bool vfs_directory_is_open(const VfsDirectory* directory);
+// 关闭目录句柄。
 bool vfs_close_directory(VfsDirectory* directory);
+// 返回目录项总数。
 uint32_t vfs_directory_entry_count(const VfsDirectory* directory);
+// 顺序读取下一条目录项。
 bool vfs_read_directory(VfsDirectory* directory,
                         VfsDirectoryEntry* out_entry);
+// 把目录读取位置重置回开头。
 bool vfs_rewind_directory(VfsDirectory* directory);
+// 返回当前目录读取游标。
 uint32_t vfs_tell_directory(const VfsDirectory* directory);
+// 下面这些接口就是 VFS 暴露给更上层的“写操作”入口。
+// 当前底层仍然只有一个 OS64FS，但 shell / syscall / fd 层以后都可以只认 VFS。
 bool vfs_create_file(VfsMount* mount, const char* path);
 bool vfs_create_directory(VfsMount* mount, const char* path);
 bool vfs_write_file(VfsMount* mount, const char* path,

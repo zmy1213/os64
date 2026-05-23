@@ -4,6 +4,8 @@
 
 namespace {
 
+// 底层 OS64FS 和上层 VFS 不一定永远使用同一套 type 常量，
+// 所以这里先做一次显式转换，避免未来底层格式变化时把上层接口一起绑死。
 uint16_t to_vfs_node_type(uint16_t type) {
   switch (type) {
     case kOs64FsTypeFile:
@@ -15,6 +17,7 @@ uint16_t to_vfs_node_type(uint16_t type) {
   }
 }
 
+// 把 FileHandle 层看到的元数据，整理成 VFS 层统一输出格式。
 bool copy_file_stat_to_vfs_stat(const FileStat* source, VfsStat* out_stat) {
   if (source == nullptr || out_stat == nullptr) {
     return false;
@@ -37,6 +40,7 @@ bool copy_file_stat_to_vfs_stat(const FileStat* source, VfsStat* out_stat) {
          out_stat->type == kVfsNodeTypeDirectory;
 }
 
+// 把目录句柄层的目录项，整理成更统一、更适合上层直接打印的 VFS 目录项。
 bool copy_directory_entry_to_vfs_entry(const DirectoryEntry* source,
                                        VfsDirectoryEntry* out_entry) {
   if (source == nullptr || out_entry == nullptr ||
@@ -66,12 +70,14 @@ bool initialize_vfs(VfsMount* mount, Os64Fs* filesystem) {
     return false;
   }
 
+  // 先把输出对象清干净，避免旧挂载状态泄漏过来。
   memory_set(mount, 0, sizeof(*mount));
 
   if (!os64fs_is_mounted(filesystem)) {
     return false;
   }
 
+  // 这一版 VFS 只有一个根挂载，所以直接把文件系统对象挂进去即可。
   mount->os64fs = filesystem;
   mount->mounted = true;
   return true;
@@ -99,6 +105,8 @@ bool vfs_stat(const VfsMount* mount, const char* path, VfsStat* out_stat) {
     return false;
   }
 
+  // VFS 自己不做路径解析，仍然委托给下一层 file_stat，
+  // 但它会把结果统一翻译成 VfsStat。
   FileStat file_stat_result;
   if (!file_stat(mount->os64fs, path, &file_stat_result)) {
     return false;
@@ -113,6 +121,7 @@ bool vfs_open_file(const VfsMount* mount, const char* path,
     return false;
   }
 
+  // 输出句柄先清零，避免失败时残留旧内容。
   memory_set(out_file, 0, sizeof(*out_file));
 
   return vfs_is_mounted(mount) &&
@@ -149,6 +158,7 @@ size_t vfs_read_file(VfsFile* file, void* buffer, size_t bytes_to_read) {
     return 0;
   }
 
+  // 真正的 offset 管理和跨块读取仍由 FileHandle 层负责。
   return file_read(&file->handle, buffer, bytes_to_read);
 }
 
@@ -174,6 +184,7 @@ bool vfs_open_directory(const VfsMount* mount, const char* path,
     return false;
   }
 
+  // 同样先清掉旧句柄状态。
   memory_set(out_directory, 0, sizeof(*out_directory));
 
   return vfs_is_mounted(mount) &&
@@ -207,6 +218,8 @@ bool vfs_read_directory(VfsDirectory* directory,
     return false;
   }
 
+  // 目录句柄层负责找“下一项”；
+  // VFS 这里只负责把格式统一成上层可直接消费的形状。
   DirectoryEntry directory_entry;
   if (!directory_read(&directory->handle, &directory_entry)) {
     return false;
@@ -264,5 +277,6 @@ bool vfs_unlink(VfsMount* mount, const char* path) {
 }
 
 bool vfs_sync(VfsMount* mount) {
+  // VFS 继续只做转发，让“具体怎么刷盘”仍由底层文件系统决定。
   return vfs_is_mounted(mount) && os64fs_sync(mount->os64fs);
 }

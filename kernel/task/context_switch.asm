@@ -130,11 +130,18 @@ user_mode_enter:
     push r14
     push r15
 
+    ; 先记住“这次以后要回到哪条内核栈继续执行”。
+    ; 将来用户态 `exit` 时，`user_mode_resume_kernel` 会直接用它把现场接回来。
     mov [rdi + USER_MODE_KERNEL_RESUME_RSP], rsp
 
+    ; 现在正式切到用户进程自己的 CR3。
+    ; 从这一刻开始，后面要访问的用户 RIP / 用户栈都必须在这份地址空间里合法。
     mov rax, [rdi + USER_MODE_USER_ROOT_PHYS]
     mov cr3, rax
 
+    ; 手工按 iretq 需要的顺序伪造 ring3 返回帧：
+    ; SS -> RSP -> RFLAGS -> CS -> RIP
+    ; iretq 会按相反方向把它们弹出来，真正落进 CPL=3。
     mov rax, [rdi + USER_MODE_USER_SS]
     push rax
     mov rax, [rdi + USER_MODE_USER_RSP]
@@ -157,18 +164,23 @@ user_mode_enter:
 ;   RSI = 原来的 kernel CR3
 ;   RDX = 想作为 `user_mode_enter()` 返回值带回去的值
 user_mode_resume_kernel:
+    ; 先回到原来的 kernel CR3，不然后面的内核栈和内核数据段未必可见。
     mov rax, rsi
     mov cr3, rax
 
+    ; 重新把数据段寄存器切回内核段，避免继续带着 ring3 数据段选择子在内核里跑。
     mov ax, KERNEL_DATA_SELECTOR
     mov ds, ax
     mov es, ax
     mov fs, ax
     mov gs, ax
 
+    ; `user_mode_enter()` 的“返回值”放进 RAX，
+    ; 再把 RSP 接回最初保存下来的内核恢复点。
     mov rax, rdx
     mov rsp, rdi
 
+    ; 最后按保存时的逆序恢复 callee-saved 寄存器。
     pop r15
     pop r14
     pop r13
@@ -453,6 +465,10 @@ user_mode_yield_program_start:
 
     mov eax, SYSCALL_YIELD_NUMBER
     int 0x80
+    ; 如果 yield 成功，说明：
+    ; 1. 内核真的把这条 user thread 切走过
+    ; 2. 现在又真的切回来了
+    ; 3. 而且用户寄存器值没有被破坏
     cmp eax, 0
     jne .yield_exit_user_mode
     mov rax, 0x13579BDF2468ACE0
@@ -475,10 +491,14 @@ user_mode_yield_program_start:
     mov edx, user_mode_preempt_before_message_end - user_mode_preempt_before_message
     int 0x80
 
+    ; 共享页里的 ARM 标志先置 1，告诉内核侧 helper：
+    ; “现在可以开始观察我在 ring3 自旋时是否真的会被 timer 抢占了”。
     mov rax, USER_MODE_PREEMPT_SHARED_PAGE_VIRT
     mov qword [rax + USER_MODE_PREEMPT_ARM_OFFSET], 1
 
 .yield_wait_preempt_done:
+    ; 用户态这里故意忙等 `DONE` 标志，
+    ; 好让 timer IRQ 有机会在 ring3 运行期间把这条线程抢占走。
     cmp qword [rax + USER_MODE_PREEMPT_DONE_OFFSET], 0
     je .yield_wait_preempt_done
     mov rcx, 0x13579BDF2468ACE0
@@ -501,6 +521,8 @@ user_mode_yield_program_start:
     mov edx, user_mode_stdin_before_message_end - user_mode_stdin_before_message
     int 0x80
 
+    ; 再通知内核侧测试线程：
+    ; “我马上要在用户态 read(0) 了，如果现在没字符，就应该先 block，等键盘 IRQ 再回来。”
     mov rax, USER_MODE_PREEMPT_SHARED_PAGE_VIRT
     mov qword [rax + USER_MODE_STDIN_ARM_OFFSET], 1
 
@@ -509,6 +531,8 @@ user_mode_yield_program_start:
     mov rsi, rsp
     mov edx, 1
     int 0x80
+    ; 这里如果真读到 `'a'`，说明用户线程经历的是：
+    ; ring3 -> int80 read(0) -> 内核里 block -> 键盘 IRQ 唤醒 -> 返回用户态
     cmp eax, 1
     jne .yield_exit_user_mode
     cmp byte [rsp], 'a'
@@ -524,6 +548,8 @@ user_mode_yield_program_start:
 .yield_exit_user_mode:
     add rsp, 64
 
+    ; 最终把“用户态 CS + 各项自检 bit”一起编码进 exit 返回值，
+    ; 内核侧 smoke test 再据此判断哪几段链路真的通过了。
     xor edi, edi
     mov di, cs
     shl ebx, 16

@@ -4,6 +4,8 @@
 
 如果你现在是从零学这个项目，最合理的阅读顺序是：
 
+0. [小白版源码阅读地图](./BEGINNER_SOURCE_MAP.md)
+   如果你连目录职责和整体层次都还没建立，这一份最适合先看，先知道“每个代码大概是干嘛的”再进单篇细文档。
 1. [Stage1 写入说明](./STAGE1_WRITING_GUIDE.md)
    先理解整条启动链为什么从 `stage1` 开始，以及 boot sector 为什么只能做最小事情。
 2. [Boot 寄存器小白说明](./BOOT_REGISTERS_BEGINNER.md)

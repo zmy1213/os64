@@ -8,11 +8,13 @@
 // 这样做的原因是：
 // 1. CPU 自己把 0~31 留给异常
 // 2. 如果 PIC 还用老默认值，就会和异常向量撞车
+// 成功后，硬件 IRQ0~15 会被搬到 `kPicMasterVectorBase..kPicSlaveVectorBase+7`。
 bool initialize_pic();
 
 // 打开某一路 IRQ，比如：
 // 0 = PIT 定时器
 // 1 = 键盘
+// 这一步本质上是在改 PIC 的“屏蔽位掩码”。
 bool enable_pic_irq(uint8_t irq_line);
 
 // 关闭某一路 IRQ。

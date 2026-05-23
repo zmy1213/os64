@@ -28,6 +28,8 @@ bool initialize_block_device_from_boot_volume(BlockDevice* device,
     return false;
   }
 
+  // 这一层本质是在“填一张虚函数表风格的小对象”：
+  // 记录上下文是谁、容量有多大、真正的读写函数应该调谁。
   device->context = volume;
   device->start_lba = volume->start_lba;
   device->sector_count = volume->sector_count;
@@ -49,6 +51,7 @@ uint64_t block_device_total_bytes(const BlockDevice* device) {
     return 0;
   }
 
+  // 继续统一用 64 位保存容量，避免接口层把大小截断。
   return static_cast<uint64_t>(device->sector_count) * device->sector_size;
 }
 
@@ -59,6 +62,8 @@ bool block_device_read_sector(const BlockDevice* device, uint32_t sector_index,
     return false;
   }
 
+  // 这一步真正体现了“抽象层”的意义：
+  // BlockDevice 自己不管底层是什么，只负责把请求转发给挂好的函数指针。
   return device->read_sector(device->context, sector_index,
                              buffer, buffer_size);
 }
@@ -70,6 +75,7 @@ bool block_device_write_sector(BlockDevice* device, uint32_t sector_index,
     return false;
   }
 
+  // 写路径同理，继续通过统一接口转发到底层实现。
   return device->write_sector(device->context, sector_index,
                               buffer, buffer_size);
 }

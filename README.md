@@ -516,6 +516,8 @@ make QEMU=/你的/qemu-system-x86_64 run-stage1
 
 环境通过后，文档建议按下面这个顺序看，这样最符合你现在这条启动链的实现顺序：
 
+0. [小白版源码阅读地图](./docs/BEGINNER_SOURCE_MAP.md)
+   如果你现在最大的问题是“目录太多、代码层次看不出来”，先看这一份，先建立全局图再进单篇专题文档。
 1. [Stage1 写入说明](./docs/STAGE1_WRITING_GUIDE.md)
    先理解 BIOS 为什么先执行它、它只负责什么、为什么不能把复杂逻辑塞进 512 字节。
 2. [Boot 寄存器小白说明](./docs/BOOT_REGISTERS_BEGINNER.md)

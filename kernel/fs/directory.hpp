@@ -31,6 +31,7 @@ struct DirectoryHandle {
 
 // 打开目录。
 // 第一版目录句柄只处理目录，不处理普通文件。
+// `path` 必须最终解析到一个目录 inode。
 bool directory_open(const Os64Fs* filesystem, const char* path,
                     DirectoryHandle* out_handle);
 
@@ -45,6 +46,7 @@ uint32_t directory_entry_count(const DirectoryHandle* handle);
 
 // 顺序读取一个目录项。
 // 成功读到一项返回 true；如果已经读到目录末尾，返回 false。
+// `out_entry` 会拿到适合 shell `ls` 直接展示的目录项信息。
 bool directory_read(DirectoryHandle* handle, DirectoryEntry* out_entry);
 
 // 把目录句柄重新移动到第 0 个目录项。

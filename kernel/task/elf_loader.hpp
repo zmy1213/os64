@@ -27,31 +27,31 @@ constexpr uint32_t kElfProgramFlagWrite = 0x2;
 constexpr uint32_t kElfProgramFlagRead = 0x4;
 
 struct __attribute__((packed)) Elf64FileHeader {
-  uint8_t ident[16];
-  uint16_t type;
-  uint16_t machine;
-  uint32_t version;
-  uint64_t entry;
-  uint64_t program_header_offset;
-  uint64_t section_header_offset;
-  uint32_t flags;
-  uint16_t header_size;
-  uint16_t program_header_entry_size;
-  uint16_t program_header_count;
-  uint16_t section_header_entry_size;
-  uint16_t section_header_count;
-  uint16_t section_header_string_index;
+  uint8_t ident[16];                    // ELF 魔数、位数、大小端等“身份信息”都放在这里。
+  uint16_t type;                        // 这是什么 ELF：可执行文件、重定位文件、共享库等。
+  uint16_t machine;                     // 目标架构；这里我们只接受 x86_64。
+  uint32_t version;                     // ELF 格式版本，当前通常就是 1。
+  uint64_t entry;                       // 最后真正要把 RIP 送到哪一个虚拟地址开始执行。
+  uint64_t program_header_offset;       // program header 表在整个文件里的起始偏移。
+  uint64_t section_header_offset;       // section header 表偏移；这版 loader 实际不会用到它。
+  uint32_t flags;                       // 架构相关标志；x86_64 通常保持 0。
+  uint16_t header_size;                 // 整个 ELF 文件头自身大小。
+  uint16_t program_header_entry_size;   // 每条 program header 记录占多少字节。
+  uint16_t program_header_count;        // 一共有多少条 program header。
+  uint16_t section_header_entry_size;   // 每条 section header 记录占多少字节。
+  uint16_t section_header_count;        // 一共有多少条 section header。
+  uint16_t section_header_string_index; // “节名字字符串表”在 section header 数组里的下标；当前 loader 不关心。
 };
 
 struct __attribute__((packed)) Elf64ProgramHeader {
-  uint32_t type;
-  uint32_t flags;
-  uint64_t offset;
-  uint64_t virtual_address;
-  uint64_t physical_address;
-  uint64_t file_size;
-  uint64_t memory_size;
-  uint64_t alignment;
+  uint32_t type;              // 这条段记录是什么类型；最关键的是 PT_LOAD，表示要真的装进内存。
+  uint32_t flags;             // 这段的权限位：可读/可写/可执行。
+  uint64_t offset;            // 这段内容在 ELF 文件里的起始偏移。
+  uint64_t virtual_address;   // 这段最终应该映射到用户虚拟地址空间的哪里。
+  uint64_t physical_address;  // 在现代系统里通常没什么实际意义；这版教学 loader 也不依赖它。
+  uint64_t file_size;         // 文件里真实存在多少字节需要拷进去。
+  uint64_t memory_size;       // 运行时内存里这段总共应该占多少字节；比 file_size 大出的部分通常就是 BSS。
+  uint64_t alignment;         // 这段期望的对齐要求；loader 会结合页对齐去处理。
 };
 
 static_assert(sizeof(Elf64FileHeader) == 64,
@@ -73,6 +73,13 @@ struct LoadedUserElfProgram {
   uint32_t segment_flags;             // 第 1 个 PT_LOAD 段的 PF_R / PF_W / PF_X。
 };
 
+// 把 OS64FS 里的一个 ELF 文件真正装进用户地址空间。
+// 这一步会做几件关键事情：
+// 1. 打开文件并读进 staging page
+// 2. 校验 ELF header / program header
+// 3. 为每个 PT_LOAD 段分配并映射用户页
+// 4. 把文件里的字节拷进映射后的用户页
+// 5. 把 entry point 和段信息整理成 `LoadedUserElfProgram`
 bool load_elf_user_program(PageAllocator* allocator,
                            AddressSpace* user_space,
                            const Os64Fs* filesystem,

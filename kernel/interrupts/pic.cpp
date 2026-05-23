@@ -73,6 +73,7 @@ bool enable_pic_irq(uint8_t irq_line) {
   }
 
   if (irq_line < 8) {
+    // 主片 IRQ0~7 直接改主片掩码即可。
     const uint8_t current_mask = in8(kPic1DataPort);
     out8(kPic1DataPort,
          static_cast<uint8_t>(current_mask & ~(1u << irq_line)));
@@ -97,12 +98,14 @@ bool disable_pic_irq(uint8_t irq_line) {
   }
 
   if (irq_line < 8) {
+    // 对主片来说，“置 1” 就表示把对应 IRQ 屏蔽掉。
     const uint8_t current_mask = in8(kPic1DataPort);
     out8(kPic1DataPort,
          static_cast<uint8_t>(current_mask | (1u << irq_line)));
     return true;
   }
 
+  // 从片 IRQ8~15 先换算成“从片内部的第几根线”，再改从片掩码。
   const uint8_t slave_line = static_cast<uint8_t>(irq_line - 8);
   const uint8_t current_slave_mask = in8(kPic2DataPort);
   out8(kPic2DataPort,

@@ -27,12 +27,25 @@ struct BlockDevice {
                        size_t buffer_size);
 };
 
+// 把一段已经准备好的 BootVolume 包装成统一的块设备接口。
+// 这样上层文件系统以后只面向 BlockDevice，不再关心底下具体是不是 boot volume。
 bool initialize_block_device_from_boot_volume(BlockDevice* device,
                                               BootVolume* volume);
+
+// 判断块设备是否完成初始化，且读/写函数指针都已经挂好。
 bool block_device_is_ready(const BlockDevice* device);
+
+// 返回整块设备的总字节数。
+// 这层和 BootVolume 一样做统一封装，避免上层到处自己乘扇区数。
 uint64_t block_device_total_bytes(const BlockDevice* device);
+
+// 读取一个逻辑扇区。
+// `sector_index` 仍然是“这个块设备自己的第几个扇区”，不是整盘全局 LBA。
 bool block_device_read_sector(const BlockDevice* device, uint32_t sector_index,
                               void* buffer, size_t buffer_size);
+
+// 写回一个逻辑扇区。
+// 当前最终会落到 BootVolume 的内存副本；以后换成 ATA/AHCI 驱动时，这个接口可以保持不变。
 bool block_device_write_sector(BlockDevice* device, uint32_t sector_index,
                                const void* buffer, size_t buffer_size);
 

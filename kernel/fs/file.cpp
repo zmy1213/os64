@@ -4,6 +4,8 @@
 
 namespace {
 
+// 把底层 inode 里的元数据提取成更稳定的 FileStat 形状。
+// 这样 shell / VFS 之类的上层就不用直接依赖完整磁盘 inode 布局。
 bool copy_inode_to_stat(const Os64FsInode* inode, FileStat* out_stat) {
   if (inode == nullptr || out_stat == nullptr) {
     return false;
@@ -32,18 +34,22 @@ bool file_open(const Os64Fs* filesystem, const char* path,
     return false;
   }
 
+  // 不管最后能不能打开，先把输出句柄清零。
   memory_set(out_handle, 0, sizeof(*out_handle));
 
   if (!os64fs_is_mounted(filesystem) || path == nullptr) {
     return false;
   }
 
+  // 先把路径解析成 inode；这里只有普通文件允许作为 FileHandle 打开。
   Os64FsInode inode;
   if (!os64fs_lookup_path(filesystem, path, &inode) ||
       inode.type != kOs64FsTypeFile) {
     return false;
   }
 
+  // 打开成功后，把 inode 拷一份到句柄里。
+  // 后续 read 就可以直接按这个 inode 读，不必每次重走路径解析。
   out_handle->filesystem = filesystem;
   memory_copy(&out_handle->inode, &inode, sizeof(inode));
   out_handle->offset = 0;
@@ -74,6 +80,7 @@ bool file_stat(const Os64Fs* filesystem, const char* path,
     return false;
   }
 
+  // stat 的特点是“只看元数据，不真的打开一个持续存在的句柄”。
   Os64FsInode inode;
   if (!os64fs_lookup_path(filesystem, path, &inode)) {
     return false;
@@ -95,10 +102,12 @@ size_t file_read(FileHandle* handle, void* buffer, size_t bytes_to_read) {
     return 0;
   }
 
+  // 已经在文件末尾了，就直接返回 0，表示 EOF。
   if (handle->offset >= handle->inode.size_bytes) {
     return 0;
   }
 
+  // 这一轮真正读多少字节，不能超过调用者想读的大小，也不能越过文件末尾。
   size_t bytes_this_read = bytes_to_read;
   const uint32_t remaining =
       handle->inode.size_bytes - handle->offset;
@@ -106,11 +115,13 @@ size_t file_read(FileHandle* handle, void* buffer, size_t bytes_to_read) {
     bytes_this_read = remaining;
   }
 
+  // 具体怎么跨 direct/indirect block 读数据，由 OS64FS 层负责。
   if (!os64fs_read_inode_data(handle->filesystem, &handle->inode,
                               handle->offset, buffer, bytes_this_read)) {
     return 0;
   }
 
+  // 成功后推进文件偏移，让下一次 read 从后面接着读。
   handle->offset += static_cast<uint32_t>(bytes_this_read);
   return bytes_this_read;
 }

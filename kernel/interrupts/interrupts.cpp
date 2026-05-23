@@ -268,6 +268,10 @@ bool initialize_tss() {
     return true;
   }
 
+  // 这一轮 TSS 最重要的意义不是“任务切换”这个老式 x86 概念，
+  // 而是给 CPU 提供：
+  // - ring3 -> ring0 时要切到哪根栈
+  // - double fault 时的应急 IST 栈
   memory_set(&g_kernel_tss, 0, sizeof(g_kernel_tss));
   g_kernel_tss.rsp0 =
       stack_top_address(g_kernel_tss_rsp0_stack,
@@ -355,6 +359,10 @@ bool initialize_idt() {
                syscall_interrupt_stub,
                kUserInterruptGateType);
 
+  // 从这一刻开始，CPU 才真正知道：
+  // - 异常向量该跳去哪里
+  // - PIC IRQ0/IRQ1 等硬件中断该跳去哪里
+  // - ring3 的 `int 0x80` 又该落到哪里
   IdtPointer idt_pointer{};
   idt_pointer.limit = static_cast<uint16_t>(sizeof(g_idt) - 1);
   idt_pointer.base = reinterpret_cast<uint64_t>(&g_idt[0]);
@@ -408,6 +416,9 @@ extern "C" void kernel_handle_irq(const RegisterInterruptFrame* frame) {
         current_thread->execution_mode == kThreadExecutionModeUser &&
         register_frame_came_from_user_mode(frame) &&
         scheduler_yield_if_requested()) {
+      // 注意这里 capture 放在 yield 之后：
+      // 只有真的发生了“IRQ 路径里切去别的线程”这件事，
+      // 我们才把它记成一次正式 user preempt trap。
       capture_current_user_preempt_trap_frame(frame);
     }
   } else if (frame->vector == static_cast<uint8_t>(kPicMasterVectorBase + 1)) {

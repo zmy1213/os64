@@ -137,36 +137,68 @@ struct Os64Fs {
   bool mounted;                     // 只有校验通过后，shell 和内核其它模块才允许访问它。
 };
 
+// 挂载文件系统。
+// 这一步会读 superblock、位图、inode 表，并做一致性校验；
+// 只有全部成功后，`filesystem->mounted` 才会变成 true。
 bool initialize_os64fs(Os64Fs* filesystem, BlockDevice* device);
+// 判断文件系统是否真的可用。
 bool os64fs_is_mounted(const Os64Fs* filesystem);
+// 只读返回缓存中的 superblock，方便 shell / 调试代码查看卷布局。
 const Os64FsSuperblock* os64fs_superblock(const Os64Fs* filesystem);
+// 把 inode/type 的数字翻译成人类可读文本，例如 "file"、"dir"。
 const char* os64fs_inode_type_name(uint16_t type);
+// 读取一份容量统计快照。
+// `out_stats` 是输出参数，成功后会拿到当前 inode/data block 的总数、已用数、空闲数。
 bool os64fs_query_stats(const Os64Fs* filesystem, Os64FsStats* out_stats);
+// 读取最近一次挂载/校验中记录下来的第一处诊断信息。
+// 当挂载失败时，这个接口特别适合拿来解释“到底是哪一类布局错误”。
 bool os64fs_query_validation_debug(const Os64Fs* filesystem,
                                    Os64FsValidationDebug* out_debug);
+// 如果挂载失败，返回失败阶段码；成功挂载时通常是 `kOs64FsMountOk`。
 uint32_t os64fs_mount_error(const Os64Fs* filesystem);
+// 按 inode 号读取 inode。
+// `inode_number` 是文件系统内部编号，不是路径，也不是块号。
 bool os64fs_read_inode(const Os64Fs* filesystem, uint32_t inode_number,
                        Os64FsInode* out_inode);
+// 按路径解析到 inode。
+// 当前路径语义以根目录 `/` 为起点，调用者需要自己决定传绝对路径还是已经展开过的路径。
 bool os64fs_lookup_path(const Os64Fs* filesystem, const char* path,
                         Os64FsInode* out_inode);
+// 计算一个目录 inode 里一共有多少个目录项。
 uint32_t os64fs_directory_entry_count(const Os64Fs* filesystem,
                                       const Os64FsInode* directory_inode);
+// 顺序读取目录中的某一项。
+// `entry_index` 是“第几个目录项”，不是 inode 号。
 bool os64fs_read_directory_entry(const Os64Fs* filesystem,
                                  const Os64FsInode* directory_inode,
                                  uint32_t entry_index,
                                  Os64FsDirEntry* out_entry);
+// 从某个 inode 的数据区读取字节。
+// `offset` 是从文件开头起算的字节偏移。
+// `bytes_to_read` 决定这次最多读多少字节。
+// 这个接口会负责处理 direct block / indirect block 的寻址细节。
 bool os64fs_read_inode_data(const Os64Fs* filesystem,
                             const Os64FsInode* inode,
                             uint32_t offset,
                             void* buffer,
                             size_t bytes_to_read);
+// 在指定路径创建一个空文件。
+// 路径中的父目录必须已经存在。
 bool os64fs_create_file(Os64Fs* filesystem, const char* path);
+// 在指定路径创建目录。
 bool os64fs_create_directory(Os64Fs* filesystem, const char* path);
+// 覆盖写整个文件内容。
+// 如果文件已存在，这一层负责把内容改成新 buffer 的样子；如果不存在，当前策略由实现层决定。
 bool os64fs_write_file(Os64Fs* filesystem, const char* path,
                        const void* buffer, size_t bytes_to_write);
+// 追加写文件，把新字节拼到文件末尾。
 bool os64fs_append_file(Os64Fs* filesystem, const char* path,
                         const void* buffer, size_t bytes_to_write);
+// 删除一个目录项。
+// 对文件来说是 unlink；对目录来说通常要求它已经是空目录。
 bool os64fs_unlink(Os64Fs* filesystem, const char* path);
+// 把内存里的位图 / inode / superblock 变化刷回块设备。
+// 当前对“可写文件系统烟测”来说，这一步非常关键，因为重挂载是否还能看到结果就靠它。
 bool os64fs_sync(Os64Fs* filesystem);
 
 #endif

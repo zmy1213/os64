@@ -12,10 +12,18 @@
 // 而是先通过 kmalloc/kfree/knew/kdelete 这些更像正式内核接口的名字来用。
 bool initialize_kernel_memory_system(PageAllocator* page_allocator,
                                      KernelHeap* heap);
+// 判断 `kmalloc/kfree/knew` 这一整套入口是否已经能安全使用。
 bool kernel_memory_system_ready();
+// 需要时把“底层物理页分配器”暴露给别的模块观察。
 PageAllocator* kernel_memory_page_allocator();
+// 需要时把“默认内核堆对象”暴露给别的模块观察。
 KernelHeap* kernel_memory_heap();
 
+// 下面是更像正式内核 API 的入口：
+// - `kmalloc`：分一块原始内存
+// - `kmalloc_aligned`：分一块指定对齐的原始内存
+// - `kcalloc`：分一块按元素数量计的清零内存
+// - `kfree`：释放它
 void* kmalloc(size_t size);
 void* kmalloc_aligned(size_t size, size_t alignment);
 void* kcalloc(size_t count, size_t size);
@@ -66,6 +74,8 @@ T* knew(Args&&... args) {
     return nullptr;
   }
 
+  // 先拿到一块“只是字节”的原始内存，
+  // 再在这块内存上手动调用构造函数，真正变成一个 T 对象。
   return new (storage) T(kforward<Args>(args)...);
 }
 
@@ -75,6 +85,9 @@ bool kdelete(T* object) {
     return true;
   }
 
+  // `kdelete` 要做两件事：
+  // 1. 手动跑析构函数
+  // 2. 再把承载对象的那块堆内存释放回去
   object->~T();
   return kfree(static_cast<void*>(object));
 }

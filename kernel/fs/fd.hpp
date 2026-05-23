@@ -27,17 +27,29 @@ struct FileDescriptorTable {
 
 bool initialize_file_descriptor_table(FileDescriptorTable* table,
                                       const VfsMount* vfs);
+// 判断 fd 表是否已经绑定到一个可用的 VFS 挂载点上。
 bool file_descriptor_table_is_ready(const FileDescriptorTable* table);
 
+// 打开路径并返回一个小整数 fd。
+// 成功时返回 `0..kFileDescriptorCapacity-1`；
+// 失败时返回 `kInvalidFileDescriptor`。
 int32_t fd_open(FileDescriptorTable* table, const char* path);
+// 判断某个小整数 fd 现在是否真的对应一个打开文件。
 bool fd_is_open(const FileDescriptorTable* table, int32_t fd);
+// 通过 fd 读取文件内容。
+// 这一步会继续复用 VFS/FileHandle 层维护的当前 offset。
 size_t fd_read(FileDescriptorTable* table, int32_t fd,
                void* buffer, size_t bytes_to_read);
+// 关闭 fd，并释放这个槽位。
 bool fd_close(FileDescriptorTable* table, int32_t fd);
+// 通过 fd 拿元数据。
 bool fd_stat(const FileDescriptorTable* table, int32_t fd,
              VfsStat* out_stat);
+// 调整 fd 当前读指针。
 bool fd_seek(FileDescriptorTable* table, int32_t fd, uint32_t offset);
+// 查询 fd 当前读指针。
 uint32_t fd_tell(const FileDescriptorTable* table, int32_t fd);
+// 统计当前表里有多少个 fd 正处于打开状态。
 uint32_t fd_open_count(const FileDescriptorTable* table);
 
 #endif

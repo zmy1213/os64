@@ -74,10 +74,18 @@ struct SyscallContext {
 // 2. 后面做“用户态被 timer 抢占”时，不需要再维护第二套几乎一样的字段
 using SyscallInterruptFrame = RegisterInterruptFrame;
 
+// 初始化一份 syscall 上下文。
+// 当前它最核心的职责只有两个：
+// 1. 记住这组系统调用应该使用哪张 fd 表
+// 2. 记住当前工作目录 cwd
 bool initialize_syscall_context(SyscallContext* context,
                                 FileDescriptorTable* fd_table);
+// 判断上下文是否真的可用。
 bool syscall_context_is_ready(const SyscallContext* context);
+// 只读返回当前 cwd 字符串。
 const char* syscall_current_working_directory(const SyscallContext* context);
+// 给 stdout/stderr 安装一个实际输出回调。
+// 当前 shell / user program 打到 `write(1, ...)`、`write(2, ...)` 时，最终都会落到这里。
 bool install_syscall_write_handler(SyscallContext* context,
                                    SyscallWriteHandler handler,
                                    void* write_context);
@@ -127,11 +135,17 @@ SyscallStatus sys_stat_path(SyscallContext* context, const char* path,
 int32_t sys_listdir(SyscallContext* context, const char* path,
                     VfsDirectoryEntry* out_entries, size_t entry_capacity);
 
+// 下面这几个接口都是“fd 版操作”：
+// `sys_open` 先把路径变成公开 fd，
+// 后续 `close/seek/stat` 就都围绕这个 fd 小整数工作。
 SyscallStatus sys_close(SyscallContext* context, int32_t fd);
 SyscallStatus sys_seek(SyscallContext* context, int32_t fd, uint32_t offset);
 SyscallStatus sys_stat(SyscallContext* context, int32_t fd,
                        VfsStat* out_stat);
 
+// 这是 `int 0x80` 打进内核后的 C++ 总入口。
+// 汇编 stub 会先把寄存器现场整理成 `SyscallInterruptFrame`，
+// 然后再把控制权交给这里做真正分发。
 extern "C" void kernel_handle_syscall(SyscallInterruptFrame* frame);
 
 static_assert(sizeof(SyscallInterruptFrame) == 160,

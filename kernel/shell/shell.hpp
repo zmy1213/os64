@@ -46,12 +46,16 @@ struct ShellState {
   char history_entries[kShellHistoryCapacity][kShellHistoryEntryCapacity];
 };
 
+// shell 执行一行命令后，返回给上层的最小结果分类。
 enum ShellCommandResult : uint8_t {
   kShellCommandEmpty = 0,      // 输入是空行。
   kShellCommandExecuted = 1,   // 命令已识别并执行。
   kShellCommandUnknown = 2,    // 输入不是当前支持的内建命令。
 };
 
+// 初始化 shell 总状态。
+// 这一步不会开始读键盘，而只是把它依赖的各层对象都接进来：
+// BootInfo / allocator / filesystem / VFS / scheduler / syscall_context / output。
 bool initialize_shell(ShellState* shell,
                       const BootInfo* boot_info,
                       PageAllocator* allocator,
@@ -76,16 +80,16 @@ void shell_print_prompt(const ShellState* shell);
 // - disk
 // - pwd
 // - cd [path]
-    // - ls [path]
-    // - cat <path>
-    // - stat <path>
-    // - touch <path>
-    // - mkdir <path>
-    // - write <path> <text>
-    // - append <path> <text>
-    // - rm <path>
-    // - sync
-    // - run <path>
+// - ls [path]
+// - cat <path>
+// - stat <path>
+// - touch <path>
+// - mkdir <path>
+// - write <path> <text>
+// - append <path> <text>
+// - rm <path>
+// - sync
+// - run <path>
 // - irq
 // - bootinfo
 // - e820
@@ -98,6 +102,7 @@ ShellCommandResult shell_execute_line(ShellState* shell,
                                       const char* line);
 
 // 让控制台层能按“从旧到新”的顺序访问 shell 历史。
+// 这一层故意不直接暴露内部 ring buffer 布局。
 size_t shell_history_entry_count(const ShellState* shell);
 const char* shell_history_entry_text(const ShellState* shell, size_t index);
 
