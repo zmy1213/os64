@@ -1,0 +1,21 @@
+Create a polished Chinese operating-system textbook infographic, a single wide landscape raster canvas approximately 16:9 (for example 1792x1024). Pure white outer background, centered large black Chinese serif title and smaller subtitle. Six distinct rounded panels in 3 columns by 2 rows, letter circles (a)(b)(c)(d)(e)(f), alternating very pale blue, green, orange, lavender, pink, sky-blue washes with thin saturated colored borders. Neat typesetting, large readable Simplified Chinese, short sentences, crisp flat technical diagrams, simple icons, numbered steps, boxes and directional arrows. Like an academic teaching comparison sheet, extremely careful factual arrows and quantities. No photorealism, no gradients obscuring text, no watermark, no arbitrary filler or additional features. Each panel has a short title, illustration and concise explanation; text given below is the canonical content. Avoid long function identifiers and code listings. Do not add modern features that are not in the requested text. Preserve case of ABI names and exact numbers. 
+Main title: "OS64 启动：先铺好地基，再让多核运行"
+Subtitle: "当前实现 · 从启动信息到内存、用户程序与正式调度"
+
+(a) blue "启动入口与安全现场". Four boxes downward: "日志" -> "本核 TSS" -> "IDT" -> "BootInfo / E820". Side note "TSS.RSP0：user 进入内核的栈". Bottom banner "装载器交信息，内核先建立异常入口。"
+
+(b) green "内存要按依赖顺序建立". E820 map icon -> "4 KiB 物理页" -> "内核直接映射" -> "内核堆 / 分配器". Show PA page and VA pointer as different boxes joined by direct-map arrow. Bottom banner "直接映射是访问通道；分配器决定谁拥有页。"
+
+(c) orange "准备用户程序环境". Ordered boxes "启动卷" -> "VFS / FD" -> "int 0x80" -> "ELF / ring3 测试". Small file -> ELF -> private user window icon. Bottom banner "文件、句柄、私有页表齐备，才进入 user。"
+
+(d) lavender "先用启动夹具做自检". "PIC / PIT 100 Hz" -> "调度 / 输入 / shell" -> "用户态 / 文件写入测试". Show "启动卷测试夹具" separate from locked "持久数据盘：稍后挂载". Text "自检失败留下日志；当前无独立硬件看门狗". Bottom banner "固定夹具验证机制，随后接入正式服务。"
+
+(e) pink "正式服务，再启动 AP". Carefully ordered single direction across clear numbered boxes:
+"① 内核堆先铺满" -> "② ATA 数据盘优先
+否则 RAM 盘" -> "③ shell / 日志 / 网络" -> "④ BSP 内核工作线程" -> "⑤ SMP 启动" -> "⑥ 调度循环".
+Under show CPU0/BSP tagged "shell / 网络内核线程"; CPU1 and CPU2 tagged "固定绑定的用户线程". Bottom banner "当前用户线程固定绑定；不是动态迁移。"
+
+(f) sky-blue "看见进度，也看见失败". Two diagnostic outputs "串口日志" and "VGA 状态行". Split failure branches: "用户异常" -> "退出 / 回收"; "内核异常" -> "诊断后停止". Short footer "串口等待并非每次都有超时". Bottom banner "先看最早失败点，再追踪后续依赖。"
+
+Final centered footer outside panels: "图 K · 主线说明对应逐函数表，不代表已完成所有现代操作系统能力。"
+

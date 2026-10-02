@@ -1,0 +1,59 @@
+Use case: scientific-educational
+Asset type: original raster Chinese OS tutorial infographic embedded in Markdown.
+Create a landscape 3:2 textbook diagram, white background, bold black Chinese serif title/subtitle, 3 columns by 2 rows exactly six rounded panels with circular a–f badges. Pastel blue green orange purple pink blue fills, crisp colored borders, black readable large Chinese text, simple arrows/state boxes/time lines/tables. Match a polished Chinese Redis Set six-panel explanatory information sheet, no photos, no watermark, no decorative chips. Text must be exact and educational, long function names stay in accompanying Markdown.
+Title: “睡眠与唤醒：等事件，别占着 CPU 转圈”
+Subtitle: “当前实现 · 全局 PIT 时间 · 本核时间片 · 原子登记 · 跨核通知”
+
+(a) top-left blue “三条暂停路线”
+Draw Running at left feeding three labelled arrows:
+“yield” → “Ready”
+“sleep” → “Sleeping”
+“等管道 / UDP / 子进程” → “Blocked”
+Sleeping and Blocked both feed an arrow “事件或超时” → Ready.
+Bottom green note “wake = 可以排队，不是立刻运行”.
+
+(b) top-middle green “全局时钟只有一份”
+Draw BSP CPU0 → a central “全局 PIT tick” clock, labelled “推进全局时间”.
+Draw CPU1 CPU2 CPU3 → small independent “本核记账 / 时间片” boxes, each labelled “不推进全局时间”.
+Short exact note “四核运行 1 秒，全局仍是 1 秒”.
+Below tiny readable yellow note “user_ticks 按用户线程归属，包含其内核服务时间”.
+Do not sum all CPU timers into global time.
+
+(c) top-right orange “两种起点，必须转换”
+Show three boxed exact inputs:
+“PIT now = 100”
+“deadline = 105”
+“scheduler total = 19”
+Then calculate visibly:
+“剩余 = 105 − 100 = 5”
+“wake_tick = 19 + 5 = 24”
+A red crossed small wrong formula “错误：把 105 直接和 19 比”.
+Bottom small note “0 / MAX = 无限；过期或溢出拒绝”.
+Make 100,105,19,5,24 digits clear and no conflicting examples.
+
+(d) bottom-left purple “登记与切走一起保护”
+Draw exact flow 6 short steps with continuous bracket “持 BKL + CLI”:
+“登记等待者”
+“重新检查条件”
+“标记 Blocked”
+“选择下一线程”
+“保存旧 RSP / 切走”
+A small two-way branch before blocking: “事件已到 → 不睡”; “事件后来到 → wake”.
+Bottom red note “先开中断再切走，会留下丢唤醒窗口”.
+Do not imply the scheduler itself creates a socket wait queue: add small label “设备等待队列由调用方登记”.
+
+(e) bottom-middle pink “BSP 唤醒目标 AP”
+Flow “BSP 到期扫描” → “改 Ready / 清 wake_tick” → “入队” → “通知 assigned CPU” → “该核继续”.
+Represent CPU0 sending an arrow to CPU1 (the originally assigned CPU).
+Bottom note “固定绑定：唤醒回原核，不是迁移”.
+Need make Ready/recheck clear, no promise immediate execution.
+
+(f) bottom-right blue “时间粒度与失败”
+Four readable bullet rows:
+“sleep(0) = yield”
+“等待失败：调用方清理登记”
+“超时到点，只表示 Ready”
+“100 Hz PIT：约 10 ms 粒度，再加排队”
+A red/orange bottom note “不要持锁 hlt 等 BSP 时钟：可能死锁”.
+Footer across all panels: “记忆：先登记再切走；醒来重新检查条件。”
+Accuracy constraints: No direct comparison of PIT absolute deadline with scheduler relative ticks; no CPU-count multiplied time; no AVX/shared thread/migration/lock-free claims; BKL and CLI both required around waiter registration and old-stack save. Exact Chinese text, concise no clutter.

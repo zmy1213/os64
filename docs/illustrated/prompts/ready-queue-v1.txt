@@ -1,0 +1,19 @@
+Use case: scientific-educational.
+Asset type: finished Chinese OS64 tutorial infographic, landscape 3 columns × 2 rows, high-resolution raster image suitable for Markdown, aim 2400×1500 or higher.
+Primary request: Produce a beautiful rigorous six-panel explainer in the style of a Chinese textbook infographic: bold black serif Chinese title, short subtitle, crisp thin colored rounded rectangles, pale blue / mint green / pale orange top panels, lavender / pink / blue bottom panels, clean white background, numbered round badges, arrows, queue tokens, one small comparison table and colored takeaway strips. No mascots, no 3D, no code screenshot, no watermark. Maintain wide whitespace and big readable Chinese text. All function identifiers must be spelled exactly.
+Title verbatim: "多核就绪队列：怎样取出本核任务"
+Subtitle: "当前实现 · 固定核心 · 完整扫描 · 保持各核 FIFO"
+Six panels with actual OS64 source semantics:
+(a) blue, title "thread_eligible：谁能在本核运行"
+Draw CPU0 inspecting queue [A1, B0, C1]. Subscript number is assigned CPU, not priority. CPU0 accepts B0; A1 and C1 belong to CPU1. Two rules: "内核线程只在 CPU0" and "用户线程检查 assigned_cpu". Explain short footnote "未绑定时先选择较轻核心".
+(b) green, title "least_loaded_user_cpu：首次选核"
+Draw 4 CPU columns with alive assigned user thread counts [2,1,3,1]. Label CPU0, CPU1, CPU2, CPU3. Arrow choose CPU1, text "并列选编号较小者". Steps: "数活用户线程" → "选计数最少核心" → "首次调度后固定". Bottom "当前没有迁移 / 工作窃取".
+(c) orange, title "pop_raw_ready_thread：取一个槽"
+Draw circular queue with head moving one cell; slot points to TCB. Compact step labels "读 head 槽" "head 前移" "ready_count 减一" "queued = false". Caption "原始弹出尚未决定核心归属". Do not label this as independent cross-CPU synchronization.
+(d) lavender, title "pop_ready_thread_from_priority：扫描到底"
+Visually show a 3-row execution trace on CPU0: A1 → 放回; B0 → 选中; C1 → 放回. Final queue must be "[A1, C1]" and selected token B0 separate. Text "按扫描开始时的 3 个条目完成一轮". Show the wrong early-return result "[C1, A1]" crossed out, clearly marked "错误：提前返回会改变 CPU1 顺序".
+(e) pink, title "push_ready_thread：入队与通知"
+Draw checks "Ready / 未 queued / 容量可用" → tail entry → "queued = true" → remote CPU notification "IPI". Caption "只有新工作或唤醒才通知；轮转放回不发 IPI". Keep duplicate prevention visible.
+(f) pale blue, title "为什么这样做"
+A small table: "完整扫描 | 最多固定队列长度"; "queued 标志 | 防止重复入队"; "保持 FIFO | 不扰乱别核顺序"; "大内核锁 BKL | 串行保护共享队列". Takeaway strip verbatim "先保证队列、栈和唤醒正确，再测量并行性能".
+All panels readable and aligned. Use short text exactly as above, avoid inventing extra claims. Do NOT claim lock-free, work stealing, general fairness, linear speedup, or parallel kernel. The whole shared queue operation is protected by BKL and local IRQ exclusion. The image is a functional explanation, not measured performance plot.

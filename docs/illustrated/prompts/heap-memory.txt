@@ -1,0 +1,21 @@
+Create a polished Chinese operating-system textbook infographic, a single wide landscape raster canvas approximately 16:9 (for example 1792x1024). Pure white outer background, centered large black Chinese serif title and smaller subtitle. Six distinct rounded panels in 3 columns by 2 rows, letter circles (a)(b)(c)(d)(e)(f), alternating very pale blue, green, orange, lavender, pink, sky-blue washes with thin saturated colored borders. Neat typesetting, large readable Simplified Chinese, short sentences, crisp flat technical diagrams, simple icons, numbered steps, boxes and directional arrows. Like an academic teaching comparison sheet, extremely careful factual arrows and quantities. No photorealism, no gradients obscuring text, no watermark, no arbitrary filler or additional features. Each panel has a short title, illustration and concise explanation; text given below is the canonical content. Avoid long function identifiers and code listings. Do not add modern features that are not in the requested text. Preserve case of ABI names and exact numbers. 
+Main title "OS64 堆内存：页是地基，块才给对象"
+Subtitle "内核 first-fit · C++ 构造与释放 · 用户 brk · 真实边界"
+
+(a) blue "内核堆：4 MiB 虚拟窗口". Horizontal address bar starts "0x01000000", ends "0x01400000", label "4 MiB". Physical 4 KiB pages underneath arrows into mapped portion, label "PA 从 2 MiB 以上取；W / NX；清零". Unmapped portion pale gray. Note "正式用户页表克隆前：heap_reserve 先铺满". Banner "按页补地基，再从地基里切小块。"
+
+(b) green "first-fit：先找到能放下的块". Free-list ordered blocks labeled "16 B", "64 B", "128 B"; request "32 B payload" points to first sufficient "64 B" block and stops, bypass first small one. Below a separate allocation layout "32 B 分配头 | payload：16 B 对齐 | 可选剩余空块". Note "剩余能容纳 16 B 空闲头才拆分". Small note "分配清请求的字节". Banner "首个合适块；不是全表找最小块。"
+
+(c) orange "free：插回去，合相邻洞". Before strip "空闲 A | 本次释放 B | 空闲 C", after contiguous merged strip "A + B + C". Arrows from released block to sorted free list then merge. Note "按地址排序；对象不搬家". Red rejection box "坏 magic / 重复 free → 拒绝". Banner "内核 free 归还块，不把堆映射页还 PMM。"
+
+(d) lavender "拿字节，与构造对象不同". Two parallel ordered paths:
+"knew" -> "分配字节" -> "构造 T" -> "可用对象";
+"kdelete" -> "析构 T" -> "释放字节".
+A small calloc card "kcalloc：先查 count × size 溢出". Banner "对象有生命周期，不能只画 malloc / free。"
+
+(e) pink "用户小块堆：尾部可缩 brk". Memory blocks with "32 B Block" and "16 B 对齐". Ordered "first-fit" -> "不够：brk 扩尾". Then "release → 合洞 → 尾块空闲？缩 brk" leading to page icons returned to kernel. Note "可归还整页；分配不自动清零". Red note "指针必须有效；此分配器不检查非法 / 重复 free". Banner "resize 失败保留旧块，不能先释放。"
+
+(f) sky-blue "看三项指标，别混为一谈". Clean table rows "used | 对齐后的 payload", "mapped | 已映射页容量", "free | 空闲块空间". Diagram shows fragmented free blocks around allocated blocks. Text "当前共用 BKL；没有每 CPU 缓存 / SLAB". Banner "复杂度与碎片要测量，不宣称已经最快。"
+
+Footer "图 H · 内核堆不会缩页；用户 brk 缩堆能还整页。"
+

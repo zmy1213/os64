@@ -1,0 +1,1271 @@
+{
+  "kernel_sha256": "ad77896db0f3579dce24c259a3c2eb252e539b4319b23ff4b24ca83ecca83303",
+  "program_sha256": "e9a2310ff76971559561aa170fd0828e97eeac6d75b11bba9c3e4172680a0a79",
+  "source_sha256": "80ea477c04ef7ea382ea19d6801acb33ab5e7c7e4bb665c9dcd58efe3bc5616c",
+  "harness_sha256": "ee1bbdc92ec6aaf198dc61fface165ce8aba13661a5fec098d7d230dc1462081",
+  "checks": [
+    {
+      "cpus": 1,
+      "workers": 1,
+      "jobs": 64,
+      "items": 1048576,
+      "fields": {
+        "workers": 1,
+        "jobs": 64,
+        "items": 1048576,
+        "online_cpus": 1,
+        "work_cpu_mask": 1,
+        "checksum": 11753808538976649216,
+        "expected": 11753808538976649216,
+        "completed_jobs": 64,
+        "elapsed_ticks": 20,
+        "free_pages_before": 31306,
+        "free_pages_after": 31306,
+        "heap_bytes_before": 119520,
+        "heap_bytes_after": 119520,
+        "worker": 0
+      },
+      "worker_distribution": [
+        [
+          0,
+          0,
+          64
+        ]
+      ],
+      "host_shell_seconds": 0.22562262485735118
+    },
+    {
+      "cpus": 1,
+      "workers": 4,
+      "jobs": 64,
+      "items": 1048576,
+      "fields": {
+        "workers": 4,
+        "jobs": 64,
+        "items": 1048576,
+        "online_cpus": 1,
+        "work_cpu_mask": 1,
+        "checksum": 11753808538976649216,
+        "expected": 11753808538976649216,
+        "completed_jobs": 64,
+        "elapsed_ticks": 22,
+        "free_pages_before": 31306,
+        "free_pages_after": 31306,
+        "heap_bytes_before": 119520,
+        "heap_bytes_after": 119520,
+        "worker": 3
+      },
+      "worker_distribution": [
+        [
+          0,
+          0,
+          17
+        ],
+        [
+          1,
+          0,
+          18
+        ],
+        [
+          2,
+          0,
+          14
+        ],
+        [
+          3,
+          0,
+          15
+        ]
+      ],
+      "host_shell_seconds": 0.2372754579409957
+    },
+    {
+      "cpus": 1,
+      "workers": 12,
+      "jobs": 64,
+      "items": 1048576,
+      "fields": {
+        "workers": 12,
+        "jobs": 64,
+        "items": 1048576,
+        "online_cpus": 1,
+        "work_cpu_mask": 1,
+        "checksum": 11753808538976649216,
+        "expected": 11753808538976649216,
+        "completed_jobs": 64,
+        "elapsed_ticks": 30,
+        "free_pages_before": 31306,
+        "free_pages_after": 31306,
+        "heap_bytes_before": 119520,
+        "heap_bytes_after": 119520,
+        "worker": 11
+      },
+      "worker_distribution": [
+        [
+          0,
+          0,
+          3
+        ],
+        [
+          1,
+          0,
+          7
+        ],
+        [
+          2,
+          0,
+          6
+        ],
+        [
+          3,
+          0,
+          6
+        ],
+        [
+          4,
+          0,
+          7
+        ],
+        [
+          5,
+          0,
+          6
+        ],
+        [
+          6,
+          0,
+          7
+        ],
+        [
+          7,
+          0,
+          7
+        ],
+        [
+          8,
+          0,
+          5
+        ],
+        [
+          9,
+          0,
+          4
+        ],
+        [
+          10,
+          0,
+          3
+        ],
+        [
+          11,
+          0,
+          3
+        ]
+      ],
+      "host_shell_seconds": 0.35563512495718896
+    },
+    {
+      "cpus": 1,
+      "workers": 4,
+      "jobs": 7,
+      "items": 10003,
+      "fields": {
+        "workers": 4,
+        "jobs": 7,
+        "items": 10003,
+        "online_cpus": 1,
+        "work_cpu_mask": 1,
+        "checksum": 17897633832252636172,
+        "expected": 17897633832252636172,
+        "completed_jobs": 7,
+        "elapsed_ticks": 6,
+        "free_pages_before": 31306,
+        "free_pages_after": 31306,
+        "heap_bytes_before": 119520,
+        "heap_bytes_after": 119520,
+        "worker": 3
+      },
+      "worker_distribution": [
+        [
+          0,
+          0,
+          7
+        ],
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          2,
+          0,
+          0
+        ],
+        [
+          3,
+          0,
+          0
+        ]
+      ],
+      "host_shell_seconds": 0.09688245900906622
+    },
+    {
+      "cpus": 1,
+      "workers": 12,
+      "jobs": 1,
+      "items": 17,
+      "fields": {
+        "workers": 12,
+        "jobs": 1,
+        "items": 17,
+        "online_cpus": 1,
+        "work_cpu_mask": 1,
+        "checksum": 11271434299383068915,
+        "expected": 11271434299383068915,
+        "completed_jobs": 1,
+        "elapsed_ticks": 11,
+        "free_pages_before": 31306,
+        "free_pages_after": 31306,
+        "heap_bytes_before": 119520,
+        "heap_bytes_after": 119520,
+        "worker": 11
+      },
+      "worker_distribution": [
+        [
+          0,
+          0,
+          1
+        ],
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          2,
+          0,
+          0
+        ],
+        [
+          3,
+          0,
+          0
+        ],
+        [
+          4,
+          0,
+          0
+        ],
+        [
+          5,
+          0,
+          0
+        ],
+        [
+          6,
+          0,
+          0
+        ],
+        [
+          7,
+          0,
+          0
+        ],
+        [
+          8,
+          0,
+          0
+        ],
+        [
+          9,
+          0,
+          0
+        ],
+        [
+          10,
+          0,
+          0
+        ],
+        [
+          11,
+          0,
+          0
+        ]
+      ],
+      "host_shell_seconds": 0.15621170797385275
+    },
+    {
+      "cpus": 1,
+      "workers": 4,
+      "jobs": 64,
+      "items": 1,
+      "fields": {
+        "workers": 4,
+        "jobs": 64,
+        "items": 1,
+        "online_cpus": 1,
+        "work_cpu_mask": 1,
+        "checksum": 5867510433191568571,
+        "expected": 5867510433191568571,
+        "completed_jobs": 64,
+        "elapsed_ticks": 4,
+        "free_pages_before": 31306,
+        "free_pages_after": 31306,
+        "heap_bytes_before": 119520,
+        "heap_bytes_after": 119520,
+        "worker": 3
+      },
+      "worker_distribution": [
+        [
+          0,
+          0,
+          64
+        ],
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          2,
+          0,
+          0
+        ],
+        [
+          3,
+          0,
+          0
+        ]
+      ],
+      "host_shell_seconds": 0.06869433401152492
+    },
+    {
+      "cpus": 1,
+      "workers": 12,
+      "jobs": 64,
+      "items": 1048576,
+      "fields": {
+        "workers": 12,
+        "jobs": 64,
+        "items": 1048576,
+        "online_cpus": 1,
+        "work_cpu_mask": 1,
+        "checksum": 11753808538976649216,
+        "expected": 11753808538976649216,
+        "completed_jobs": 64,
+        "elapsed_ticks": 34,
+        "free_pages_before": 31306,
+        "free_pages_after": 31306,
+        "heap_bytes_before": 119520,
+        "heap_bytes_after": 119520,
+        "worker": 11
+      },
+      "worker_distribution": [
+        [
+          0,
+          0,
+          5
+        ],
+        [
+          1,
+          0,
+          6
+        ],
+        [
+          2,
+          0,
+          6
+        ],
+        [
+          3,
+          0,
+          6
+        ],
+        [
+          4,
+          0,
+          6
+        ],
+        [
+          5,
+          0,
+          6
+        ],
+        [
+          6,
+          0,
+          5
+        ],
+        [
+          7,
+          0,
+          5
+        ],
+        [
+          8,
+          0,
+          7
+        ],
+        [
+          9,
+          0,
+          7
+        ],
+        [
+          10,
+          0,
+          3
+        ],
+        [
+          11,
+          0,
+          2
+        ]
+      ],
+      "host_shell_seconds": 0.36651895800605416
+    },
+    {
+      "cpus": 2,
+      "workers": 1,
+      "jobs": 64,
+      "items": 1048576,
+      "fields": {
+        "workers": 1,
+        "jobs": 64,
+        "items": 1048576,
+        "online_cpus": 2,
+        "work_cpu_mask": 2,
+        "checksum": 11753808538976649216,
+        "expected": 11753808538976649216,
+        "completed_jobs": 64,
+        "elapsed_ticks": 21,
+        "free_pages_before": 31300,
+        "free_pages_after": 31300,
+        "heap_bytes_before": 160480,
+        "heap_bytes_after": 160480,
+        "worker": 0
+      },
+      "worker_distribution": [
+        [
+          0,
+          1,
+          64
+        ]
+      ],
+      "host_shell_seconds": 0.24317783303558826
+    },
+    {
+      "cpus": 2,
+      "workers": 4,
+      "jobs": 64,
+      "items": 1048576,
+      "fields": {
+        "workers": 4,
+        "jobs": 64,
+        "items": 1048576,
+        "online_cpus": 2,
+        "work_cpu_mask": 3,
+        "checksum": 11753808538976649216,
+        "expected": 11753808538976649216,
+        "completed_jobs": 64,
+        "elapsed_ticks": 14,
+        "free_pages_before": 31300,
+        "free_pages_after": 31300,
+        "heap_bytes_before": 160480,
+        "heap_bytes_after": 160480,
+        "worker": 3
+      },
+      "worker_distribution": [
+        [
+          0,
+          1,
+          16
+        ],
+        [
+          1,
+          0,
+          17
+        ],
+        [
+          2,
+          1,
+          15
+        ],
+        [
+          3,
+          0,
+          16
+        ]
+      ],
+      "host_shell_seconds": 0.17783804121427238
+    },
+    {
+      "cpus": 2,
+      "workers": 12,
+      "jobs": 64,
+      "items": 1048576,
+      "fields": {
+        "workers": 12,
+        "jobs": 64,
+        "items": 1048576,
+        "online_cpus": 2,
+        "work_cpu_mask": 3,
+        "checksum": 11753808538976649216,
+        "expected": 11753808538976649216,
+        "completed_jobs": 64,
+        "elapsed_ticks": 20,
+        "free_pages_before": 31300,
+        "free_pages_after": 31300,
+        "heap_bytes_before": 160480,
+        "heap_bytes_after": 160480,
+        "worker": 11
+      },
+      "worker_distribution": [
+        [
+          0,
+          1,
+          6
+        ],
+        [
+          1,
+          0,
+          8
+        ],
+        [
+          2,
+          1,
+          8
+        ],
+        [
+          3,
+          0,
+          6
+        ],
+        [
+          4,
+          1,
+          7
+        ],
+        [
+          5,
+          0,
+          6
+        ],
+        [
+          6,
+          1,
+          5
+        ],
+        [
+          7,
+          0,
+          4
+        ],
+        [
+          8,
+          1,
+          3
+        ],
+        [
+          9,
+          0,
+          4
+        ],
+        [
+          10,
+          1,
+          3
+        ],
+        [
+          11,
+          0,
+          4
+        ]
+      ],
+      "host_shell_seconds": 0.23582754097878933
+    },
+    {
+      "cpus": 2,
+      "workers": 4,
+      "jobs": 7,
+      "items": 10003,
+      "fields": {
+        "workers": 4,
+        "jobs": 7,
+        "items": 10003,
+        "online_cpus": 2,
+        "work_cpu_mask": 3,
+        "checksum": 17897633832252636172,
+        "expected": 17897633832252636172,
+        "completed_jobs": 7,
+        "elapsed_ticks": 5,
+        "free_pages_before": 31300,
+        "free_pages_after": 31300,
+        "heap_bytes_before": 160480,
+        "heap_bytes_after": 160480,
+        "worker": 3
+      },
+      "worker_distribution": [
+        [
+          0,
+          1,
+          4
+        ],
+        [
+          1,
+          0,
+          3
+        ],
+        [
+          2,
+          1,
+          0
+        ],
+        [
+          3,
+          0,
+          0
+        ]
+      ],
+      "host_shell_seconds": 0.0825215419754386
+    },
+    {
+      "cpus": 2,
+      "workers": 12,
+      "jobs": 1,
+      "items": 17,
+      "fields": {
+        "workers": 12,
+        "jobs": 1,
+        "items": 17,
+        "online_cpus": 2,
+        "work_cpu_mask": 2,
+        "checksum": 11271434299383068915,
+        "expected": 11271434299383068915,
+        "completed_jobs": 1,
+        "elapsed_ticks": 18,
+        "free_pages_before": 31300,
+        "free_pages_after": 31300,
+        "heap_bytes_before": 160480,
+        "heap_bytes_after": 160480,
+        "worker": 11
+      },
+      "worker_distribution": [
+        [
+          0,
+          1,
+          1
+        ],
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          2,
+          1,
+          0
+        ],
+        [
+          3,
+          0,
+          0
+        ],
+        [
+          4,
+          1,
+          0
+        ],
+        [
+          5,
+          0,
+          0
+        ],
+        [
+          6,
+          1,
+          0
+        ],
+        [
+          7,
+          0,
+          0
+        ],
+        [
+          8,
+          1,
+          0
+        ],
+        [
+          9,
+          0,
+          0
+        ],
+        [
+          10,
+          1,
+          0
+        ],
+        [
+          11,
+          0,
+          0
+        ]
+      ],
+      "host_shell_seconds": 0.23267991701141
+    },
+    {
+      "cpus": 2,
+      "workers": 4,
+      "jobs": 64,
+      "items": 1,
+      "fields": {
+        "workers": 4,
+        "jobs": 64,
+        "items": 1,
+        "online_cpus": 2,
+        "work_cpu_mask": 2,
+        "checksum": 5867510433191568571,
+        "expected": 5867510433191568571,
+        "completed_jobs": 64,
+        "elapsed_ticks": 4,
+        "free_pages_before": 31300,
+        "free_pages_after": 31300,
+        "heap_bytes_before": 160480,
+        "heap_bytes_after": 160480,
+        "worker": 3
+      },
+      "worker_distribution": [
+        [
+          0,
+          1,
+          64
+        ],
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          2,
+          1,
+          0
+        ],
+        [
+          3,
+          0,
+          0
+        ]
+      ],
+      "host_shell_seconds": 0.08339345804415643
+    },
+    {
+      "cpus": 2,
+      "workers": 12,
+      "jobs": 64,
+      "items": 1048576,
+      "fields": {
+        "workers": 12,
+        "jobs": 64,
+        "items": 1048576,
+        "online_cpus": 2,
+        "work_cpu_mask": 3,
+        "checksum": 11753808538976649216,
+        "expected": 11753808538976649216,
+        "completed_jobs": 64,
+        "elapsed_ticks": 20,
+        "free_pages_before": 31300,
+        "free_pages_after": 31300,
+        "heap_bytes_before": 160480,
+        "heap_bytes_after": 160480,
+        "worker": 11
+      },
+      "worker_distribution": [
+        [
+          0,
+          1,
+          7
+        ],
+        [
+          1,
+          0,
+          9
+        ],
+        [
+          2,
+          1,
+          7
+        ],
+        [
+          3,
+          0,
+          7
+        ],
+        [
+          4,
+          1,
+          7
+        ],
+        [
+          5,
+          0,
+          5
+        ],
+        [
+          6,
+          1,
+          4
+        ],
+        [
+          7,
+          0,
+          4
+        ],
+        [
+          8,
+          1,
+          3
+        ],
+        [
+          9,
+          0,
+          4
+        ],
+        [
+          10,
+          1,
+          3
+        ],
+        [
+          11,
+          0,
+          4
+        ]
+      ],
+      "host_shell_seconds": 0.23553395899944007
+    },
+    {
+      "cpus": 4,
+      "workers": 1,
+      "jobs": 64,
+      "items": 1048576,
+      "fields": {
+        "workers": 1,
+        "jobs": 64,
+        "items": 1048576,
+        "online_cpus": 4,
+        "work_cpu_mask": 2,
+        "checksum": 11753808538976649216,
+        "expected": 11753808538976649216,
+        "completed_jobs": 64,
+        "elapsed_ticks": 25,
+        "free_pages_before": 31300,
+        "free_pages_after": 31300,
+        "heap_bytes_before": 242400,
+        "heap_bytes_after": 242400,
+        "worker": 0
+      },
+      "worker_distribution": [
+        [
+          0,
+          1,
+          64
+        ]
+      ],
+      "host_shell_seconds": 0.3144219999667257
+    },
+    {
+      "cpus": 4,
+      "workers": 4,
+      "jobs": 64,
+      "items": 1048576,
+      "fields": {
+        "workers": 4,
+        "jobs": 64,
+        "items": 1048576,
+        "online_cpus": 4,
+        "work_cpu_mask": 15,
+        "checksum": 11753808538976649216,
+        "expected": 11753808538976649216,
+        "completed_jobs": 64,
+        "elapsed_ticks": 11,
+        "free_pages_before": 31300,
+        "free_pages_after": 31300,
+        "heap_bytes_before": 242400,
+        "heap_bytes_after": 242400,
+        "worker": 3
+      },
+      "worker_distribution": [
+        [
+          0,
+          1,
+          16
+        ],
+        [
+          1,
+          2,
+          16
+        ],
+        [
+          2,
+          3,
+          16
+        ],
+        [
+          3,
+          0,
+          16
+        ]
+      ],
+      "host_shell_seconds": 0.17690654192119837
+    },
+    {
+      "cpus": 4,
+      "workers": 12,
+      "jobs": 64,
+      "items": 1048576,
+      "fields": {
+        "workers": 12,
+        "jobs": 64,
+        "items": 1048576,
+        "online_cpus": 4,
+        "work_cpu_mask": 15,
+        "checksum": 11753808538976649216,
+        "expected": 11753808538976649216,
+        "completed_jobs": 64,
+        "elapsed_ticks": 34,
+        "free_pages_before": 31300,
+        "free_pages_after": 31300,
+        "heap_bytes_before": 242400,
+        "heap_bytes_after": 242400,
+        "worker": 11
+      },
+      "worker_distribution": [
+        [
+          0,
+          1,
+          5
+        ],
+        [
+          1,
+          2,
+          7
+        ],
+        [
+          2,
+          3,
+          10
+        ],
+        [
+          3,
+          0,
+          8
+        ],
+        [
+          4,
+          1,
+          6
+        ],
+        [
+          5,
+          2,
+          6
+        ],
+        [
+          6,
+          3,
+          6
+        ],
+        [
+          7,
+          0,
+          3
+        ],
+        [
+          8,
+          1,
+          3
+        ],
+        [
+          9,
+          2,
+          4
+        ],
+        [
+          10,
+          3,
+          2
+        ],
+        [
+          11,
+          0,
+          4
+        ]
+      ],
+      "host_shell_seconds": 0.44789295899681747
+    },
+    {
+      "cpus": 4,
+      "workers": 4,
+      "jobs": 7,
+      "items": 10003,
+      "fields": {
+        "workers": 4,
+        "jobs": 7,
+        "items": 10003,
+        "online_cpus": 4,
+        "work_cpu_mask": 15,
+        "checksum": 17897633832252636172,
+        "expected": 17897633832252636172,
+        "completed_jobs": 7,
+        "elapsed_ticks": 7,
+        "free_pages_before": 31300,
+        "free_pages_after": 31300,
+        "heap_bytes_before": 242400,
+        "heap_bytes_after": 242400,
+        "worker": 3
+      },
+      "worker_distribution": [
+        [
+          0,
+          1,
+          2
+        ],
+        [
+          1,
+          2,
+          2
+        ],
+        [
+          2,
+          3,
+          2
+        ],
+        [
+          3,
+          0,
+          1
+        ]
+      ],
+      "host_shell_seconds": 0.14565049996599555
+    },
+    {
+      "cpus": 4,
+      "workers": 12,
+      "jobs": 1,
+      "items": 17,
+      "fields": {
+        "workers": 12,
+        "jobs": 1,
+        "items": 17,
+        "online_cpus": 4,
+        "work_cpu_mask": 2,
+        "checksum": 11271434299383068915,
+        "expected": 11271434299383068915,
+        "completed_jobs": 1,
+        "elapsed_ticks": 26,
+        "free_pages_before": 31300,
+        "free_pages_after": 31300,
+        "heap_bytes_before": 242400,
+        "heap_bytes_after": 242400,
+        "worker": 11
+      },
+      "worker_distribution": [
+        [
+          0,
+          1,
+          1
+        ],
+        [
+          1,
+          2,
+          0
+        ],
+        [
+          2,
+          3,
+          0
+        ],
+        [
+          3,
+          0,
+          0
+        ],
+        [
+          4,
+          1,
+          0
+        ],
+        [
+          5,
+          2,
+          0
+        ],
+        [
+          6,
+          3,
+          0
+        ],
+        [
+          7,
+          0,
+          0
+        ],
+        [
+          8,
+          1,
+          0
+        ],
+        [
+          9,
+          2,
+          0
+        ],
+        [
+          10,
+          3,
+          0
+        ],
+        [
+          11,
+          0,
+          0
+        ]
+      ],
+      "host_shell_seconds": 0.3286470000166446
+    },
+    {
+      "cpus": 4,
+      "workers": 4,
+      "jobs": 64,
+      "items": 1,
+      "fields": {
+        "workers": 4,
+        "jobs": 64,
+        "items": 1,
+        "online_cpus": 4,
+        "work_cpu_mask": 2,
+        "checksum": 5867510433191568571,
+        "expected": 5867510433191568571,
+        "completed_jobs": 64,
+        "elapsed_ticks": 7,
+        "free_pages_before": 31300,
+        "free_pages_after": 31300,
+        "heap_bytes_before": 242400,
+        "heap_bytes_after": 242400,
+        "worker": 3
+      },
+      "worker_distribution": [
+        [
+          0,
+          1,
+          25
+        ],
+        [
+          1,
+          2,
+          17
+        ],
+        [
+          2,
+          3,
+          22
+        ],
+        [
+          3,
+          0,
+          0
+        ]
+      ],
+      "host_shell_seconds": 0.15037599997594953
+    },
+    {
+      "cpus": 4,
+      "workers": 12,
+      "jobs": 64,
+      "items": 1048576,
+      "fields": {
+        "workers": 12,
+        "jobs": 64,
+        "items": 1048576,
+        "online_cpus": 4,
+        "work_cpu_mask": 15,
+        "checksum": 11753808538976649216,
+        "expected": 11753808538976649216,
+        "completed_jobs": 64,
+        "elapsed_ticks": 26,
+        "free_pages_before": 31300,
+        "free_pages_after": 31300,
+        "heap_bytes_before": 242400,
+        "heap_bytes_after": 242400,
+        "worker": 11
+      },
+      "worker_distribution": [
+        [
+          0,
+          1,
+          6
+        ],
+        [
+          1,
+          2,
+          6
+        ],
+        [
+          2,
+          3,
+          7
+        ],
+        [
+          3,
+          0,
+          4
+        ],
+        [
+          4,
+          1,
+          6
+        ],
+        [
+          5,
+          2,
+          6
+        ],
+        [
+          6,
+          3,
+          6
+        ],
+        [
+          7,
+          0,
+          7
+        ],
+        [
+          8,
+          1,
+          4
+        ],
+        [
+          9,
+          2,
+          4
+        ],
+        [
+          10,
+          3,
+          3
+        ],
+        [
+          11,
+          0,
+          5
+        ]
+      ],
+      "host_shell_seconds": 0.3646999590564519
+    }
+  ],
+  "invalid_cases_per_cpu": 10,
+  "existing_data_unchanged": true,
+  "timing_note": "Single-run correctness timings include shell, spawn, IPC and wait. Not a Linux comparison or performance ranking."
+}

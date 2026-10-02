@@ -13,6 +13,7 @@
 9. [从零启动第二颗 CPU](./SMP_BOOT_TUTORIAL.md)：ACPI/MP、xAPIC、INIT/SIPI、16→64 位跳板、每核 TSS 与全局/本核时钟。
 10. [多核调度与协作](./SMP_SCHEDULER_TUTORIAL.md)：每核 current/idle/FX、内核锁、固定核心、睡眠/唤醒/跨核回收和 1/2/4 核回归。
 11. [与现代操作系统的差距](./MODERN_OS_COMPARISON.md)：区分已实现与未来能力，理解单核并发、当前四核并行与用户线程/迁移等缺口，以及五个可验证的后续阶段。
+12. **[逐函数配图教程](./illustrated/README.md)**：六栏机制图与函数解释配套，给每项输入、结果、步骤、边界与复杂度；[函数索引](./illustrated/FUNCTION_INDEX.md) 查具体入口，[可运行分块归约](./illustrated/PARALLEL_REDUCTION.md) 实验多个进程怎样领取任务与验证合并。
 
 根目录 [README](../README.md) 是快速使用入口。第一次 `make build` 创建数据盘；已有数据盘更新 `/bin` 时先关闭 QEMU，再 `make update-tools`，不要把 `reset-data` 当普通更新。完整回归入口是 `make test`。
 

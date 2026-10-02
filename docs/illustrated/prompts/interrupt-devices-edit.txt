@@ -1,0 +1,7 @@
+Use case: precise factual correction to an educational diagram. Edit ONLY panel (c), the upper-right orange panel, in the provided OS64 interrupt infographic. Keep panels (a),(b),(d),(e),(f), header, typography, borders, colors, layout and exact existing text unchanged.
+Panel (c) is titled “一份 PIT 时间”. The first generation incorrectly branches a line from the PIT divisor down to the AP LAPIC, implying the PIT directly drives the AP local timer. Correct the arrows only, with one short clarifying label:
+Keep the top sequence “1193182Hz” → “divisor” → “默认100Hz”.
+Connect “默认100Hz” downward ONLY to the existing “BSP：全局 tick +1” box.
+Keep the existing “AP LAPIC：仅本核记账” box at the right, but it must have NO arrow from PIT/divisor/default100Hz. Above the AP box add the small exact label “独立本地时钟”.
+Keep the red crossed annotation “AP 不能连向全局 tick” and the panel footer “四核不能把系统时间加快四倍。” exactly as before.
+Do not change any numeric value or other label. Do not create a link from AP to global time. The BSP PIT owns global ticks; AP LAPIC is an independent local timer calibrated during startup. Precise arrow correction, no redesign, no new decorative shapes.

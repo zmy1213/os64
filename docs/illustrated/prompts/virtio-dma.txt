@@ -1,0 +1,9 @@
+Use case: scientific-educational. 直接生成中文零基础操作系统教学栅格信息图，横向16:9，白色不透明背景，三列两行六个独立等宽圆角细边框面板，左上小圆圈标(a)到(f)。标题粗黑大中文，副标题精简，浅蓝/绿/橙/紫/淡粉色分栏，清晰框和有方向的细箭头，每栏底部一句加深色总结。像严谨教材六栏核心逻辑整理图，文本清晰大字、留白均衡，不要照片/3D/人物/代码截图/水印。仅画下面指定当前实现，不要自添地址、容量、额外算法和性能结论。所有数值和中文文字准确，标题不裁切。
+总标题“OS64 Virtio DMA 队列”，副标题“物理地址 · 发布顺序 · 完成后回收 · BSP 单 RX 队列”。
+(a) “ring 必须物理连续”：连续2–3物理页大框含“descriptor”“available”“used”，旁边独立packet page方块。底句“虚拟地址连续，不保证物理页连续”。
+(b) “每帧两个描述符”：page+0盒“10B header”箭头到page+64盒“Ethernet 数据”，中间淡灰“54B 空隙，不传输”；RX标“设备可写”，TX标“设备只读”；小注“queue64 →32帧；queue256 →64帧”。底句“描述符数量和帧缓冲数量不同”。
+(c) “发布顺序”：数据/descriptor/avail槽→MFENCE→avail.index→MFENCE→notify。底句“先内容，后索引，再敲设备门铃”。
+(d) “完成后再回收”：设备写used→CPU读index→LFENCE→校验head/长度；分叉“TX：清 in-flight”“RX：同步callback→重投”。小注“16位索引自然回绕”。底句“callback 返回后，指针可能被设备重写”。
+(e) “IRQ 唤醒 BSP worker”：INTx“只 ack + wake”→CPU0/BSP worker“budget 32”→“有数据 yield / 无数据安全 Block”；分离AP盒“UDP 用户读取软件 inbox”。底句“AP 没有独立 RX DMA 队列”。
+(f) “设备失败的安全边界”：invalid used→fail_device→“停止收发，保留可能仍 DMA 的页”；另小框“初始化失败：确认 reset 停 DMA 后才释放”。短注“legacy · MAC-only · 无卸载”。底句“失败后等待重启，不把 DMA 页立即 free”。
+准确性：header长度10而不是64，数据起点64，间隙54不计传输。RX WRITE方向表示设备写而不是CPU写。queue容量两个descriptor每帧。当前单队列+BKL，不画无锁多队列/零拷贝用户网络。MFENCE和LFENCE顺序不能改变。最大Ethernet帧1514B。

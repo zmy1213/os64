@@ -1,0 +1,256 @@
+{
+  "source_commit": "67efd0d008e0b58b31c89ad4ecfbab502416e087",
+  "tool": "built-in imagegen",
+  "originals_preserved": true,
+  "no_programmatic_drawing_or_raster_editing": true,
+  "source_copy_verification": "byte equality + SHA256; PNG header dimensions read without image transformation",
+  "assets": [
+    {
+      "name": "os64fs-layout",
+      "code": "L",
+      "source": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-cfd6092a-af98-473d-8ae5-e9c3df11a916.png",
+      "target": "docs/illustrated/images/os64fs-layout.png",
+      "tool": "tools.image_gen__imagegen",
+      "mode": "generate + imagegen edits",
+      "transparent_background": false,
+      "prompts": [
+        "docs/illustrated/prompts/os64fs-layout.txt",
+        "docs/illustrated/prompts/os64fs-layout-edit.txt"
+      ],
+      "retained_variants": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-c3efb4a7-1cae-4347-89e1-02c104b4f342.png"
+      ],
+      "qa": {
+        "status": "passed",
+        "method": "visual inspection against actual source and six-panel specification",
+        "checked": [
+          "六栏与中文可读",
+          "inode0保留，位图0空闲/1占用",
+          "目录项56B名字+4B编号+4B其余元数据",
+          "8直接+128间接，内容69632B、索引块另占",
+          "偏移500B读12B+64B=76B",
+          "挂载检查且损坏拒绝"
+        ]
+      },
+      "width": 1672,
+      "height": 941,
+      "sha256": "387608f9dde43396bc13e08b30cf68202e4935ca7ee82e9dffc8fa2813aef1f2",
+      "source_sha256": "387608f9dde43396bc13e08b30cf68202e4935ca7ee82e9dffc8fa2813aef1f2",
+      "source_target_sha_match": true
+    },
+    {
+      "name": "filesystem-transactions",
+      "code": "T",
+      "source": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-5354b3d3-2195-475e-b520-b7b7fcfe148a.png",
+      "target": "docs/illustrated/images/filesystem-transactions.png",
+      "tool": "tools.image_gen__imagegen",
+      "mode": "generate + imagegen edits",
+      "transparent_background": false,
+      "prompts": [
+        "docs/illustrated/prompts/filesystem-transactions.txt",
+        "docs/illustrated/prompts/filesystem-transactions-edit.txt",
+        "docs/illustrated/prompts/filesystem-transactions-edit2.txt",
+        "docs/illustrated/prompts/filesystem-transactions-edit3.txt"
+      ],
+      "retained_variants": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-f04b0979-a248-43b5-8320-026c4cab5611.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-4f8f642e-24a9-4979-80de-f7fa4635698b.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-383dabe6-fec8-44eb-b020-5b46e28a175a.png"
+      ],
+      "qa": {
+        "status": "passed",
+        "method": "visual inspection against actual source and six-panel specification",
+        "checked": [
+          "六栏与中文可读",
+          "内存snapshot和最多256不同扇区暂存",
+          "校验失败恢复内存且返回失败，没有自动重试",
+          "提交阶段写新扇区+flush任一步失败到恢复阶段",
+          "恢复阶段逆序旧扇区+flush，成功返回原失败，失败停止挂载",
+          "失败的写入尝试也恢复",
+          "无持久化日志/断电恢复事务"
+        ]
+      },
+      "width": 1672,
+      "height": 941,
+      "sha256": "17c61676d1e51a56f535a1da48c359963e34a82b5cce967795e65d714ebadad7",
+      "source_sha256": "17c61676d1e51a56f535a1da48c359963e34a82b5cce967795e65d714ebadad7",
+      "source_target_sha_match": true
+    },
+    {
+      "name": "vfs-paths",
+      "code": "V",
+      "source": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-198feb4a-b9c7-4d03-ba84-e9aa13323052.png",
+      "target": "docs/illustrated/images/vfs-paths.png",
+      "tool": "tools.image_gen__imagegen",
+      "mode": "generate + imagegen edits",
+      "transparent_background": false,
+      "prompts": [
+        "docs/illustrated/prompts/vfs-paths.txt",
+        "docs/illustrated/prompts/vfs-paths-edit.txt",
+        "docs/illustrated/prompts/vfs-paths-edit2.txt"
+      ],
+      "retained_variants": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-d10b56e2-5403-4ace-9579-d0e7fc47dbc2.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-f1b40c73-b028-42ad-9468-ecdfd1bf1b91.png"
+      ],
+      "qa": {
+        "status": "passed",
+        "method": "visual inspection against actual source and six-panel specification",
+        "checked": [
+          "六栏与中文可读",
+          "单根卷，cwd在系统调用层",
+          "目录不存点/双点",
+          "raw磁盘目录项64B，公开大小另取inode",
+          "next/rewind游标且非稳定快照",
+          "按inode刷新读取且offset推进",
+          "没有rename"
+        ]
+      },
+      "width": 1672,
+      "height": 941,
+      "sha256": "285ccb4a20ff8aa4e75ddbe922e2c4d9d006e43d9253ee09b23d00b6415acefa",
+      "source_sha256": "285ccb4a20ff8aa4e75ddbe922e2c4d9d006e43d9253ee09b23d00b6415acefa",
+      "source_target_sha_match": true
+    },
+    {
+      "name": "shell-parser",
+      "code": "Q",
+      "source": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-98c43c33-43cf-441a-89cc-91b902244807.png",
+      "target": "docs/illustrated/images/shell-parser.png",
+      "tool": "tools.image_gen__imagegen",
+      "mode": "generate + imagegen edits",
+      "transparent_background": false,
+      "prompts": [
+        "docs/illustrated/prompts/shell-parser.txt",
+        "docs/illustrated/prompts/shell-parser-edit.txt"
+      ],
+      "retained_variants": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-0cd695e1-c6ef-47ee-ba06-9716aa493b60.png"
+      ],
+      "qa": {
+        "status": "passed",
+        "method": "visual inspection against actual source and six-panel specification",
+        "checked": [
+          "六栏与中文可读",
+          "交互255B与解析接口512B分开",
+          "低控制字节拒绝但Tab允许",
+          "PWD与问号延迟展开，PATH固定/bin",
+          "单引号不展开且不重新分词",
+          "整行解析失败不执行",
+          "8总命令/4管道阶段/8参数/63B词，不是完整Bash"
+        ]
+      },
+      "width": 1672,
+      "height": 941,
+      "sha256": "23e57904dce22531cff148588fe455ebe0319d289689d1271bd9aa6c931c425e",
+      "source_sha256": "23e57904dce22531cff148588fe455ebe0319d289689d1271bd9aa6c931c425e",
+      "source_target_sha_match": true
+    },
+    {
+      "name": "shell-pipeline",
+      "code": "X",
+      "source": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-429d275d-c8fd-48aa-b299-10fa57fa44a6.png",
+      "target": "docs/illustrated/images/shell-pipeline.png",
+      "tool": "tools.image_gen__imagegen",
+      "mode": "generate + imagegen edits",
+      "transparent_background": false,
+      "prompts": [
+        "docs/illustrated/prompts/shell-pipeline.txt",
+        "docs/illustrated/prompts/shell-pipeline-edit.txt"
+      ],
+      "retained_variants": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-f9bd4d57-185a-47b4-81bb-bfc3b8b903de.png"
+      ],
+      "qa": {
+        "status": "passed",
+        "method": "visual inspection against actual source and six-panel specification",
+        "checked": [
+          "六栏与中文可读",
+          "路径存在/普通文件检查，不实现mode权限校验；ELF校验在spawn",
+          "dup/spawn共享打开对象",
+          "重定向覆盖管道，子关闭额外FD",
+          "父恢复流并关临时端点",
+          "最后写端对象释放且读尽才EOF",
+          "等待所有并返回末阶段状态；4后台槽",
+          "准备失败不恢复已截断文件"
+        ]
+      },
+      "width": 1672,
+      "height": 941,
+      "sha256": "8633d66c052fb4a081913de3a2f20b4e980e78a603cd46207c142863f2581fdc",
+      "source_sha256": "8633d66c052fb4a081913de3a2f20b4e980e78a603cd46207c142863f2581fdc",
+      "source_target_sha_match": true
+    },
+    {
+      "name": "user-tools",
+      "code": "U",
+      "source": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-7862e7d0-cd2e-44b8-b0e8-485864b92caf.png",
+      "target": "docs/illustrated/images/user-tools.png",
+      "tool": "tools.image_gen__imagegen",
+      "mode": "generate + imagegen edits",
+      "transparent_background": false,
+      "prompts": [
+        "docs/illustrated/prompts/user-tools.txt",
+        "docs/illustrated/prompts/user-tools-edit.txt"
+      ],
+      "retained_variants": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-d5a5b7df-3b24-48a2-8542-c866c7db0318.png"
+      ],
+      "qa": {
+        "status": "passed",
+        "method": "visual inspection against actual source and six-panel specification",
+        "checked": [
+          "六栏与中文可读",
+          "argv/stdin与文件流分开",
+          "TRUNC再write不同于一次replace",
+          "用户多核计算并行，内核BKL串行",
+          "UDP0/1/257/1200B真实包，0B成功，无TCP",
+          "badptr返回错误，fault/ud2/页保护故障进程退出",
+          "NX需要CPU支持"
+        ]
+      },
+      "width": 1672,
+      "height": 941,
+      "sha256": "15a4a120c14392c6d1671d6a58d1a97f44c8f1bec639f37da1bffc714e9011cf",
+      "source_sha256": "15a4a120c14392c6d1671d6a58d1a97f44c8f1bec639f37da1bffc714e9011cf",
+      "source_target_sha_match": true
+    },
+    {
+      "name": "user-editor",
+      "code": "E",
+      "source": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-3cc0019b-679c-4c0d-884b-c829d9666b1f.png",
+      "target": "docs/illustrated/images/user-editor.png",
+      "tool": "tools.image_gen__imagegen",
+      "mode": "generate + imagegen edits",
+      "transparent_background": false,
+      "prompts": [
+        "docs/illustrated/prompts/user-editor.txt",
+        "docs/illustrated/prompts/user-editor-edit.txt",
+        "docs/illustrated/prompts/user-editor-edit2.txt"
+      ],
+      "retained_variants": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-54654980-2123-43f6-9951-d2384adbd3b9.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-55327294-3ff1-4ad4-9db9-08bed4ca5345.png"
+      ],
+      "qa": {
+        "status": "passed",
+        "method": "visual inspection against actual source and six-panel specification",
+        "checked": [
+          "六栏与中文可读",
+          "完整加载直到EOF，32KiB/二进制拒绝，无截断保存",
+          "命令512B，超长吞到回车，实际delete 2",
+          "ASCII abc换行1B后下一行偏移4",
+          "仅插入reserve；成功修改dirty",
+          "replace与sync独立失败分支保持内存编辑/dirty",
+          "quit未保存回编辑不释放，真实退出才释放Buffer",
+          "quit不自动保存，无undo/断电日志"
+        ]
+      },
+      "width": 1672,
+      "height": 941,
+      "sha256": "f0cecb85cc599ef3a4b932ef53c618ad08ba38b99de0d8dfdd0558df827a918a",
+      "source_sha256": "f0cecb85cc599ef3a4b932ef53c618ad08ba38b99de0d8dfdd0558df827a918a",
+      "source_target_sha_match": true
+    }
+  ]
+}

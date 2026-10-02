@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "purpose": "162 device and I/O function definitions explained through five shared mechanism diagrams",
+  "generator": "built-in image_gen.imagegen",
+  "skill": "/Users/zhuzhumingyang/.codex/skills/.system/imagegen/SKILL.md",
+  "output_policy": "Selected generated PNG files copied byte-for-byte into the repository; all original generated images remain in place.",
+  "qa_method": "Visual inspection of each generatedImage return against audited source and figure specifications; SHA256 source-copy equality and dimensions checked.",
+  "figures": [
+    {
+      "name": "console-input",
+      "source_output": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-03006e24-b6ba-4553-93c8-0f008c545c3a.png",
+      "target": "docs/illustrated/images/console-input.png",
+      "prompt": "docs/illustrated/prompts/console-input.txt",
+      "width": 1672,
+      "height": 941,
+      "qa_status": "passed",
+      "qa_checks": [
+        "Input sources: PS/2 IRQ1 and COM IRQ4 feed the same event queue",
+        "256 event records distinguished from ASCII character count",
+        "BKL + CLI check-register-recheck-block protocol; wake does not consume",
+        "Insert x at a|bc produces ax|bc",
+        "80x25 VGA 16-bit character/color cells and scrolling",
+        "Overflow drains to Enter and rejects the whole line; ASCII-only editor"
+      ],
+      "sha256": "0a03c75c8f513e9a64227a18be0841d41f2e7b90b7ac50a79a9d095cb9648e14"
+    },
+    {
+      "name": "interrupt-devices",
+      "source_output": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-5e09d82f-602c-461e-aef8-9ea911df8e6b.png",
+      "target": "docs/illustrated/images/interrupt-devices.png",
+      "prompt": "docs/illustrated/prompts/interrupt-devices.txt",
+      "width": 1672,
+      "height": 941,
+      "qa_status": "passed_after_three_targeted_imagegen_edits",
+      "qa_checks": [
+        "PCI address/select-data split and 16-bit command writes avoid status W1C",
+        "PIC masks: 0 allow, 1 block; slave IRQs route via master IRQ2",
+        "Only default100Hz output leads to BSP global tick; independent AP LAPIC has no PIT input arrow",
+        "Device acknowledgement explicitly conditional; slave EOI when applicable, then master EOI, then possible stack switch",
+        "Formal threads block/sleep, early no-thread path alone uses bare HLT",
+        "CLI is CPU-local; bounded polling is not a precise wall-clock timeout"
+      ],
+      "edit_history": [
+        {
+          "prompt": "docs/illustrated/prompts/interrupt-devices-edit.txt",
+          "input": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-6fd8408d-24a7-4d88-adb6-dce52dcf26f4.png",
+          "output": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-2624d436-6c78-4625-9d80-56df3ad07658.png",
+          "reason": "Initial generation implied a PIT input branch into both BSP and AP; first local edit separated AP but retained a wrong branch at raw1193182Hz."
+        },
+        {
+          "prompt": "docs/illustrated/prompts/interrupt-devices-edit2.txt",
+          "input": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-2624d436-6c78-4625-9d80-56df3ad07658.png",
+          "output": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-bf8152b9-faf7-45fe-a895-faa170841084.png",
+          "reason": "Connected only default100Hz output to BSP globaltick and retained AP independent timer."
+        },
+        {
+          "prompt": "docs/illustrated/prompts/interrupt-devices-edit3.txt",
+          "input": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-bf8152b9-faf7-45fe-a895-faa170841084.png",
+          "output": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-5e09d82f-602c-461e-aef8-9ea911df8e6b.png",
+          "reason": "Changed panel(d) acknowledgement to conditional device status read, because PIT handler does not read-to-clear a device register."
+        }
+      ],
+      "sha256": "be05452824ec5039f07669f7f981d3dcbaa9cfc77e83c9d88283a5f4af43e6c0"
+    },
+    {
+      "name": "storage-io",
+      "source_output": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-981228cb-84f0-4bc2-9838-eba9bb79820a.png",
+      "target": "docs/illustrated/images/storage-io.png",
+      "prompt": "docs/illustrated/prompts/storage-io.txt",
+      "width": 1672,
+      "height": 941,
+      "qa_status": "passed",
+      "qa_checks": [
+        "BlockDevice read/write/flush dispatch has RAM BootVolume and ATA PIO backends",
+        "Boot RAM writes copy only RAM and do not persist across restart",
+        "Primary-master single-sector LBA28 commands; nIEN disables IDE IRQ",
+        "256 16-bit data words make one 512B sector; PIO is CPU copying",
+        "FLUSH CACHE 0xE7 is a device durability request, not file-system power-failure atomicity",
+        "Reject ATAPI, no-LBA, non512B; maximum2^28 sectors and one-million status polls"
+      ],
+      "sha256": "1b3d4430dd15a053aad3f00cb671739bc7c2b69b299b142d52892f54dffd952b"
+    },
+    {
+      "name": "virtio-dma",
+      "source_output": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-ef4f3705-1afa-4f47-b718-9200bba804f1.png",
+      "target": "docs/illustrated/images/virtio-dma.png",
+      "prompt": "docs/illustrated/prompts/virtio-dma.txt",
+      "width": 1672,
+      "height": 941,
+      "qa_status": "passed",
+      "qa_checks": [
+        "Ring uses physically continuous2-3 pages, packet buffers use independent pages",
+        "Two descriptors:10B header at offset0, payload at64;54B gap not transmitted",
+        "64 descriptors give32frames,256 descriptors capped64frames",
+        "Descriptor/data/avail slot before MFENCE/avail index/MFENCE/notify",
+        "Used index before LFENCE/content, TX clears in-flight, RX synchronous callback then requeues",
+        "BSP single hardware RX queue budget32; AP user UDP uses software inbox",
+        "Failure retains possibly DMA-active pages; initialization frees only after confirmed device reset"
+      ],
+      "sha256": "71d515d901bd5c444fc9c29bc1ce33b81e19f4ca3016625ff281fa1400000126"
+    },
+    {
+      "name": "logging-observability",
+      "source_output": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-e0b60e0c-337c-469c-b3db-03252641106c.png",
+      "target": "docs/illustrated/images/logging-observability.png",
+      "prompt": "docs/illustrated/prompts/logging-observability.txt",
+      "width": 1672,
+      "height": 941,
+      "qa_status": "passed_after_one_targeted_imagegen_edit",
+      "qa_checks": [
+        "128B record structure sums exact field widths including reserved4B",
+        "256 slots;sequence starts1,slot=(sequence-1)%256",
+        "Write257 overwrites1 and retained window becomes2..257",
+        "Incremental reads copy retained records in sequence order within capacity; overwritten history unrecoverable",
+        "Writer fixed-size, no allocation, no blocking and no serial printing; CLI plus caller-owned BKL",
+        "Performance ABIv1 is128B,rawTSC not calibrated nanoseconds,onlineCPUcount not speedup",
+        "Freestanding memory routines bytewise O(N); memcpy requires no overlap; memmove handles direction",
+        "Payload capacity is explicitly15/87 bytes plus NUL, not15/87 Unicode characters"
+      ],
+      "sha256": "66abd9ec935b9586546871958ee541d9157bec4af03089057d4e31c7472c88fb",
+      "edit_history": [
+        {
+          "prompt": "docs/illustrated/prompts/logging-observability-edit.txt",
+          "input": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-7051189e-c445-4ea6-8677-b9b6c15138f3.png",
+          "output": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-e0b60e0c-337c-469c-b3db-03252641106c.png",
+          "reason": "Changed 15/87 character wording to15/87 bytes; fixed char arrays must not be interpreted as a Unicode character-count capacity."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+Use case: text-localization / scientific-educational correction.
+Edit ONLY panel (a), the upper-left blue panel, of the provided OS64 topology infographic. Keep the other five panels (b)-(f) completely unchanged: same exact labels, arrows, typography, colors, boxes, layout, title, dimensions and white background. The original panel (a) includes hallucinated and incorrect EBDA addresses; replace those few right-hand annotations with the exact correct wording below, preserving readable spacing.
+
+In the first blue memory row, keep the left text “EBDA 前 1 KiB”. Remove all existing right-side content “0x00000 – 0x003FF” and “通常在 0x04000 以下”; replace with two lines:
+“基址来自 BIOS 0x40E”
+“0x80000 ≤ 基址 < 0xA0000”
+These are base-address acceptance limits, NOT a statement that EBDA starts at address 0. Do NOT reintroduce any absolute EBDA range such as 0x00000..0x003FF. This actual code accepts EBDA only in the stated bounds and scans its first 1KiB.
+
+In the third orange memory row, keep the left text “常规内存末 1 KiB（仅 MP）”. Replace the right-hand explanatory text with:
+“大小来自 BIOS 0x413”
+“仅 MP 查 _MP_”
+It means the end of conventional memory, not the end of all physical RAM or a memory-table boundary.
+
+Keep second row “BIOS 0xE0000 – 0x100000” and its “0xE0000 – 0xFFFFF / 128 KiB” correct half-open versus inclusive explanation unchanged.
+Keep all other existing text in (a), including “先 ACPI，后 MP”, “firmware_find_cpu_topology()” and “每 16 字节试候选，读取必须有界。” unchanged.
+Do not add new addresses, captions, figures or decorative items. This is a precise factual text correction, not a redesign. Keep six-panel raster educational infographic composition and crisp Chinese lettering.

@@ -1,0 +1,60 @@
+Use case: scientific-educational
+Asset type: original raster Chinese OS tutorial diagram for Markdown.
+Create a precise Chinese landscape 3:2 six-panel information sheet, white background, large bold black Chinese serif title, subtitle, exactly 3 columns by 2 rows rounded panels with circular a–f badges. Pastel blue green orange purple pink blue fills and crisp colored borders. Elegant textbook style like a Chinese Redis Set educational overview: concise readable Chinese, numbered sequences, arrows, small tables, meaningful resource boxes, no photos, no watermark. Long exact function names belong in Markdown, not tiny type in diagram.
+Title: “进程退出与回收：结束了，也不能立刻拆栈”
+Subtitle: “当前实现 · 退出状态 · fd / UDP 清理 · wait / reap · 全 CPU 检查”
+
+(a) top-left blue “创建：逐层装配”
+Exact numbered flow:
+“PCB”
+“私有页表”
+“fd / cwd”
+“ELF”
+“用户栈 + 保护页”
+“TCB → Ready”
+A side branch from the flow to “任一步失败 → discard 未运行对象”.
+Bottom note “用户栈保护页不映射”.
+
+(b) top-middle green “exit 有两段路”
+Exact sequential flow:
+“ring3 exit”
+“保存 exit_code”
+“回到 user_mode_enter 内核返回点”
+“线程 Finished，减少 live”
+“最后一条线程结束 → 进程 Exited”
+Bottom red note: “不能在当前栈上直接 free 当前栈”.
+Make clear exit prepares completion; does not immediately free PCB or stack.
+
+(c) top-right orange “先关闭引用，再留退出码”
+Small flow: “最后线程退出” → “close 全部 fd / 所属 UDP”.
+Then arrows to two resource effects: “管道读者看到 EOF” and “事件等待者可被唤醒”.
+A distinct box “保留 PCB 与退出码，供父进程 wait”.
+Bottom note “用户故障：退出码 = 128 + 异常号”.
+Correctly say closing fd references enables EOF when last writer closes, add small label “最后写端关闭时”. No promise every close always triggers EOF.
+
+(d) bottom-left purple “wait 与 reap 分工”
+Draw a two-column comparison:
+left “wait” numbered “检查父子关系” → “未退出：登记 PID / Blocked” → “exit 唤醒，重新检查” → “读取退出码”.
+right “reap” numbered “确认 Exited / live=0” → “全核安全检查” → “真正释放资源”.
+A strong bottom red note “wait 只读结果；reap 才回收”.
+No arrow from wait directly freeing stack.
+
+(e) bottom-middle pink “回收前，检查所有 CPU”
+Show CPU0 current=其他线程, CPU1 current=idle, CPU2 current=目标线程, CPU3 current=其他线程 in four readable boxes. Red highlight CPU2 and an X “仍被任何 CPU 使用 → 禁止回收”.
+Then a separate labelled success scenario “所有 CPU 都已离开目标” leading to a 4-step green flow:
+“删除目标队列引用”
+“释放线程栈”
+“释放用户页 / 页表”
+“清 PCB”
+Never draw free while CPU2 still references target.
+Bottom note “Exited 不等于已离开退出栈”.
+
+(f) bottom-right blue “孤儿与整个调度器”
+Two short blocks:
+“父进程退出” → “子进程 parent=0 / auto_reap=true”
+“孤儿已 Exited + 全核无人使用” → “安全点自动回收”
+Another yellow box:
+“destroy 要求：所有 CPU current=null；live / sleeping / blocked=0”
+Bottom note “AP 常驻 idle：不能随意运行中销毁”.
+Footer across sheet: “记忆：先留下退出结果；切离当前现场，才能释放内存。”
+Accuracy constraints: current fixed CPU binding, no migration/shared user threads/lock-free/hotplug. Check all CPUs, not only CPU0. wait itself does not reap. Last thread exit closes resource references immediately so pipe EOF need not wait for parental reaping. Preserve accurate arrow direction and distinguish rejected unsafe state from later safe state. Chinese legible, no clutter.

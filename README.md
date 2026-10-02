@@ -12,6 +12,8 @@
 
 [源码阅读地图](docs/BEGINNER_SOURCE_MAP.md) 帮你定位文件；[文档索引](docs/README.md) 区分当前说明与历史专题。旧教程正文中的“当前”“这一轮”指对应开发阶段，不能作为最新功能和地址布局清单。
 
+**[逐函数配图教程](docs/illustrated/README.md)** 按六栏图解讲机制，再逐个解释函数的输入、步骤、失败边界和代价。[全函数索引](docs/illustrated/FUNCTION_INDEX.md) 可从函数名跳到对应源码与图块；先实验 [多进程分块归约](docs/illustrated/PARALLEL_REDUCTION.md)，再读启动、调度、通信和其他模块。
+
 ## 快速启动
 
 在仓库根目录执行：
@@ -93,6 +95,7 @@ run /bin/fp_test
 smp
 run /bin/smp_test
 run /bin/coop_test
+run /bin/parallel_reduce 4 64 1048576
 run /bin/bench 8 20000000
 perf
 dmesg
@@ -153,6 +156,7 @@ make test
 - 固件拓扑 sanitizer；1/2/4 核真实 AP 运行、十二个用户进程计算/私有堆/定时唤醒/故障回收、每核浮点隔离。
 - `make test-scheduler-host` 直接测试生产调度队列 helper 的保序、核心归属、固定绑定和时钟域/期限边界；ASan/UBSan 检查内存行为，不执行真实 CR3、CLI、IPI 或汇编切栈。
 - 1/2/4 核约 17 MiB 多生产者管道，逐记录/逐字节/计算结果校验、满管道关闭唤醒及重复资源回收。
+- `make test-parallel-reduction` 验证多消费者任务池：不均匀区间、空块、工人数超过任务数、完整64位结果、重复回收与错误参数。
 - QMP 真实键盘输入执行用户程序，检查参数、进程创建/等待、错误指针、故障隔离、睡眠与计算程序。
 - 连续运行 55 次程序，比较空闲物理页数量，检查回收。
 - 三次冷启动，检查保存文件、跨间接块内容和删除结果。

@@ -1,0 +1,32 @@
+Create a polished Chinese operating-system textbook infographic, a single wide landscape raster canvas approximately 16:9 (for example 1792x1024). Pure white outer background, centered large black Chinese serif title and smaller subtitle. Six distinct rounded panels in 3 columns by 2 rows, letter circles (a)(b)(c)(d)(e)(f), alternating very pale blue, green, orange, lavender, pink, sky-blue washes with thin saturated colored borders. Neat typesetting, large readable Simplified Chinese, short sentences, crisp flat technical diagrams, simple icons, numbered steps, boxes and directional arrows. Like an academic teaching comparison sheet, extremely careful factual arrows and quantities. No photorealism, no gradients obscuring text, no watermark, no arbitrary filler or additional features. Each panel has a short title, illustration and concise explanation; text given below is the canonical content. Avoid long function identifiers and code listings. Do not add modern features that are not in the requested text. Preserve case of ABI names and exact numbers. 
+Main title "OS64 系统调用：跨过权限边界再办事"
+Subtitle "int 0x80 · 寄存器 ABI · 用户指针校验 · 阻塞与返回"
+
+(a) blue "五个参数，一个有符号结果". Show register table:
+"RAX | 系统调用编号"
+"RDI / RSI / RDX / RCX / R8 | 参数 1 / 2 / 3 / 4 / 5"
+"返回 RAX | 按 signed 64 读结果".
+Arrow user wrapper -> "int 0x80" -> kernel dispatcher -> returned signed result. Banner "当前 ABI 不是 Linux syscall 指令 ABI。"
+
+(b) green "保存现场，控制 IRQ 与 BKL". Ordered clear steps "ring3" -> "本核 TSS.RSP0" -> "完整现场 + BKL" -> "校验 / 服务" -> "恢复返回". Draw an IF=0 label at entry and returnedrestorestage. Short notes "interrupt gate 令 IF = 0" and "原 user IF = 1，服务期间才开本核 IRQ". Banner "CLI 管本核中断；BKL 才保护跨核共享。"
+
+(c) orange "查整段，也查读写方向". Two horizontal rows:
+"read：内核写输出" -> "用户页要 W"
+"write：内核读输入" -> "用户页要可读".
+Below show buffer crossing 3 small pages, check EACH with "四层 Present / U；写还要 W". Limits compact "普通传输 ≤ 69632 B" "字符串 ≤ 63 B + NUL" "UDP ≤ 1200 B". Banner "把整数强转成指针，不会让它可信。"
+
+(d) lavender "路径与 FD：先统一表示". Example "/a/b + ../c" -> "规范路径 /a/c". Notes "相对路径从 cwd 开始" "/ . .. 归一化；根不向上". FD two-row table:
+"公开 0..2 标准 | 内部 16..18"
+"公开 3..18 普通 | 内部 0..15".
+Banner "公开 FD 与内部 slot 不相等。"
+
+(e) pink "等待事件：登记后阻塞，恢复重查". Ordered boxes "登记等待者" -> "Blocked / 切栈" -> "事件唤醒" -> "恢复后重查". Small event labels "stdin / pipe / UDP / 子进程退出". Separate precise lower sequence "sys_waitpid" -> "wait 助手" -> "reap 助手" -> "返回 PID". Banner "公开 waitpid 成功，目标已回收。"
+
+(f) sky-blue "返回值不能只套一张表". Three cards:
+"普通状态：0 成功；-1..-7 错误"
+"UDP：独立约定；0 可为零长度包"
+"brk：失败返回旧 break".
+Small note "服务等待时间由事件和调度决定". Banner "包装是常数成本；服务可能阻塞。"
+
+Footer "图 S · 保存、校验、分发、等待与回收，分别看清。"
+

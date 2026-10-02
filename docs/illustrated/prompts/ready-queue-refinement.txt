@@ -1,0 +1,6 @@
+Edit this generated tutorial infographic while preserving the overall design, all panel positions, pale color palette, arrows, correct example [A1,B0,C1] -> selected B0 and remaining [A1,C1], and all other existing content. Make only these accuracy fixes:
+1. In the purple lower-left panel, replace the two small introductory sentences below its heading with the exact sentence "按开始时的条目数完整扫描；选中后仍扫描剩余条目。". The function does NOT stop scanning at the first eligible task.
+2. In the orange upper-right panel the queue cell currently labelled TCB must be labelled "slot" instead; the queue stores an 8-bit thread slot number, which locates a TCB. Keep or add one short caption "槽号定位 TCB". In pink lower-middle the enqueued queue token currently labelled TCB should likewise be labelled "slot".
+3. Change the six large circular panel badges from 1,2,3,4,5,6 to a,b,c,d,e,f respectively, so the Markdown can refer to the panels (a)–(f). Keep the small numbered execution-step badges as numbers.
+4. In lower-right table change row "完整扫描" right cell to "固定上限；当前实现最坏 O(Q·T)", and row "queued 标志" right cell stays "防止重复入队". Use small but legible math. Here Q is the original queue length and T is the number of thread slots; do not claim O(Q) for the entire helper.
+No other changes. Chinese text and all identifiers must remain legible and correctly spelled.

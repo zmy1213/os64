@@ -1,0 +1,103 @@
+{
+  "source_commit": "67efd0d008e0b58b31c89ad4ecfbab502416e087",
+  "tool": "built-in imagegen",
+  "originals_preserved": true,
+  "no_programmatic_drawing_or_raster_editing": true,
+  "assets": [
+    {
+      "name": "pipe-cooperation",
+      "source": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-030dc8bd-33b3-4847-9770-e41d555c07ef.png",
+      "target": "docs/illustrated/images/pipe-cooperation.png",
+      "tool": "tools.image_gen__imagegen",
+      "mode": "generate + imagegen edits",
+      "transparent_background": false,
+      "width": 1536,
+      "height": 1024,
+      "sha256": "a0cc02f65c42ca57edd3772c2c921a17df2f3d1ceab48861be0af21fc2790353",
+      "prompts": [
+        "docs/illustrated/prompts/pipe-cooperation.txt",
+        "docs/illustrated/prompts/pipe-cooperation-edit.txt",
+        "docs/illustrated/prompts/pipe-cooperation-title-edit.txt"
+      ],
+      "retained_variants": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-d95ba72f-af5f-45fb-bbe5-1ba43de7ff4b.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-6e8ee12f-edee-4abc-827f-918324e85499.png"
+      ],
+      "qa": {
+        "status": "passed",
+        "method": "visual inspection against source and six-panel specification",
+        "checked": [
+          "六栏与中文可读",
+          "进程标签独立，共享对象references增加",
+          "一次小write最多4096B",
+          "4096=777+3319，后续read才完整",
+          "空队列且最后写端消失才EOF",
+          "无读端写者唤醒后EPIPE=-7"
+        ]
+      }
+    },
+    {
+      "name": "udp-wait",
+      "source": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-0a66629b-082d-4263-8f5d-1f9689cd8862.png",
+      "target": "docs/illustrated/images/udp-wait.png",
+      "tool": "tools.image_gen__imagegen",
+      "mode": "generate",
+      "transparent_background": false,
+      "width": 1536,
+      "height": 1024,
+      "sha256": "acb184e1541a822cd92015c9c8567f4e875e069c37b4350d4b53db6f398f537e",
+      "prompts": [
+        "docs/illustrated/prompts/udp-wait.txt"
+      ],
+      "retained_variants": [],
+      "qa": {
+        "status": "passed",
+        "method": "visual inspection against source and six-panel specification",
+        "checked": [
+          "六栏与中文可读",
+          "generation与PID核对",
+          "25ms向上取整3tick，原deadline不延长",
+          "登记thread/tid与block同保护边界",
+          "BSP单RX，AP消费inbox",
+          "输出映射重验，容量小保留包",
+          "有包优先，0空包成功，关闭与故障唤醒"
+        ]
+      }
+    },
+    {
+      "name": "parallel-workers",
+      "source": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-43bde931-8c4f-40c6-9a0b-0851dc7a7a23.png",
+      "target": "docs/illustrated/images/parallel-workers.png",
+      "tool": "tools.image_gen__imagegen",
+      "mode": "generate + imagegen edits",
+      "transparent_background": false,
+      "width": 1536,
+      "height": 1024,
+      "sha256": "05d9472e0205703521c477aa5d85f525e08a0d48419a6a6bb46a1ea578f3557a",
+      "prompts": [
+        "docs/illustrated/prompts/parallel-workers.txt",
+        "docs/illustrated/prompts/parallel-workers-edit.txt",
+        "docs/illustrated/prompts/parallel-workers-boundary-edit.txt"
+      ],
+      "retained_variants": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-0ae11583-1973-4ebb-90db-af8b8e3aae6c.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-b83e5cfd-9bbb-40a0-80d8-60d0ffb3a4b9.png"
+      ],
+      "qa": {
+        "status": "passed",
+        "method": "visual inspection against source and six-panel specification",
+        "checked": [
+          "六栏与中文可读",
+          "私有用户堆栈与共享内核对象分开",
+          "12worker分时使用最多4核，无迁移",
+          "用户并行，单BKL内核串行",
+          "12×6×2000万，64KiB与40B报告",
+          "最多4096B含边界；777B分次读取",
+          "计算者0…3个，gate只放行receiver",
+          "BSP共享inbox，接收者只验证UDP",
+          "user_ticks包括内核服务，不声称最快"
+        ]
+      }
+    }
+  ]
+}

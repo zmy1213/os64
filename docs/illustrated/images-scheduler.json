@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "module": "kernel/task/scheduler.cpp + kernel/task/context_switch.asm",
+  "source_revision": "67efd0d008e0b58b31c89ad4ecfbab502416e087",
+  "tool": "image_gen.imagegen",
+  "mode": "built-in",
+  "raster_generation_only": true,
+  "code_drawn_images": false,
+  "source_images_retained": true,
+  "document": "docs/illustrated/SCHEDULER_FUNCTIONS.md",
+  "ready_queue_note": "ready-queue.png 由根代理生成并单独登记；本清单记录本代理生成的三张图。",
+  "images": [
+    {
+      "name": "context-switch",
+      "destination": "docs/illustrated/images/context-switch.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-323653f1-3157-4e3d-8a71-52a4c11f1f99.png",
+      "prompt_files": [
+        "docs/illustrated/prompts/context-switch.txt"
+      ],
+      "sha256": "015cdd6daea8ef836ab1a0afb6f537fe4de4a545527d5ea0ff9841b3757677d8",
+      "width": 1536,
+      "height": 1024,
+      "visual_qa": {
+        "status": "passed",
+        "checks": [
+          "六栏 a..f，与 Markdown C 图块映射一致",
+          "current/TSS 发布到旧 RSP 保存期间连续持 BKL + CLI",
+          "两根 32 KiB 内核栈与 64 KiB 用户栈区分",
+          "完整用户 iret 帧 IF=0 放锁；idle 稳定 current/RSP 后放锁",
+          "未宣称用户线程迁移、无锁或 AVX/XSAVE"
+        ]
+      }
+    },
+    {
+      "name": "sleep-wakeup",
+      "destination": "docs/illustrated/images/sleep-wakeup.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-3599755f-530f-4ab0-8cf7-c431f42eb264.png",
+      "earlier_generated_paths": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-2f4047d7-a97c-4acc-8b29-6e7e608754c7.png"
+      ],
+      "prompt_files": [
+        "docs/illustrated/prompts/sleep-wakeup.txt",
+        "docs/illustrated/prompts/sleep-wakeup-edit.txt"
+      ],
+      "sha256": "1c4bcda589023c0619ab0fa003f64b219a688e5b22887cd850ad29ce2b0b90b4",
+      "width": 1536,
+      "height": 1024,
+      "visual_qa": {
+        "status": "passed_after_imagegen_edit",
+        "checks": [
+          "六栏 a..f，与 Markdown W 图块映射一致",
+          "Sleeping / Blocked 出发的事件箭头只流向 Ready",
+          "PIT now=100、deadline=105、scheduler total=19，wake_tick=24",
+          "BSP 独占全局时钟，AP 只推进各自记账/时间片",
+          "登记/切栈持续 BKL + CLI，唤醒后重新检查",
+          "唤醒回 assigned CPU，非线程迁移；user_ticks 范围与源码一致"
+        ],
+        "repair": "首版 W(a) 的事件箭头误指向 Sleeping/Blocked；通过 imagegen 定向编辑后修正，未用代码重绘。"
+      }
+    },
+    {
+      "name": "process-reaping",
+      "destination": "docs/illustrated/images/process-reaping.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-18371168-fc61-4be6-a45a-580b4fb8d9e0.png",
+      "earlier_generated_paths": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-1489d7b6-da98-49f6-b605-b78d3be003a5.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-45b28822-99a8-4edc-9ec3-4479a1cbd0be.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-132ae167-ad98-4994-8c89-e2b6f6e2fd08.png"
+      ],
+      "prompt_files": [
+        "docs/illustrated/prompts/process-reaping.txt",
+        "docs/illustrated/prompts/process-reaping-edit.txt",
+        "docs/illustrated/prompts/process-reaping-edit2.txt",
+        "docs/illustrated/prompts/process-reaping-edit3.txt"
+      ],
+      "sha256": "38a280deba0ebb06d0ed4a8f6b3d38284927c00886f3b50e3d8c34e5283b6fde",
+      "width": 1536,
+      "height": 1024,
+      "visual_qa": {
+        "status": "passed_after_imagegen_edits",
+        "checks": [
+          "六栏 a..f，与 Markdown P 图块映射一致",
+          "exit 恢复原内核栈/CR3，继续线程退出，未画返回用户态",
+          "全 CPU current 包含 CPU2 仍使用目标时禁止释放",
+          "先切离退出现场再释放线程栈/用户页表",
+          "EOF 明确要求最后写端关闭",
+          "异常码依据 CPU vector：页错误 14 → 142",
+          "没有未实现 poll/epoll/select 宣称",
+          "明确 scheduler_wait_process 助手读取，reap 助手回收；公开 sys_waitpid 会串联 wait 与 reap"
+        ],
+        "repair": "通过 imagegen 编辑移除生成器自加的 Linux signal139、poll/select 和错误出口说明；再次编辑修复一段中文乱码。原始版本均保留。 第三次定点编辑纠正公开 waitpid 与内部 wait helper 的措辞歧义，其他五栏保持原样。"
+      }
+    }
+  ]
+}

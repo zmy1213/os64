@@ -1,7 +1,8 @@
 #ifndef OS64_PERF_HPP
 #define OS64_PERF_HPP
 #include <stdint.h>
-// All fields are uint64_t, ABI v1; snapshots are coherent on the single CPU.
+// All fields are uint64_t, ABI v1. Runtime callers hold the kernel gate;
+// performance_snapshot also preserves IF while guarding local interrupts.
 struct PerformanceSnapshot {
   uint64_t abi_version;
   uint64_t ticks;

@@ -1,2 +1,5 @@
 # Preserve byte-for-byte serial captures, including CRLF and terminal escapes.
 docs/measurements/**/*.log -diff -text
+docs/illustrated/validation/*.log -diff -text
+# Exact imagegen prompt captures intentionally retain their original whitespace.
+docs/illustrated/prompts/*.txt whitespace=-blank-at-eol,-blank-at-eof

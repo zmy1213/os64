@@ -1,0 +1,6 @@
+Edit target: the attached existing Chinese six-panel sleep/wakeup infographic.
+Change ONLY panel (a), top-left blue panel, the event/wakeup arrow directions. Preserve every title, badge, label, box, font, color and layout outside that arrow correction; leave panels (b)(c)(d)(e)(f) and footer completely unchanged.
+In panel (a) the current right-hand event bus incorrectly has leftward arrowheads into Sleeping and Blocked. Delete those incorrect Sleeping/Blocked arrowheads and their event-bus links. Keep the left-side Running→Ready yield, Running→Sleeping sleep, Running→Blocked waiting arrows unchanged.
+Correct wakeup path: from the RIGHT edge of Sleeping draw an outgoing arrow RIGHT to a shared vertical bus; from the RIGHT edge of Blocked draw an outgoing arrow RIGHT to the same bus. The bus runs UP and then an arrow LEFT enters the RIGHT edge of Ready. Label the shared bus “事件或超时”. Thus the only destination of the event/wakeup path is Ready, with its sources Sleeping and Blocked. No event arrow may enter Sleeping or Blocked.
+Retain exact (a) bottom note: “wake = 可以排队，不是立刻运行”.
+Critical: all mathematical numbers in panel(c) stay 100,105,19,5,24; all other information and borders unchanged. Return the complete full-size infographic, not a crop.

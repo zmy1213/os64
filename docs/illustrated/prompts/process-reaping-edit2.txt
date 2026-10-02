@@ -1,0 +1,5 @@
+Edit the attached full Chinese process-exit infographic. Change ONLY the small yellow explanatory box immediately to the right of green panel (b) step 3. Its first line has corrupted Chinese. Replace the full box text with these two simple exact readable lines:
+“恢复内核栈与 CR3”
+“继续完成线程退出”
+Use the same black Chinese font, same yellow box, same size and same position. No corrupted glyphs.
+Preserve every other word, number, arrow, panel and layout exactly, including the main step3 box “回到 user_mode_enter 内核返回点”, the corrected page-fault code “页错误 14 → 142”, all CPU safety checks and wait/reap distinction. Return the complete uncropped infographic.

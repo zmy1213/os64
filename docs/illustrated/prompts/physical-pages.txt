@@ -1,0 +1,25 @@
+Create a polished Chinese operating-system textbook infographic, a single wide landscape raster canvas approximately 16:9 (for example 1792x1024). Pure white outer background, centered large black Chinese serif title and smaller subtitle. Six distinct rounded panels in 3 columns by 2 rows, letter circles (a)(b)(c)(d)(e)(f), alternating very pale blue, green, orange, lavender, pink, sky-blue washes with thin saturated colored borders. Neat typesetting, large readable Simplified Chinese, short sentences, crisp flat technical diagrams, simple icons, numbered steps, boxes and directional arrows. Like an academic teaching comparison sheet, extremely careful factual arrows and quantities. No photorealism, no gradients obscuring text, no watermark, no arbitrary filler or additional features. Each panel has a short title, illustration and concise explanation; text given below is the canonical content. Avoid long function identifiers and code listings. Do not add modern features that are not in the requested text. Preserve case of ABI names and exact numbers. 
+Main title "OS64 物理页：从内存地图到安全分配"
+Subtitle "当前低 256 MiB 管理范围 · 4 KiB 页 · 位图与所有权"
+
+(a) blue "只收整张可用页". Draw E820 interval labeled "usable + 属性有效", endpoints "0x100003" and "0x103001". Highlight only complete interior pages from "0x101000" to "0x103000", exactly two full 4 KiB blocks. Tiny clipped fragments at both ends excluded. Numbered steps: "① 读 E820" "② 起点向上对齐" "③ 终点向下对齐". Banner "半张页不能拿来当完整 RAM 页。"
+
+(b) green "可用，还要排除保留区". Four reserved boxes: "低 1 MiB", "BSS 0x100000–0x160000", "启动栈 0x170000–0x180000", "启动卷". Also "E820 reserved：覆盖到的页也排除". A usable strip subtracting reserved shaded blocks. Banner "保留区优先；重叠条目不能重复计数。"
+
+(c) orange "两张位图找空页". Show simple 8-bit aligned example with bit indices 0..7, available bits "1 1 0 1 1 0 0 1", allocated bits "1 0 0 1 0 0 0 0", result "0 1 0 0 1 0 0 1". Equation exactly "候选 = available & ~allocated". Arrow scan to first set candidate "第 1 位" then "置 allocated → 空闲数减 1". Note "实际按 64 位 word 扫描，再用 ctz". Banner "没有候选：返回 PA = 0。"
+
+(d) lavender "free 前先查所有权". Four checkboxes "范围内" "4 KiB 对齐" "available = 1" "allocated = 1" flow to "清 allocated → 空闲数加 1". Red refused branch "重复 free / 非法地址 → 拒绝". Banner "free 不保证清零；再次使用由上层初始化。"
+
+(e) pink "物理地址不是 C++ 指针". Box "分配得到的 PA" -> "直接映射" -> "内核可读写 VA". Under note "映射窗口 ≠ 全部都是可用 RAM". Draw ownership badge required on PA. Banner "先确认拥有页，再通过 VA 使用。"
+
+(f) sky-blue "容量与成本". Clean table:
+"管理上限 | 256 MiB"
+"页大小 | 4 KiB"
+"页位数量 | 65536"
+"available | 8 KiB"
+"allocated | 8 KiB"
+"两张位图合计 | 16 KiB".
+Bottom two short callouts "统计 O(1)" "分配最多扫 1024 个 word". Banner "这是实现边界；速度还需要实测。"
+
+Final footer "图 A · 页表映射回答怎么访问；物理分配回答谁拥有。"
+

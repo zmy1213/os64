@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "generator": "built-in image_gen.imagegen",
+  "output_policy": "Final generated PNG copied byte-for-byte; no programmatic drawing or image alteration.",
+  "figures": [
+    {
+      "name": "ready-queue",
+      "source_output": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc28-59c5-7fd2-bb07-94e55d448de0/exec-015dda65-c8f2-4c0e-a3c7-fe1990126ae7.png",
+      "target": "docs/illustrated/images/ready-queue.png",
+      "prompt": "docs/illustrated/prompts/ready-queue-v1.txt",
+      "edit_prompt": "docs/illustrated/prompts/ready-queue-refinement.txt",
+      "edit_input": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc28-59c5-7fd2-bb07-94e55d448de0/exec-0f3e7f24-c637-4053-9e10-7161427902c3.png",
+      "sha256": "0f1a33cafee981200cfa303587383ce0f13170563970d6c337a8a7a7b6ba853d",
+      "width": 1586,
+      "height": 992,
+      "qa_status": "passed_after_one_targeted_imagegen_edit",
+      "qa_checks": [
+        "CPU0 selects B0, other-core A1/C1 keep FIFO",
+        "Full original-length scan after selecting a local task",
+        "Queue stores slot IDs, not direct TCB objects",
+        "Loads [2,1,3,1] select CPU1 with low-index tie break",
+        "Worst-case O(Q*T) accounts for reverse slot scan",
+        "Pinned user tasks, kernel CPU0 and CPU-owned gate are accurately labeled"
+      ]
+    },
+    {
+      "name": "parallel-reduction",
+      "source_output": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc28-59c5-7fd2-bb07-94e55d448de0/exec-dcdfe440-46db-4c63-94b7-df5bd697c06a.png",
+      "target": "docs/illustrated/images/parallel-reduction.png",
+      "prompt": "docs/illustrated/prompts/parallel-reduction.txt",
+      "edit_prompt": "docs/illustrated/prompts/parallel-reduction-edit.txt",
+      "edit_input": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc28-59c5-7fd2-bb07-94e55d448de0/exec-60e1acad-c46b-4d76-b1ed-b175dae386a2.png",
+      "sha256": "10aacb2972a1a43bed088aed137b797d9a34c255c64da6f84b6f53ed987e326e",
+      "width": 1672,
+      "height": 941,
+      "qa_status": "passed_after_one_targeted_imagegen_edit",
+      "qa_checks": [
+        "N10/J3 -> [0,3),[3,6),[6,10)",
+        "Input pipe -> workers -> output pipe, no direct bypass",
+        "Private address spaces and dynamic task claim, no migration/work stealing",
+        "Unsigned 64-bit modulo addition and job deduplication",
+        "1536B task and 3520B full result-stream bounds <4096B",
+        "Worker computation overlaps coordinator service; serial kernel overhead visible"
+      ]
+    }
+  ]
+}

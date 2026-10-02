@@ -160,6 +160,8 @@ fd 0/1/2 是标准输入/输出/错误，普通文件从 3 开始，公开容量
 
 ## 多核计算与阻塞通信
 
+新增 [parallel_reduce 图解实验](../docs/illustrated/PARALLEL_REDUCTION.md)：`run /bin/parallel_reduce 4 64 1048576` 用4个工作进程领取64个连续区间，经管道发回局部结果，协调进程检查每块与完整64位总和。也可以改成12个工人、1块，观察部分工人没有任务仍正常结束。参数和容量证明、每个辅助函数、失败回收与真实1/2/4核记录都在图下正文；宿主自动验证入口是 `make test-parallel-reduction`。
+
 系统最多四个 CPU，每个用户进程仍只有一条主线程；第一次被调度后固定核心。`user/smp.hpp` 包装 syscall41，`user/udp.hpp` 包装 syscall36–40。父子进程通过继承 pipe/文件句柄协作，当前没有通用共享内存或线程 API。
 
 - `run /bin/smp_test`：十二个工作者，校验计算、私有堆、固定核心、定时等待与故障退出回收。

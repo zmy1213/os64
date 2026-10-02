@@ -1,0 +1,4 @@
+只编辑(e)保存确认一栏，其它五栏和标题、约16:9宽幅完全不动。当前虚线失败箭头只从replace_file起，不清楚sync失败也要保留内存与dirty。请做明确分支：
+正常竖向流程“完整正文 → replace_file → sync → dirty=false”，replace_file小字“完整替换正文”。
+从replace_file右侧和sync右侧各有独立红箭头，二者汇合到红色小节点“任一步失败”，再接“编辑仍在内存 / dirty保持”红框。
+不能有失败箭头通向dirty=false，也不能画sync失败先清dirty再返回。两个失败线要明显分别起于replace_file和sync。底部“不是先TRUNC再write”“无断电恢复日志”保持。

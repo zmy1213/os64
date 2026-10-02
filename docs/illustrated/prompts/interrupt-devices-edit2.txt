@@ -1,0 +1,8 @@
+Use case: precise diagram-arrow correction. Edit ONLY panel (c), upper-right, of this image; preserve all other panels, text, colors, dimensions and layout exactly.
+The text in panel (c) is now correct. Fix the single arrow path so the BSP gets the divided 100Hz PIT output:
+1. Delete ALL downward or sideways line branches from the left “1193182Hz” box. That box must have only the existing right arrow to “divisor”.
+2. Keep “1193182Hz” → “divisor” → “默认100Hz” top sequence.
+3. Draw exactly ONE blue path starting from the BOTTOM of the right “默认100Hz” box, going down a little, then horizontally LEFT in the gap below the top boxes, then down with an arrowhead into the TOP of the lower-left “BSP：全局 tick +1” box.
+4. Keep the lower-middle “AP LAPIC：仅本核记账” box and its label “独立本地时钟” completely disconnected from all PIT arrows.
+5. The red crossed “AP 不能连向全局 tick” annotation is unchanged.
+Do not leave a dead branch from 1193182Hz. Do not connect divisor/PIT to AP. Change only these blue connecting lines; all lettering and everything outside (c) unchanged.

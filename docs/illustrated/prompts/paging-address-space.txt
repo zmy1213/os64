@@ -1,0 +1,18 @@
+Create a polished Chinese operating-system textbook infographic, a single wide landscape raster canvas approximately 16:9 (for example 1792x1024). Pure white outer background, centered large black Chinese serif title and smaller subtitle. Six distinct rounded panels in 3 columns by 2 rows, letter circles (a)(b)(c)(d)(e)(f), alternating very pale blue, green, orange, lavender, pink, sky-blue washes with thin saturated colored borders. Neat typesetting, large readable Simplified Chinese, short sentences, crisp flat technical diagrams, simple icons, numbered steps, boxes and directional arrows. Like an academic teaching comparison sheet, extremely careful factual arrows and quantities. No photorealism, no gradients obscuring text, no watermark, no arbitrary filler or additional features. Each panel has a short title, illustration and concise explanation; text given below is the canonical content. Avoid long function identifiers and code listings. Do not add modern features that are not in the requested text. Preserve case of ABI names and exact numbers. 
+Main title "OS64 页表：翻译地址，划清权限"
+Subtitle "四级分页 · 内核直接映射 · 私有用户窗口 · 安全回收"
+
+(a) blue "64 位地址，逐级找到页". A 48-bit active address diagram with bit widths "9 | 9 | 9 | 9 | 12" and names "PML4 | PDPT | PD | PT | 页内偏移". Arrows from "CR3 根 PA" through PML4→PDPT→PD→PT→"4 KiB 物理页 + offset". Small bypass arrows PDPT→"1 GiB 大页", PD→"2 MiB 大页" labeled "读解析也支持". Banner "每级先检查 present，不能只看最终叶。"
+
+(b) green "高位直接映射：PA 变成可访问 VA". Use formula exactly "VA = 0xFFFF800000000000 + PA" in a clear single line. Draw "低 256 MiB 物理窗口" => "128 × 2 MiB 叶". Initial step note "先用旧低 2 MiB 映射，建立新表". Label new direct map "supervisor · user 不可读". Banner "映射窗口不等于全部都是可分配 RAM。"
+
+(c) orange "建立 4 KiB 映射". Numbered vertical steps "① 缺页表？分配并清零" -> "② 父项传播 U / W" -> "③ 设置 4 KiB 叶". Separate red failure branch from steps to "失败：撤销新表 / 恢复父权限", not after success. Note "遇到冲突大页，拒绝". Banner "用户封装拒绝已有 user 页；不做 COW。"
+
+(d) lavender "每个用户进程有私有页表". Source kernel root icon branches by copy arrows to process A and B roots. Each displays own "新页表页", retained "内核 supervisor 数据叶", and unique color "user 私有页". No arrow sharing user leaves between A and B. Label "克隆时丢弃原 user 叶". Main number "[0x400000, 0x800000) = 4 MiB". Banner "深复制表页；内核映射共享，用户页私有。"
+
+(e) pink "拆页之前，先离开使用现场". Sequence "验证 user 页" -> "清叶" -> "本核 invlpg" -> "还页" -> "删空表". Note above invlpg "仅当前根". Safety boxes "destroy 拒绝本核当前根" and "调度生命周期检查全 CPU current". Banner in red "当前没有跨核 TLB shootdown。"
+
+(f) sky-blue "NX 与 MMIO 的实际边界". Two side-by-side cards. "NX：CPU 支持 + EFER.NXE 开启" and "MMIO：高位规范 VA / supervisor / PA < 4 GiB / PCD + PWT". Device icon connected to mapped VA with label "设备地址". Note "MMIO 不从 RAM 页分配器借页". Banner "权限位有条件；不能假装所有 CPU 都支持。"
+
+Footer "图 V · 地址翻译、物理所有权、生命周期保护，是三个不同检查。"
+

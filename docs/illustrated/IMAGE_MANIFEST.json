@@ -1,0 +1,896 @@
+{
+  "schema_version": 1,
+  "generator": "built-in image_gen.imagegen",
+  "generation_method": "Direct generation and targeted imagegen edits; no programmatic drawing or raster editing.",
+  "style_reference": "User supplied six-panel Chinese educational infographic; used as a layout and color reference.",
+  "image_count": 29,
+  "function_inventory": "docs/illustrated/FUNCTION_INVENTORY.json",
+  "inventory_sha256": "025c530327044827293a57c38575e6e2dab5ebbf74920ba81c6840de02344fe7",
+  "source_revision_baseline": "67efd0d008e0b58b31c89ad4ecfbab502416e087",
+  "copy_policy": "Final images copied byte-for-byte; original generations and edits retained at their recorded local paths.",
+  "audit": {
+    "source_copy_hashes": "passed",
+    "png_header_dimensions": "passed",
+    "prompts_and_history_files": "passed",
+    "selected_visual_reviews": "passed"
+  },
+  "assets": [
+    {
+      "name": "console-input",
+      "path": "docs/illustrated/images/console-input.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-03006e24-b6ba-4553-93c8-0f008c545c3a.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1535584,
+      "sha256": "0a03c75c8f513e9a64227a18be0841d41f2e7b90b7ac50a79a9d095cb9648e14",
+      "prompt_files": [
+        "docs/illustrated/prompts/console-input.txt"
+      ],
+      "retained_original_versions": [],
+      "registry": "docs/illustrated/images-io.json",
+      "visual_qa": {
+        "status": "passed",
+        "checks": [
+          "Input sources: PS/2 IRQ1 and COM IRQ4 feed the same event queue",
+          "256 event records distinguished from ASCII character count",
+          "BKL + CLI check-register-recheck-block protocol; wake does not consume",
+          "Insert x at a|bc produces ax|bc",
+          "80x25 VGA 16-bit character/color cells and scrolling",
+          "Overflow drains to Enter and rejects the whole line; ASCII-only editor"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "context-switch",
+      "path": "docs/illustrated/images/context-switch.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-323653f1-3157-4e3d-8a71-52a4c11f1f99.png",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 1724284,
+      "sha256": "015cdd6daea8ef836ab1a0afb6f537fe4de4a545527d5ea0ff9841b3757677d8",
+      "prompt_files": [
+        "docs/illustrated/prompts/context-switch.txt"
+      ],
+      "retained_original_versions": [],
+      "registry": "docs/illustrated/images-scheduler.json",
+      "visual_qa": {
+        "status": "passed",
+        "checks": [
+          "六栏 a..f，与 Markdown C 图块映射一致",
+          "current/TSS 发布到旧 RSP 保存期间连续持 BKL + CLI",
+          "两根 32 KiB 内核栈与 64 KiB 用户栈区分",
+          "完整用户 iret 帧 IF=0 放锁；idle 稳定 current/RSP 后放锁",
+          "未宣称用户线程迁移、无锁或 AVX/XSAVE"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "elf-user-abi",
+      "path": "docs/illustrated/images/elf-user-abi.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-3197e768-2d46-4ab7-bb53-62134be2eeb7.png",
+      "width": 1659,
+      "height": 948,
+      "bytes": 1896002,
+      "sha256": "57ad15ad430959c9054ab0f48396c8bb3b25ba47fad8aae1972fc2e2fdaa497f",
+      "prompt_files": [
+        "docs/illustrated/prompts/elf-user-abi-edit.txt",
+        "docs/illustrated/prompts/elf-user-abi-edit2.txt",
+        "docs/illustrated/prompts/elf-user-abi-edit3.txt",
+        "docs/illustrated/prompts/elf-user-abi.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-15698373-af07-4a5d-baef-325db612500b.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-7922ab59-5b42-4b6e-ac24-9c41b592561d.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-804e5e54-5faf-4e31-9fde-2f65ac7eda73.png"
+      ],
+      "registry": "docs/illustrated/images-memory.json",
+      "visual_qa": {
+        "status": "passed_after_imagegen_edits",
+        "checks": [
+          "ELF64LE ET_EXEC，69632字节/8PH/256页",
+          "先整体计划再映射，拒W+X/重叠",
+          "file_size与mem_size/BSS零区",
+          "4MiB窗口/64KiB下向栈/4KiB未映射guard精确地址",
+          "brk(0)只读查询无突变箭头，new_break增长失败回滚",
+          "open19/brk20/pipe22/wait16/UDP36..40/SMP41",
+          "SMP128B ABI1/UDP12B reserved0",
+          "alignment=0/1允许；仅>1检查2幂与VA/偏移同余，③两行仅一个编号"
+        ],
+        "repair": "修正brk(0)查询错误连到增长/缩小，移除页索引上多余的≤256标注。 继续定点明确 ELF alignment>1 的条件，允许0/1；随后移除生成器新增的重复②编号。"
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "filesystem-transactions",
+      "path": "docs/illustrated/images/filesystem-transactions.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-5354b3d3-2195-475e-b520-b7b7fcfe148a.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1676094,
+      "sha256": "17c61676d1e51a56f535a1da48c359963e34a82b5cce967795e65d714ebadad7",
+      "prompt_files": [
+        "docs/illustrated/prompts/filesystem-transactions-edit.txt",
+        "docs/illustrated/prompts/filesystem-transactions-edit2.txt",
+        "docs/illustrated/prompts/filesystem-transactions-edit3.txt",
+        "docs/illustrated/prompts/filesystem-transactions.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-383dabe6-fec8-44eb-b020-5b46e28a175a.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-4f8f642e-24a9-4979-80de-f7fa4635698b.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-f04b0979-a248-43b5-8320-026c4cab5611.png"
+      ],
+      "registry": "docs/illustrated/images-files.json",
+      "visual_qa": {
+        "status": "passed",
+        "method": "visual inspection against actual source and six-panel specification; independent root/boot review also performed",
+        "checked": [
+          "六栏与中文可读",
+          "内存snapshot和最多256不同扇区暂存",
+          "校验失败恢复内存且返回失败，没有自动重试",
+          "提交阶段写新扇区+flush任一步失败到恢复阶段",
+          "恢复阶段逆序旧扇区+flush，成功返回原失败，失败停止挂载",
+          "失败的写入尝试也恢复",
+          "无持久化日志/断电恢复事务"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "heap-memory",
+      "path": "docs/illustrated/images/heap-memory.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-8832ece1-cb71-47f7-ba29-6488e2972fef.png",
+      "width": 1659,
+      "height": 948,
+      "bytes": 1848603,
+      "sha256": "ff90802050d4ba1f503ad0c75ff992d1ff832895c8269731d0d1c58e4f3ca9b4",
+      "prompt_files": [
+        "docs/illustrated/prompts/heap-memory-edit.txt",
+        "docs/illustrated/prompts/heap-memory-edit2.txt",
+        "docs/illustrated/prompts/heap-memory.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-8897e001-c90c-4639-ad36-cc0bf11b6eee.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-dfa5ae96-c5ab-4f47-a49c-3b8016c6a27d.png"
+      ],
+      "registry": "docs/illustrated/images-memory.json",
+      "visual_qa": {
+        "status": "passed_after_imagegen_edits",
+        "checks": [
+          "16–20MiB内核窗口、32B分配头/16B空闲头",
+          "first-fit选择第一个合适块",
+          "free按虚拟地址顺序合洞，不还内核映射页",
+          "C++先构造/先析构",
+          "用户分配不清零且非法/重复free由调用者避免",
+          "brk尾部可还整页，尚无perCPU/SLAB",
+          "release 先标空合并再缩 brk；缩 brk 失败保留可复用空闲块，页面仍映射"
+        ],
+        "repair": "修正生成器把虚拟地址合洞标成物理顺序。 继续定点修改用户堆横条，明确缩 brk 失败与 resize 替换分配失败不同。"
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "interrupt-devices",
+      "path": "docs/illustrated/images/interrupt-devices.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-5e09d82f-602c-461e-aef8-9ea911df8e6b.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1741450,
+      "sha256": "be05452824ec5039f07669f7f981d3dcbaa9cfc77e83c9d88283a5f4af43e6c0",
+      "prompt_files": [
+        "docs/illustrated/prompts/interrupt-devices-edit.txt",
+        "docs/illustrated/prompts/interrupt-devices-edit2.txt",
+        "docs/illustrated/prompts/interrupt-devices-edit3.txt",
+        "docs/illustrated/prompts/interrupt-devices.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-2624d436-6c78-4625-9d80-56df3ad07658.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-6fd8408d-24a7-4d88-adb6-dce52dcf26f4.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-bf8152b9-faf7-45fe-a895-faa170841084.png"
+      ],
+      "registry": "docs/illustrated/images-io.json",
+      "visual_qa": {
+        "status": "passed_after_three_targeted_imagegen_edits",
+        "checks": [
+          "PCI address/select-data split and 16-bit command writes avoid status W1C",
+          "PIC masks: 0 allow, 1 block; slave IRQs route via master IRQ2",
+          "Only default100Hz output leads to BSP global tick; independent AP LAPIC has no PIT input arrow",
+          "Device acknowledgement explicitly conditional; slave EOI when applicable, then master EOI, then possible stack switch",
+          "Formal threads block/sleep, early no-thread path alone uses bare HLT",
+          "CLI is CPU-local; bounded polling is not a precise wall-clock timeout"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "kernel-bringup",
+      "path": "docs/illustrated/images/kernel-bringup.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-b213fe58-ad80-4466-9709-9ef71cba7ce0.png",
+      "width": 1659,
+      "height": 948,
+      "bytes": 1836486,
+      "sha256": "7db4006d45c7fec1c07e62ff7882474a8766a5533664ee2ec7dd72a6953e216b",
+      "prompt_files": [
+        "docs/illustrated/prompts/kernel-bringup-edit.txt",
+        "docs/illustrated/prompts/kernel-bringup.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-54e83e09-bb4b-4a9b-8de4-4955e599d5b2.png"
+      ],
+      "registry": "docs/illustrated/images-memory.json",
+      "visual_qa": {
+        "status": "passed_after_imagegen_edit",
+        "checks": [
+          "启动顺序与BSP/AP固定绑定符合源码",
+          "保留持久盘晚于启动夹具测试",
+          "直接映射VA完整16位十六进制"
+        ],
+        "repair": "修正生成器省略直接映射地址中的零。"
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "kernel-gate",
+      "path": "docs/illustrated/images/kernel-gate.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-7458d29d-cb67-4777-a5af-fa0e9b424bf4.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1678718,
+      "sha256": "c0a3dcf87828eada5125e1c2b907de902a7d81f09860e2b6a3cc05963b3c83a4",
+      "prompt_files": [
+        "docs/illustrated/prompts/kernel-gate.txt"
+      ],
+      "retained_original_versions": [],
+      "registry": "docs/illustrated/images-boot.json",
+      "visual_qa": {
+        "status": "passed",
+        "checks": [
+          "Concurrent user computation and one shared serial kernel service",
+          "CPU owner and no recursive lock count",
+          "Save IF, CLI, acquire/CAS, conditional restoration of IF",
+          "User/idle exits release only with IF = 0; kernel return retains gate",
+          "Only BSP PIT advances global time; AP timer records local statistics",
+          "user_ticks includes kernel service time attributed to that user thread",
+          "Reschedule IPI 0xF1; EOI before possible stack switch; spurious 0xFF has no EOI"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "logging-observability",
+      "path": "docs/illustrated/images/logging-observability.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-e0b60e0c-337c-469c-b3db-03252641106c.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1710451,
+      "sha256": "66abd9ec935b9586546871958ee541d9157bec4af03089057d4e31c7472c88fb",
+      "prompt_files": [
+        "docs/illustrated/prompts/logging-observability-edit.txt",
+        "docs/illustrated/prompts/logging-observability.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-7051189e-c445-4ea6-8677-b9b6c15138f3.png"
+      ],
+      "registry": "docs/illustrated/images-io.json",
+      "visual_qa": {
+        "status": "passed_after_one_targeted_imagegen_edit",
+        "checks": [
+          "128B record structure sums exact field widths including reserved4B",
+          "256 slots;sequence starts1,slot=(sequence-1)%256",
+          "Write257 overwrites1 and retained window becomes2..257",
+          "Incremental reads copy retained records in sequence order within capacity; overwritten history unrecoverable",
+          "Writer fixed-size, no allocation, no blocking and no serial printing; CLI plus caller-owned BKL",
+          "Performance ABIv1 is128B,rawTSC not calibrated nanoseconds,onlineCPUcount not speedup",
+          "Freestanding memory routines bytewise O(N); memcpy requires no overlap; memmove handles direction",
+          "Payload capacity is explicitly15/87 bytes plus NUL, not15/87 Unicode characters"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "os64fs-layout",
+      "path": "docs/illustrated/images/os64fs-layout.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-cfd6092a-af98-473d-8ae5-e9c3df11a916.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1551730,
+      "sha256": "387608f9dde43396bc13e08b30cf68202e4935ca7ee82e9dffc8fa2813aef1f2",
+      "prompt_files": [
+        "docs/illustrated/prompts/os64fs-layout-edit.txt",
+        "docs/illustrated/prompts/os64fs-layout.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-c3efb4a7-1cae-4347-89e1-02c104b4f342.png"
+      ],
+      "registry": "docs/illustrated/images-files.json",
+      "visual_qa": {
+        "status": "passed",
+        "method": "visual inspection against actual source and six-panel specification; independent root/boot review also performed",
+        "checked": [
+          "六栏与中文可读",
+          "inode0保留，位图0空闲/1占用",
+          "目录项56B名字+4B编号+4B其余元数据",
+          "8直接+128间接，内容69632B、索引块另占",
+          "偏移500B读12B+64B=76B",
+          "挂载检查且损坏拒绝"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "paging-address-space",
+      "path": "docs/illustrated/images/paging-address-space.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-c31d2016-9eb0-407b-9a0c-fc83afecccdc.png",
+      "width": 1660,
+      "height": 948,
+      "bytes": 1671006,
+      "sha256": "f64ea5bfad8b3d6a6ca48d1497bfa573d6f4f2a8b9710e5d47857b225324e704",
+      "prompt_files": [
+        "docs/illustrated/prompts/paging-address-space.txt"
+      ],
+      "retained_original_versions": [],
+      "registry": "docs/illustrated/images-memory.json",
+      "visual_qa": {
+        "status": "passed",
+        "checks": [
+          "9/9/9/9/12位及大页读解析",
+          "0xFFFF800000000000加PA，128个2MiB叶",
+          "新表和父权限失败回滚",
+          "4MiB私有user窗口",
+          "本核invlpg、全CPU current生命周期边界、无shootdown",
+          "NX条件与MMIO权限边界"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "parallel-reduction",
+      "path": "docs/illustrated/images/parallel-reduction.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc28-59c5-7fd2-bb07-94e55d448de0/exec-dcdfe440-46db-4c63-94b7-df5bd697c06a.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1805908,
+      "sha256": "10aacb2972a1a43bed088aed137b797d9a34c255c64da6f84b6f53ed987e326e",
+      "prompt_files": [
+        "docs/illustrated/prompts/parallel-reduction-edit.txt",
+        "docs/illustrated/prompts/parallel-reduction.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc28-59c5-7fd2-bb07-94e55d448de0/exec-60e1acad-c46b-4d76-b1ed-b175dae386a2.png"
+      ],
+      "registry": "docs/illustrated/images-root.json",
+      "visual_qa": {
+        "status": "passed_after_one_targeted_imagegen_edit",
+        "checks": [
+          "N10/J3 -> [0,3),[3,6),[6,10)",
+          "Input pipe -> workers -> output pipe, no direct bypass",
+          "Private address spaces and dynamic task claim, no migration/work stealing",
+          "Unsigned 64-bit modulo addition and job deduplication",
+          "1536B task and 3520B full result-stream bounds <4096B",
+          "Worker computation overlaps coordinator service; serial kernel overhead visible"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "parallel-workers",
+      "path": "docs/illustrated/images/parallel-workers.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-43bde931-8c4f-40c6-9a0b-0851dc7a7a23.png",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 2055121,
+      "sha256": "05d9472e0205703521c477aa5d85f525e08a0d48419a6a6bb46a1ea578f3557a",
+      "prompt_files": [
+        "docs/illustrated/prompts/parallel-workers-boundary-edit.txt",
+        "docs/illustrated/prompts/parallel-workers-edit.txt",
+        "docs/illustrated/prompts/parallel-workers.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-0ae11583-1973-4ebb-90db-af8b8e3aae6c.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-b83e5cfd-9bbb-40a0-80d8-60d0ffb3a4b9.png"
+      ],
+      "registry": "docs/illustrated/images-cooperation.json",
+      "visual_qa": {
+        "status": "passed",
+        "method": "visual inspection against source and six-panel specification",
+        "checked": [
+          "六栏与中文可读",
+          "私有用户堆栈与共享内核对象分开",
+          "12worker分时使用最多4核，无迁移",
+          "用户并行，单BKL内核串行",
+          "12×6×2000万，64KiB与40B报告",
+          "最多4096B含边界；777B分次读取",
+          "计算者0…3个，gate只放行receiver",
+          "BSP共享inbox，接收者只验证UDP",
+          "user_ticks包括内核服务，不声称最快"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "physical-pages",
+      "path": "docs/illustrated/images/physical-pages.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-a74b8194-d5e5-4958-87dc-f8a80c9489aa.png",
+      "width": 1659,
+      "height": 948,
+      "bytes": 1805129,
+      "sha256": "ef0e9409fd052aee35e08f36026156779a8744da0dcc46cf59912d38788c5f49",
+      "prompt_files": [
+        "docs/illustrated/prompts/physical-pages-edit.txt",
+        "docs/illustrated/prompts/physical-pages.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-feede024-0bbb-49ff-9f5b-9e493bfd2fec.png"
+      ],
+      "registry": "docs/illustrated/images-memory.json",
+      "visual_qa": {
+        "status": "passed_after_imagegen_edit",
+        "checks": [
+          "完整4KiB页与保留区优先",
+          "8位候选示例逐位核对",
+          "free通过和拒绝两条独立分支",
+          "256MiB/65536页/两bitmap16KiB一致"
+        ],
+        "repair": "修正首版free成功后又连拒绝框的错误箭头。"
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "pipe-cooperation",
+      "path": "docs/illustrated/images/pipe-cooperation.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-030dc8bd-33b3-4847-9770-e41d555c07ef.png",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 1827497,
+      "sha256": "a0cc02f65c42ca57edd3772c2c921a17df2f3d1ceab48861be0af21fc2790353",
+      "prompt_files": [
+        "docs/illustrated/prompts/pipe-cooperation-edit.txt",
+        "docs/illustrated/prompts/pipe-cooperation-title-edit.txt",
+        "docs/illustrated/prompts/pipe-cooperation.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-6e8ee12f-edee-4abc-827f-918324e85499.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-d95ba72f-af5f-45fb-bbe5-1ba43de7ff4b.png"
+      ],
+      "registry": "docs/illustrated/images-cooperation.json",
+      "visual_qa": {
+        "status": "passed",
+        "method": "visual inspection against source and six-panel specification",
+        "checked": [
+          "六栏与中文可读",
+          "进程标签独立，共享对象references增加",
+          "一次小write最多4096B",
+          "4096=777+3319，后续read才完整",
+          "空队列且最后写端消失才EOF",
+          "无读端写者唤醒后EPIPE=-7"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "process-reaping",
+      "path": "docs/illustrated/images/process-reaping.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-18371168-fc61-4be6-a45a-580b4fb8d9e0.png",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 2100931,
+      "sha256": "38a280deba0ebb06d0ed4a8f6b3d38284927c00886f3b50e3d8c34e5283b6fde",
+      "prompt_files": [
+        "docs/illustrated/prompts/process-reaping-edit.txt",
+        "docs/illustrated/prompts/process-reaping-edit2.txt",
+        "docs/illustrated/prompts/process-reaping-edit3.txt",
+        "docs/illustrated/prompts/process-reaping.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-132ae167-ad98-4994-8c89-e2b6f6e2fd08.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-1489d7b6-da98-49f6-b605-b78d3be003a5.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-45b28822-99a8-4edc-9ec3-4479a1cbd0be.png"
+      ],
+      "registry": "docs/illustrated/images-scheduler.json",
+      "visual_qa": {
+        "status": "passed_after_imagegen_edits",
+        "checks": [
+          "六栏 a..f，与 Markdown P 图块映射一致",
+          "exit 恢复原内核栈/CR3，继续线程退出，未画返回用户态",
+          "全 CPU current 包含 CPU2 仍使用目标时禁止释放",
+          "先切离退出现场再释放线程栈/用户页表",
+          "EOF 明确要求最后写端关闭",
+          "异常码依据 CPU vector：页错误 14 → 142",
+          "没有未实现 poll/epoll/select 宣称",
+          "明确 scheduler_wait_process 助手读取，reap 助手回收；公开 sys_waitpid 会串联 wait 与 reap"
+        ],
+        "repair": "通过 imagegen 编辑移除生成器自加的 Linux signal139、poll/select 和错误出口说明；再次编辑修复一段中文乱码。原始版本均保留。 第三次定点编辑纠正公开 waitpid 与内部 wait helper 的措辞歧义，其他五栏保持原样。"
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "ready-queue",
+      "path": "docs/illustrated/images/ready-queue.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc28-59c5-7fd2-bb07-94e55d448de0/exec-015dda65-c8f2-4c0e-a3c7-fe1990126ae7.png",
+      "width": 1586,
+      "height": 992,
+      "bytes": 1706280,
+      "sha256": "0f1a33cafee981200cfa303587383ce0f13170563970d6c337a8a7a7b6ba853d",
+      "prompt_files": [
+        "docs/illustrated/prompts/ready-queue-refinement.txt",
+        "docs/illustrated/prompts/ready-queue-v1.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc28-59c5-7fd2-bb07-94e55d448de0/exec-0f3e7f24-c637-4053-9e10-7161427902c3.png"
+      ],
+      "registry": "docs/illustrated/images-root.json",
+      "visual_qa": {
+        "status": "passed_after_one_targeted_imagegen_edit",
+        "checks": [
+          "CPU0 selects B0, other-core A1/C1 keep FIFO",
+          "Full original-length scan after selecting a local task",
+          "Queue stores slot IDs, not direct TCB objects",
+          "Loads [2,1,3,1] select CPU1 with low-index tie break",
+          "Worst-case O(Q*T) accounts for reverse slot scan",
+          "Pinned user tasks, kernel CPU0 and CPU-owned gate are accurately labeled"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "shell-parser",
+      "path": "docs/illustrated/images/shell-parser.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-98c43c33-43cf-441a-89cc-91b902244807.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1646464,
+      "sha256": "23e57904dce22531cff148588fe455ebe0319d289689d1271bd9aa6c931c425e",
+      "prompt_files": [
+        "docs/illustrated/prompts/shell-parser-edit.txt",
+        "docs/illustrated/prompts/shell-parser.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-0cd695e1-c6ef-47ee-ba06-9716aa493b60.png"
+      ],
+      "registry": "docs/illustrated/images-files.json",
+      "visual_qa": {
+        "status": "passed",
+        "method": "visual inspection against actual source and six-panel specification; independent root/boot review also performed",
+        "checked": [
+          "六栏与中文可读",
+          "交互255B与解析接口512B分开",
+          "低控制字节拒绝但Tab允许",
+          "PWD与问号延迟展开，PATH固定/bin",
+          "单引号不展开且不重新分词",
+          "整行解析失败不执行",
+          "8总命令/4管道阶段/8参数/63B词，不是完整Bash"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "shell-pipeline",
+      "path": "docs/illustrated/images/shell-pipeline.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-429d275d-c8fd-48aa-b299-10fa57fa44a6.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1682974,
+      "sha256": "8633d66c052fb4a081913de3a2f20b4e980e78a603cd46207c142863f2581fdc",
+      "prompt_files": [
+        "docs/illustrated/prompts/shell-pipeline-edit.txt",
+        "docs/illustrated/prompts/shell-pipeline.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-f9bd4d57-185a-47b4-81bb-bfc3b8b903de.png"
+      ],
+      "registry": "docs/illustrated/images-files.json",
+      "visual_qa": {
+        "status": "passed",
+        "method": "visual inspection against actual source and six-panel specification; independent root/boot review also performed",
+        "checked": [
+          "六栏与中文可读",
+          "路径存在/普通文件检查，不实现mode权限校验；ELF校验在spawn",
+          "dup/spawn共享打开对象",
+          "重定向覆盖管道，子关闭额外FD",
+          "父恢复流并关临时端点",
+          "最后写端对象释放且读尽才EOF",
+          "等待所有并返回末阶段状态；4后台槽",
+          "准备失败不恢复已截断文件"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "sleep-wakeup",
+      "path": "docs/illustrated/images/sleep-wakeup.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-3599755f-530f-4ab0-8cf7-c431f42eb264.png",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 1883998,
+      "sha256": "1c4bcda589023c0619ab0fa003f64b219a688e5b22887cd850ad29ce2b0b90b4",
+      "prompt_files": [
+        "docs/illustrated/prompts/sleep-wakeup-edit.txt",
+        "docs/illustrated/prompts/sleep-wakeup.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-2f4047d7-a97c-4acc-8b29-6e7e608754c7.png"
+      ],
+      "registry": "docs/illustrated/images-scheduler.json",
+      "visual_qa": {
+        "status": "passed_after_imagegen_edit",
+        "checks": [
+          "六栏 a..f，与 Markdown W 图块映射一致",
+          "Sleeping / Blocked 出发的事件箭头只流向 Ready",
+          "PIT now=100、deadline=105、scheduler total=19，wake_tick=24",
+          "BSP 独占全局时钟，AP 只推进各自记账/时间片",
+          "登记/切栈持续 BKL + CLI，唤醒后重新检查",
+          "唤醒回 assigned CPU，非线程迁移；user_ticks 范围与源码一致"
+        ],
+        "repair": "首版 W(a) 的事件箭头误指向 Sleeping/Blocked；通过 imagegen 定向编辑后修正，未用代码重绘。"
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "smp-boot",
+      "path": "docs/illustrated/images/smp-boot.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-04cfa3ab-35a7-4a3c-92dd-434c2802dfd9.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1678089,
+      "sha256": "b707aa17371959533061fe98cb70646f10a5a793a4c2254c7d73ce7d6df4da51",
+      "prompt_files": [
+        "docs/illustrated/prompts/smp-boot.txt"
+      ],
+      "retained_original_versions": [],
+      "registry": "docs/illustrated/images-boot.json",
+      "visual_qa": {
+        "status": "passed",
+        "checks": [
+          "Three-column, two-row layout and readable Chinese text",
+          "AP mailbox at 0x7e00 and startup code at 0x7000 distinct",
+          "Sequential AP startup and mailbox reuse only after online",
+          "16-to-32-to-64-bit startup bridge",
+          "Each CPU owns GDT/TSS/RSP0/IST1; one shared IDT",
+          "Clean 512B x87/SSE template, no AVX/XSAVE claim",
+          "online_count + 1 precedes release online = 1, which precedes waiting for BSP-owned kernel gate"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "storage-io",
+      "path": "docs/illustrated/images/storage-io.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-981228cb-84f0-4bc2-9838-eba9bb79820a.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1574433,
+      "sha256": "1b3d4430dd15a053aad3f00cb671739bc7c2b69b299b142d52892f54dffd952b",
+      "prompt_files": [
+        "docs/illustrated/prompts/storage-io.txt"
+      ],
+      "retained_original_versions": [],
+      "registry": "docs/illustrated/images-io.json",
+      "visual_qa": {
+        "status": "passed",
+        "checks": [
+          "BlockDevice read/write/flush dispatch has RAM BootVolume and ATA PIO backends",
+          "Boot RAM writes copy only RAM and do not persist across restart",
+          "Primary-master single-sector LBA28 commands; nIEN disables IDE IRQ",
+          "256 16-bit data words make one 512B sector; PIO is CPU copying",
+          "FLUSH CACHE 0xE7 is a device durability request, not file-system power-failure atomicity",
+          "Reject ATAPI, no-LBA, non512B; maximum2^28 sectors and one-million status polls"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "syscall-boundary",
+      "path": "docs/illustrated/images/syscall-boundary.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-f9ea9554-9cbf-4495-8533-8ef35ce8090d.png",
+      "width": 1659,
+      "height": 948,
+      "bytes": 1726396,
+      "sha256": "768f2faea0b01b17822815eaeb3124de9f01042cf04b4bfa7cbf88e4cf98a306",
+      "prompt_files": [
+        "docs/illustrated/prompts/syscall-boundary.txt"
+      ],
+      "retained_original_versions": [],
+      "registry": "docs/illustrated/images-memory.json",
+      "visual_qa": {
+        "status": "passed",
+        "checks": [
+          "五参数int80与signed返回",
+          "本核TSS.RSP0、IF与BKL分工",
+          "完整范围和read/write方向权限",
+          "69632/63+NUL/1200边界",
+          "FD公开/内部映射",
+          "公开waitpid成功串联wait与reap",
+          "UDP/brk独立错误约定"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "topology",
+      "path": "docs/illustrated/images/topology.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-da0fb4df-c236-47b0-b0d4-7d39a54b1ca9.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1831364,
+      "sha256": "946ff019218915cf5defce81f3103c92b7b5d45ff27f551929e0c751fc51f889",
+      "prompt_files": [
+        "docs/illustrated/prompts/topology-edit.txt",
+        "docs/illustrated/prompts/topology.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-63f8dda9-5456-4f86-b9cb-ab29308a59f3.png"
+      ],
+      "registry": "docs/illustrated/images-boot.json",
+      "visual_qa": {
+        "status": "passed_after_one_targeted_imagegen_edit",
+        "checks": [
+          "EBDA base comes from BIOS 0x40e and code accepts 0x80000 <= base < 0xa0000",
+          "Conventional-memory size comes from BIOS 0x413; last 1KiB scan is MP-only",
+          "ACPI first then MP fallback; 16-byte candidate stride",
+          "RSDP-to-RSDT/XSDT-to-MADT chain with 32/64-bit pointer width",
+          "Type 0 enabled LAPIC enumeration and Type 5 LAPIC address override",
+          "BSP internal index 0 distinguished from hardware APIC ID",
+          "Four-CPU cap still checks later duplicate IDs",
+          "Little-endian 34 12 maps to 0x1234; APIC ASCII hex bytes correct",
+          "ID 255 broadcast rejected for unicast; x2APIC unsupported; complete MSR address match",
+          "Nonzero aligned LAPIC address below 4GiB; publish topology only after validation"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "udp-wait",
+      "path": "docs/illustrated/images/udp-wait.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-0a66629b-082d-4263-8f5d-1f9689cd8862.png",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 1741254,
+      "sha256": "acb184e1541a822cd92015c9c8567f4e875e069c37b4350d4b53db6f398f537e",
+      "prompt_files": [
+        "docs/illustrated/prompts/udp-wait.txt"
+      ],
+      "retained_original_versions": [],
+      "registry": "docs/illustrated/images-cooperation.json",
+      "visual_qa": {
+        "status": "passed",
+        "method": "visual inspection against source and six-panel specification",
+        "checked": [
+          "六栏与中文可读",
+          "generation与PID核对",
+          "25ms向上取整3tick，原deadline不延长",
+          "登记thread/tid与block同保护边界",
+          "BSP单RX，AP消费inbox",
+          "输出映射重验，容量小保留包",
+          "有包优先，0空包成功，关闭与故障唤醒"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "user-editor",
+      "path": "docs/illustrated/images/user-editor.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-3cc0019b-679c-4c0d-884b-c829d9666b1f.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1543030,
+      "sha256": "f0cecb85cc599ef3a4b932ef53c618ad08ba38b99de0d8dfdd0558df827a918a",
+      "prompt_files": [
+        "docs/illustrated/prompts/user-editor-edit.txt",
+        "docs/illustrated/prompts/user-editor-edit2.txt",
+        "docs/illustrated/prompts/user-editor.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-54654980-2123-43f6-9951-d2384adbd3b9.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-55327294-3ff1-4ad4-9db9-08bed4ca5345.png"
+      ],
+      "registry": "docs/illustrated/images-files.json",
+      "visual_qa": {
+        "status": "passed",
+        "method": "visual inspection against actual source and six-panel specification; independent root/boot review also performed",
+        "checked": [
+          "六栏与中文可读",
+          "完整加载直到EOF，32KiB/二进制拒绝，无截断保存",
+          "命令512B，超长吞到回车，实际delete 2",
+          "ASCII abc换行1B后下一行偏移4",
+          "仅插入reserve；成功修改dirty",
+          "replace与sync独立失败分支保持内存编辑/dirty",
+          "quit未保存回编辑不释放，真实退出才释放Buffer",
+          "quit不自动保存，无undo/断电日志"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "user-tools",
+      "path": "docs/illustrated/images/user-tools.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-7862e7d0-cd2e-44b8-b0e8-485864b92caf.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1623402,
+      "sha256": "15a4a120c14392c6d1671d6a58d1a97f44c8f1bec639f37da1bffc714e9011cf",
+      "prompt_files": [
+        "docs/illustrated/prompts/user-tools-edit.txt",
+        "docs/illustrated/prompts/user-tools.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-d5a5b7df-3b24-48a2-8542-c866c7db0318.png"
+      ],
+      "registry": "docs/illustrated/images-files.json",
+      "visual_qa": {
+        "status": "passed",
+        "method": "visual inspection against actual source and six-panel specification; independent root/boot review also performed",
+        "checked": [
+          "六栏与中文可读",
+          "argv/stdin与文件流分开",
+          "TRUNC再write不同于一次replace",
+          "用户多核计算并行，内核BKL串行",
+          "UDP0/1/257/1200B真实包，0B成功，无TCP",
+          "badptr返回错误，fault/ud2/页保护故障进程退出",
+          "NX需要CPU支持"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "vfs-paths",
+      "path": "docs/illustrated/images/vfs-paths.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-198feb4a-b9c7-4d03-ba84-e9aa13323052.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1590908,
+      "sha256": "285ccb4a20ff8aa4e75ddbe922e2c4d9d006e43d9253ee09b23d00b6415acefa",
+      "prompt_files": [
+        "docs/illustrated/prompts/vfs-paths-edit.txt",
+        "docs/illustrated/prompts/vfs-paths-edit2.txt",
+        "docs/illustrated/prompts/vfs-paths.txt"
+      ],
+      "retained_original_versions": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-d10b56e2-5403-4ace-9579-d0e7fc47dbc2.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fc4e-a12e-71f0-855e-6003cafcb4bb/exec-f1b40c73-b028-42ad-9468-ecdfd1bf1b91.png"
+      ],
+      "registry": "docs/illustrated/images-files.json",
+      "visual_qa": {
+        "status": "passed",
+        "method": "visual inspection against actual source and six-panel specification; independent root/boot review also performed",
+        "checked": [
+          "六栏与中文可读",
+          "单根卷，cwd在系统调用层",
+          "目录不存点/双点",
+          "raw磁盘目录项64B，公开大小另取inode",
+          "next/rewind游标且非稳定快照",
+          "按inode刷新读取且offset推进",
+          "没有rename"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    },
+    {
+      "name": "virtio-dma",
+      "path": "docs/illustrated/images/virtio-dma.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-ef4f3705-1afa-4f47-b718-9200bba804f1.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 1657609,
+      "sha256": "71d515d901bd5c444fc9c29bc1ce33b81e19f4ca3016625ff281fa1400000126",
+      "prompt_files": [
+        "docs/illustrated/prompts/virtio-dma.txt"
+      ],
+      "retained_original_versions": [],
+      "registry": "docs/illustrated/images-io.json",
+      "visual_qa": {
+        "status": "passed",
+        "checks": [
+          "Ring uses physically continuous2-3 pages, packet buffers use independent pages",
+          "Two descriptors:10B header at offset0, payload at64;54B gap not transmitted",
+          "64 descriptors give32frames,256 descriptors capped64frames",
+          "Descriptor/data/avail slot before MFENCE/avail index/MFENCE/notify",
+          "Used index before LFENCE/content, TX clears in-flight, RX synchronous callback then requeues",
+          "BSP single hardware RX queue budget32; AP user UDP uses software inbox",
+          "Failure retains possibly DMA-active pages; initialization frees only after confirmed device reset"
+        ]
+      },
+      "final_copy_matches_original_bytes": true
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+Create a polished Chinese operating-system textbook infographic, a single wide landscape raster canvas approximately 16:9 (for example 1792x1024). Pure white outer background, centered large black Chinese serif title and smaller subtitle. Six distinct rounded panels in 3 columns by 2 rows, letter circles (a)(b)(c)(d)(e)(f), alternating very pale blue, green, orange, lavender, pink, sky-blue washes with thin saturated colored borders. Neat typesetting, large readable Simplified Chinese, short sentences, crisp flat technical diagrams, simple icons, numbered steps, boxes and directional arrows. Like an academic teaching comparison sheet, extremely careful factual arrows and quantities. No photorealism, no gradients obscuring text, no watermark, no arbitrary filler or additional features. Each panel has a short title, illustration and concise explanation; text given below is the canonical content. Avoid long function identifiers and code listings. Do not add modern features that are not in the requested text. Preserve case of ABI names and exact numbers. 
+Main title "OS64 用户程序：ELF 字节变成私有地址空间"
+Subtitle "先完整校验，再装入页面 · 4 MiB 窗口 · 64 KiB 栈 · int80 包装"
+
+(a) blue "入口格式：只支持当前子集". File card "ELF64 / 小端 / x86_64 / ET_EXEC". Limits "文件 ≤ 69632 B" "program headers ≤ 8". File header -> executable PT_LOAD -> "入口在可执行段内". Banner "当前没有 PIE / 动态链接 / 共享库装载。"
+
+(b) green "先计划所有加载页". Numbered short conditions:
+"① mem_size ≥ file_size"
+"② 文件与用户范围都不越界"
+"③ 对齐为 2 幂，VA 与偏移同余"
+"④ 拒绝 W+X / 重叠页 / 已有 user 页".
+Draw small distinct planned page icons with "<=256 页" text exactly "加载页合计 ≤ 256". Banner "先整体验证，再修改新地址空间。"
+
+(c) orange "装页：清零 → 映射 → 拷贝". Three boxes in order "每页清零" -> "映射权限" -> "复制文件字节". Illustrate a segment [file bytes | BSS zero] labeled "mem_size" above whole, "file_size" below first, "BSS = 0" below tail. Small permission cards "可执行只读页" and "可写 NX 页". Note "暂存缓冲 RAII 释放；中途失败由调用者销毁新空间". Banner "文件偏移、虚拟地址、物理页不是一回事。"
+
+(d) lavender "正式 user 布局：栈向下长". Draw a clear vertical memory column with low addresses at bottom and high at top:
+top exclusive marker "0x800000 栈顶";
+large blue "用户栈 64 KiB" from 0x7F0000 to 0x800000, DOWN arrow inside labeled "栈向下";
+marker "0x7F0000 栈底";
+tiny red dashed band "保护页 4 KiB · 不映射" between 0x7EF000 and 0x7F0000;
+marker "0x7EF000 heap_limit";
+orange "动态堆" below guard and above image_end, UP arrow labeled "堆向上";
+marker "image_end / heap_base";
+green "ELF 段";
+bottom marker "0x400000 user 起点".
+Side bracket completewindow "4 MiB 私有窗口". Banner "两根 supervisor 内核栈不在此 user 窗口。"
+Do not scale the guard to another 64KiB region. Do not reverse stack arrow or put guard above stack. Ensure all exact hex numbers have six hex digits as specified.
+
+(e) pink "brk：传地址，失败保留旧值". Central "brk(0) 查询当前 break". Then branch "增长" -> "立即分配 / 清零 / W+NX" -> "成功更新 break"; failure separate arrow "失败 → 撤销本次新页 → 旧 break". Second branch "缩小" -> "还整页 + 清保留页尾". Banner "有效请求在 heap_base..heap_limit；不是按需缺页。"
+
+(f) sky-blue "用户包装保持 ABI 一致". Compact syscall-number table "open 19 | brk 20 | pipe 22 | wait 16" second line "UDP 36..40 | SMP 41", arrows all to "int 0x80". Two compact schema cards "SMP snapshot：128 B · ABI 1" "UDP metadata：12 B · reserved = 0". Banner "包装传参数；内核仍逐项验证所有边界。"
+
+Footer "图 U · 本图只展示已实现的加载、内存布局和用户 ABI。"
+

@@ -1,0 +1,6 @@
+编辑这张已有六栏教学图，保持约16:9白底浅色六栏、标题、文字大小，精确修以下代码逻辑。
+(b) 示例输入不能用vim的“: 2d”，OS64 edit实际命令是“delete 2”。两个输入／回显框改为“delete 2”，退格后的框改为“delete ”，都无冒号。512B界限保留。
+(c) 用ASCII保证字节偏移准确：文档第一行写“abc\n”，第二行写“def”，说明反斜杠n表示一个换行字节。行号1→偏移0，行号2→偏移4。删除旧的中文“第一行”加偏移7例子，不能把汉字个数当字节数。
+(d) reserve框小字改“插入时确保容量”，删除操作不需要reserve，其它memmove与dirty=true保留。
+(e) replace_file框小字“写入新文件”改“完整替换正文”。只有replace和sync都成功才到dirty=false；从replace和sync两个框的失败分支都指向“编辑仍在内存”，标签“任一步失败”。不能只画replace失败才保留编辑。
+(f) 必须修箭头：dirty=false→quit→释放两个Buffer→退出；dirty=true→quit→“拒绝退出，继续编辑”，这条分支不能接释放Buffer、不能退出，应该回到编辑循环；dirty=true→quit!→释放两个Buffer→退出。现在拒绝未保存的quit也连释放是错误。加“quit不自动保存”“没有undo”，其余(a)保持。

@@ -2,6 +2,8 @@
 
 本章接在 [进程运行教程](PROCESS_RUNTIME.md) 和 [性能教程](PERFORMANCE_TUTORIAL.md) 后面。先把程序在一核下跑通，再读这里。代码入口是 `kernel/cpu/smp.cpp`、`kernel/task/scheduler.cpp`、`kernel/task/context_switch.asm`。这一版最多支持四个 CPU；内核服务串行，用户计算可以并行。
 
+配套 [调度逐函数图解](illustrated/SCHEDULER_FUNCTIONS.md) 画出就绪队列、切栈、睡眠唤醒和回收；[分块归约实验](illustrated/PARALLEL_REDUCTION.md) 把这些机制用到可运行的多进程任务池中。每个函数都能从 [总索引](illustrated/FUNCTION_INDEX.md) 定位。
+
 ## 1. 多进程为什么不自动等于多核
 
 把十二个计算程序放到一颗 CPU 上，CPU 只能交替执行它们。每个程序都能前进，但所有计算仍要排队。两个 CPU 则可以在同一个时间段各执行一个程序。这才是这里要验证的并行。

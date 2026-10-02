@@ -17,7 +17,8 @@ struct KernelLogRecord {
 static_assert(sizeof(KernelLogRecord)==128, "log syscall ABI");
 struct KernelLogStats { uint64_t next_sequence, overwritten, count; };
 
-// Single CPU: bounded CLI critical sections preserve the caller's IF.
+// Runtime callers hold the CPU-owned kernel gate; bounded local CLI sections
+// preserve the caller's IF. Early initialization runs before AP concurrency.
 // The record writer never calls serial, allocates, blocks or formats numbers.
 void kernel_log_initialize();
 void kernel_log_write(KernelLogLevel level, const char* component, const char* message);

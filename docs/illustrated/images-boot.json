@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "purpose": "SMP boot, CPU-owned kernel gate and validated firmware topology tutorial illustrations",
+  "generator": "built-in image_gen.imagegen",
+  "skill": "/Users/zhuzhumingyang/.codex/skills/.system/imagegen/SKILL.md",
+  "output_policy": "Selected generated PNG files copied byte-for-byte into the repository; original generated images remain in place.",
+  "qa_method": "Visual inspection of each generatedImage return against audited source and figure specifications; SHA256 source-copy equality and dimensions checked.",
+  "figures": [
+    {
+      "name": "smp-boot",
+      "source_output": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-04cfa3ab-35a7-4a3c-92dd-434c2802dfd9.png",
+      "target": "docs/illustrated/images/smp-boot.png",
+      "prompt": "docs/illustrated/prompts/smp-boot.txt",
+      "sha256": "b707aa17371959533061fe98cb70646f10a5a793a4c2254c7d73ce7d6df4da51",
+      "width": 1672,
+      "height": 941,
+      "qa_status": "passed",
+      "qa_checks": [
+        "Three-column, two-row layout and readable Chinese text",
+        "AP mailbox at 0x7e00 and startup code at 0x7000 distinct",
+        "Sequential AP startup and mailbox reuse only after online",
+        "16-to-32-to-64-bit startup bridge",
+        "Each CPU owns GDT/TSS/RSP0/IST1; one shared IDT",
+        "Clean 512B x87/SSE template, no AVX/XSAVE claim",
+        "online_count + 1 precedes release online = 1, which precedes waiting for BSP-owned kernel gate"
+      ]
+    },
+    {
+      "name": "kernel-gate",
+      "source_output": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-7458d29d-cb67-4777-a5af-fa0e9b424bf4.png",
+      "target": "docs/illustrated/images/kernel-gate.png",
+      "prompt": "docs/illustrated/prompts/kernel-gate.txt",
+      "sha256": "c0a3dcf87828eada5125e1c2b907de902a7d81f09860e2b6a3cc05963b3c83a4",
+      "width": 1672,
+      "height": 941,
+      "qa_status": "passed",
+      "qa_checks": [
+        "Concurrent user computation and one shared serial kernel service",
+        "CPU owner and no recursive lock count",
+        "Save IF, CLI, acquire/CAS, conditional restoration of IF",
+        "User/idle exits release only with IF = 0; kernel return retains gate",
+        "Only BSP PIT advances global time; AP timer records local statistics",
+        "user_ticks includes kernel service time attributed to that user thread",
+        "Reschedule IPI 0xF1; EOI before possible stack switch; spurious 0xFF has no EOI"
+      ]
+    },
+    {
+      "name": "topology",
+      "source_output": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-da0fb4df-c236-47b0-b0d4-7d39a54b1ca9.png",
+      "target": "docs/illustrated/images/topology.png",
+      "prompt": "docs/illustrated/prompts/topology.txt",
+      "edit_prompt": "docs/illustrated/prompts/topology-edit.txt",
+      "edit_input": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-3c43-7a03-b112-285ac3995919/exec-63f8dda9-5456-4f86-b9cb-ab29308a59f3.png",
+      "discarded_first_generation_reason": "The first generation invented incorrect EBDA absolute-address annotations. It was not copied into the repository; only built-in imagegen edited the text in panel (a).",
+      "sha256": "946ff019218915cf5defce81f3103c92b7b5d45ff27f551929e0c751fc51f889",
+      "width": 1672,
+      "height": 941,
+      "qa_status": "passed_after_one_targeted_imagegen_edit",
+      "qa_checks": [
+        "EBDA base comes from BIOS 0x40e and code accepts 0x80000 <= base < 0xa0000",
+        "Conventional-memory size comes from BIOS 0x413; last 1KiB scan is MP-only",
+        "ACPI first then MP fallback; 16-byte candidate stride",
+        "RSDP-to-RSDT/XSDT-to-MADT chain with 32/64-bit pointer width",
+        "Type 0 enabled LAPIC enumeration and Type 5 LAPIC address override",
+        "BSP internal index 0 distinguished from hardware APIC ID",
+        "Four-CPU cap still checks later duplicate IDs",
+        "Little-endian 34 12 maps to 0x1234; APIC ASCII hex bytes correct",
+        "ID 255 broadcast rejected for unicast; x2APIC unsupported; complete MSR address match",
+        "Nonzero aligned LAPIC address below 4GiB; publish topology only after validation"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+Use case: scientific-educational
+Asset type: Chinese operating-system tutorial infographic, original raster illustration for a Markdown textbook.
+Create a polished landscape 3:2 information sheet, like a rigorous Chinese Redis Set educational overview: white background, bold black Chinese serif main title, subtitle, exactly 3 columns by 2 rows of six rounded panels labeled in circular badges a,b,c,d,e,f. Pastel blue/green/orange/purple/pink/blue panels with crisp thin colored borders, generous margins, readable Chinese black text, meaningful arrows and stacked rectangles. No photorealism, no logos, no watermark. Text is concise and exact. Long function names belong in the Markdown; use short technical words only in the diagram.
+Title verbatim: “上下文切换：把线程的继续位置交接好”
+Subtitle verbatim: “当前实现 · 持内核锁 · 关本地中断 · 保存 RSP / CR3 / 浮点现场”
+
+(a) top-left blue, title “每核与每线程”
+Draw two separate labelled groups. Per CPU: “current”“slice”“preempt”“idle”, with CPU0 and CPU1 each own distinct current. Per TCB: “saved RSP”“saved CR3”“FX state”. Bottom short note “各核 current 独立，共享 ready 队列”.
+
+(b) top-middle green, title “新线程的初始栈”
+Show a vertical stack of cells, top marked 高地址 and bottom 低地址. Cells top to bottom EXACTLY: “bootstrap 返回地址”, “RFLAGS = 0x2 (IF=0)”, “rbp / rbx / r12–r15”. A saved RSP arrow points to the low end of the register block. Beside it show “恢复寄存器 → popfq → ret → bootstrap”. Bottom note “首次恢复也像一次暂停后的调用”.
+
+(c) top-right orange, title “切换顺序，不能打乱”
+Draw a numbered vertical flow, six steps:
+“1 持 BKL + CLI”
+“2 记录旧 CR3”
+“3 更新新 current / 本核 TSS.RSP0”
+“4 保存浮点与旧 RSP”
+“5 加载新 CR3”
+“6 加载新 RSP，恢复并 ret”
+All six steps surrounded by an uninterrupted red bracket labelled “锁一直保留”. Bottom red note verbatim: “旧 RSP 保存前：禁止放锁或开中断”.
+Make clear there is no lock-release between publishing current and saving old RSP. Do not add any unlock between steps.
+
+(d) bottom-left purple, title “用户线程的两根内核栈”
+Draw 2 separate vertical stack blocks, each titled:
+“调度栈 32 KiB” with text “保存启动与最终返回现场”
+“进入栈 32 KiB” with text “TSS.RSP0 接 syscall / IRQ”
+Draw below a third distinct block “用户栈 64 KiB，独立页表”.
+Bottom note “进入栈不能覆盖最终返回现场”. Do not merge these three stacks.
+
+(e) bottom-middle pink, title “什么时候释放内核锁”
+Two exact left-to-right pathways:
+“返回用户态” : “完整 iret 帧” → “IF=0 放锁” → “iretq 恢复用户 IF”
+“idle 等待” : “current / RSP 稳定” → “放锁” → “sti; hlt; cli” → “重新拿锁”
+Below them a bold small note “内核线程继续持锁”.
+The lock must be released only at the indicated user-return / idle points.
+
+(f) bottom-right blue, title “三条必须守住的规则”
+Three numbered statements:
+“同一 TCB 不能同时运行在两核”
+“current / TSS / CR3 / RSP / FX 必须一致”
+“用户指令并行，内核服务由 BKL 串行”
+Bottom pale yellow note “当前没有线程迁移、AVX / XSAVE”.
+Bottom caption across sheet: “记忆：交接期间锁不放；完整用户返回或 idle 才放锁。”
+Accuracy constraints: This is fixed CPU binding + big kernel lock, never illustrate work stealing, lock-free scheduling, shared user threads or already implemented migration. No statement that only six registers make up a full user trap frame. Preserve all Chinese labels legibly, prefer larger readable text over decorative details.

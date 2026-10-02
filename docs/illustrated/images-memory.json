@@ -1,0 +1,207 @@
+{
+  "schema_version": 1,
+  "source_revision": "67efd0d008e0b58b31c89ad4ecfbab502416e087",
+  "documents": [
+    "docs/illustrated/SYSTEM_MEMORY_FUNCTIONS.md",
+    "docs/illustrated/USER_ABI_FUNCTIONS.md"
+  ],
+  "definition_coverage": 288,
+  "tool": "image_gen.imagegen",
+  "mode": "built-in",
+  "raster_generation_only": true,
+  "code_drawn_images": false,
+  "source_images_retained": true,
+  "images": [
+    {
+      "label": "K",
+      "name": "kernel-bringup",
+      "destination": "docs/illustrated/images/kernel-bringup.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-b213fe58-ad80-4466-9709-9ef71cba7ce0.png",
+      "earlier_generated_paths": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-54e83e09-bb4b-4a9b-8de4-4955e599d5b2.png"
+      ],
+      "prompt_files": [
+        "docs/illustrated/prompts/kernel-bringup.txt",
+        "docs/illustrated/prompts/kernel-bringup-edit.txt"
+      ],
+      "sha256": "7db4006d45c7fec1c07e62ff7882474a8766a5533664ee2ec7dd72a6953e216b",
+      "width": 1659,
+      "height": 948,
+      "visual_qa": {
+        "status": "passed_after_imagegen_edit",
+        "checks": [
+          "启动顺序与BSP/AP固定绑定符合源码",
+          "保留持久盘晚于启动夹具测试",
+          "直接映射VA完整16位十六进制"
+        ],
+        "repair": "修正生成器省略直接映射地址中的零。"
+      }
+    },
+    {
+      "label": "A",
+      "name": "physical-pages",
+      "destination": "docs/illustrated/images/physical-pages.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-a74b8194-d5e5-4958-87dc-f8a80c9489aa.png",
+      "earlier_generated_paths": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-feede024-0bbb-49ff-9f5b-9e493bfd2fec.png"
+      ],
+      "prompt_files": [
+        "docs/illustrated/prompts/physical-pages.txt",
+        "docs/illustrated/prompts/physical-pages-edit.txt"
+      ],
+      "sha256": "ef0e9409fd052aee35e08f36026156779a8744da0dcc46cf59912d38788c5f49",
+      "width": 1659,
+      "height": 948,
+      "visual_qa": {
+        "status": "passed_after_imagegen_edit",
+        "checks": [
+          "完整4KiB页与保留区优先",
+          "8位候选示例逐位核对",
+          "free通过和拒绝两条独立分支",
+          "256MiB/65536页/两bitmap16KiB一致"
+        ],
+        "repair": "修正首版free成功后又连拒绝框的错误箭头。"
+      }
+    },
+    {
+      "label": "V",
+      "name": "paging-address-space",
+      "destination": "docs/illustrated/images/paging-address-space.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-c31d2016-9eb0-407b-9a0c-fc83afecccdc.png",
+      "earlier_generated_paths": [],
+      "prompt_files": [
+        "docs/illustrated/prompts/paging-address-space.txt"
+      ],
+      "sha256": "f64ea5bfad8b3d6a6ca48d1497bfa573d6f4f2a8b9710e5d47857b225324e704",
+      "width": 1660,
+      "height": 948,
+      "visual_qa": {
+        "status": "passed",
+        "checks": [
+          "9/9/9/9/12位及大页读解析",
+          "0xFFFF800000000000加PA，128个2MiB叶",
+          "新表和父权限失败回滚",
+          "4MiB私有user窗口",
+          "本核invlpg、全CPU current生命周期边界、无shootdown",
+          "NX条件与MMIO权限边界"
+        ]
+      }
+    },
+    {
+      "label": "H",
+      "name": "heap-memory",
+      "destination": "docs/illustrated/images/heap-memory.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-8832ece1-cb71-47f7-ba29-6488e2972fef.png",
+      "earlier_generated_paths": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-8897e001-c90c-4639-ad36-cc0bf11b6eee.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-dfa5ae96-c5ab-4f47-a49c-3b8016c6a27d.png"
+      ],
+      "prompt_files": [
+        "docs/illustrated/prompts/heap-memory.txt",
+        "docs/illustrated/prompts/heap-memory-edit.txt",
+        "docs/illustrated/prompts/heap-memory-edit2.txt"
+      ],
+      "sha256": "ff90802050d4ba1f503ad0c75ff992d1ff832895c8269731d0d1c58e4f3ca9b4",
+      "width": 1659,
+      "height": 948,
+      "visual_qa": {
+        "status": "passed_after_imagegen_edits",
+        "checks": [
+          "16–20MiB内核窗口、32B分配头/16B空闲头",
+          "first-fit选择第一个合适块",
+          "free按虚拟地址顺序合洞，不还内核映射页",
+          "C++先构造/先析构",
+          "用户分配不清零且非法/重复free由调用者避免",
+          "brk尾部可还整页，尚无perCPU/SLAB",
+          "release 先标空合并再缩 brk；缩 brk 失败保留可复用空闲块，页面仍映射"
+        ],
+        "repair": "修正生成器把虚拟地址合洞标成物理顺序。 继续定点修改用户堆横条，明确缩 brk 失败与 resize 替换分配失败不同。"
+      }
+    },
+    {
+      "label": "S",
+      "name": "syscall-boundary",
+      "destination": "docs/illustrated/images/syscall-boundary.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-f9ea9554-9cbf-4495-8533-8ef35ce8090d.png",
+      "earlier_generated_paths": [],
+      "prompt_files": [
+        "docs/illustrated/prompts/syscall-boundary.txt"
+      ],
+      "sha256": "768f2faea0b01b17822815eaeb3124de9f01042cf04b4bfa7cbf88e4cf98a306",
+      "width": 1659,
+      "height": 948,
+      "visual_qa": {
+        "status": "passed",
+        "checks": [
+          "五参数int80与signed返回",
+          "本核TSS.RSP0、IF与BKL分工",
+          "完整范围和read/write方向权限",
+          "69632/63+NUL/1200边界",
+          "FD公开/内部映射",
+          "公开waitpid成功串联wait与reap",
+          "UDP/brk独立错误约定"
+        ]
+      }
+    },
+    {
+      "label": "U",
+      "name": "elf-user-abi",
+      "destination": "docs/illustrated/images/elf-user-abi.png",
+      "source_generated_path": "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-3197e768-2d46-4ab7-bb53-62134be2eeb7.png",
+      "earlier_generated_paths": [
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-15698373-af07-4a5d-baef-325db612500b.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-7922ab59-5b42-4b6e-ac24-9c41b592561d.png",
+        "/Users/zhuzhumingyang/.codex/generated_images/01a0fdbf-7fa2-7332-8113-be9e57a75a10/exec-804e5e54-5faf-4e31-9fde-2f65ac7eda73.png"
+      ],
+      "prompt_files": [
+        "docs/illustrated/prompts/elf-user-abi.txt",
+        "docs/illustrated/prompts/elf-user-abi-edit.txt",
+        "docs/illustrated/prompts/elf-user-abi-edit2.txt",
+        "docs/illustrated/prompts/elf-user-abi-edit3.txt"
+      ],
+      "sha256": "57ad15ad430959c9054ab0f48396c8bb3b25ba47fad8aae1972fc2e2fdaa497f",
+      "width": 1659,
+      "height": 948,
+      "visual_qa": {
+        "status": "passed_after_imagegen_edits",
+        "checks": [
+          "ELF64LE ET_EXEC，69632字节/8PH/256页",
+          "先整体计划再映射，拒W+X/重叠",
+          "file_size与mem_size/BSS零区",
+          "4MiB窗口/64KiB下向栈/4KiB未映射guard精确地址",
+          "brk(0)只读查询无突变箭头，new_break增长失败回滚",
+          "open19/brk20/pipe22/wait16/UDP36..40/SMP41",
+          "SMP128B ABI1/UDP12B reserved0",
+          "alignment=0/1允许；仅>1检查2幂与VA/偏移同余，③两行仅一个编号"
+        ],
+        "repair": "修正brk(0)查询错误连到增长/缩小，移除页索引上多余的≤256标注。 继续定点明确 ELF alignment>1 的条件，允许0/1；随后移除生成器新增的重复②编号。"
+      }
+    }
+  ],
+  "source_files": {
+    "kernel/core/kernel_main.cpp": "4d09028e1bbae10bcd72fa7b1dc1b163acae82e0d6b52ec477b8b7a448ff7243",
+    "kernel/memory/address_space.cpp": "35e184fccb158666374146712c78c27acfebdde2abca27dd84745e746dccc2da",
+    "kernel/memory/heap.cpp": "ead00a2b7a0e1bebdec0bcaf71a954a00a07bc7190e921ddf39396d490acf5fa",
+    "kernel/memory/kmemory.cpp": "f4a54451120ee33e077a560dc49c627820a9248252769ca0871e89dd18c98a93",
+    "kernel/memory/kmemory.hpp": "74ee2e3a04f6b225c12261016d49c5767eafdf2f3dc24858153a970d4b8d4717",
+    "kernel/memory/page_allocator.cpp": "38302fd0d94f24c72a3d24b7fe155d88e3946bd39a3d2be4253e64b5c6ddb5de",
+    "kernel/memory/paging.cpp": "b17137ca63e34762245422cd4c27649d37019ac009e2ca836d52c0db18fe4926",
+    "kernel/syscall/syscall.cpp": "fcbf8ab9c4998f73f66445b4c1aa7d652d92a69a55991f493da4bde71802921f",
+    "kernel/task/elf_loader.cpp": "655f1b562f8bc3a3108bffde1055494723a0b3020b958cf1cd187edc271ece5f",
+    "user/memory.cpp": "66f60f985e5f2616249df2a46e50ed9df608923b9c51a028e7ec01d7439017cf",
+    "user/os64.hpp": "09757343d124bc96b8869418dc94e572d07920512fd6d3c8a5e5525b840e30ca",
+    "user/smp.hpp": "86c01417830e8a9861e7f1d1b6bbe84f13b688199f0420e85da2bfbf187e92d4",
+    "user/udp.hpp": "a595505cb4ce1fd7d1ab95b2a374131c8048ceeef5c2f3d11fd7086c45e45e11"
+  },
+  "documentation_qa": {
+    "exact_inventory_definition_set_match": 288,
+    "system_memory_rows": 181,
+    "user_abi_rows": 107,
+    "duplicate_source_positions": 0,
+    "table_column_check": "passed",
+    "all_image_links_exist": true,
+    "source_file_hashes_match_inventory": true,
+    "runtime_source_edited": false,
+    "build_or_vm_performed": false
+  }
+}
