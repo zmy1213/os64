@@ -1,5 +1,9 @@
 # 从“第一版 scheduler-managed user thread”到“scheduler 正式接管 ELF 用户线程”
 
+> **文档状态：历史阶段详解——从“第一版 scheduler-managed user thread”到“scheduler 正式接管 ELF 用户线程”。**
+> 正文中的“当前”“这一轮”“下一步”和日志数值指该篇对应的开发阶段，不是最新版本的能力清单。当前支持 run、argv、spawn/waitpid、用户抢占、异常隔离和资源回收；用户内存、ELF 大小和栈布局已继续升级。本篇的一次性烟测与固定小程序不是当前全部能力。
+> 初次运行请读 [从零开始的当前版本教程](./BEGINNER_TUTORIAL.md)；最新行为见 [进程运行时](./PROCESS_RUNTIME.md) 与 [持久化存储](./PERSISTENT_STORAGE.md)。代码片段用于解释原理，不要按旧篇重建/覆盖整个当前仓库；历史 smoke 输出不要求逐字匹配。
+
 先说这一步到底做了什么：
 
 > 上一轮我们已经有两条线了：

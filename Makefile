@@ -1,5 +1,5 @@
 .NOTPARALLEL:
-.PHONY: all build stage1 users check-env run run-gui run-stage1 run-stage1-gui test test-stage1 test-system test-storage-host test-page-fault test-invalid-opcode reset-data clean distclean
+.PHONY: all build stage1 users check-env run run-gui run-stage1 run-stage1-gui test test-stage1 test-system test-storage-host test-memory-host test-memory-user test-page-fault test-invalid-opcode update-tools reset-data clean distclean
 
 all: build
 build stage1:
@@ -19,7 +19,7 @@ run-gui run-stage1-gui: build
 
 # Old milestones use the immutable RAM fixture; the system suite uses its own
 # temporary IDE data disk and never writes build/data.img.
-test: test-stage1 test-system test-storage-host test-page-fault test-invalid-opcode
+test: test-stage1 test-system test-storage-host test-memory-host test-memory-user test-page-fault test-invalid-opcode
 	@$(MAKE) --no-print-directory build
 
 test-stage1: build
@@ -30,6 +30,16 @@ test-system: build
 
 test-storage-host: build
 	@bash scripts/test-storage-host.sh
+
+test-memory-host:
+	@bash scripts/test-memory-host.sh
+
+test-memory-user: build
+	@bash scripts/test-memory-user.sh
+
+# Update only /bin, with a complete backup; stop QEMU before running this target.
+update-tools: build
+	@python3 scripts/update-tools.py
 
 test-page-fault:
 	@bash scripts/test-page-fault.sh

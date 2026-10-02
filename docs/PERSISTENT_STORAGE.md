@@ -55,3 +55,47 @@ OS64FS v3 的明确限制：
 ATA 字段和命令依据厂商的
 [ATA 设备手册](https://www.seagate.com/www-content/product-content/momentus-fam/momentus-thin/en-us/docs/100713732k.pdf)；
 QEMU 启动时需将数据镜像接到 if=ide,index=0，启动镜像保持 if=floppy,index=0。
+
+## 实际验证记录
+
+2026-10-02 的完整回归通过。系统测试使用数据模板的独立副本：
+第一次启动从用户程序和 shell 写入文件、追加内容并删除文件；
+第二次冷启动重新挂载 ATA，核对普通文件和跨直接/间接块的大文件，
+然后删除它们；第三次冷启动确认删除也已持久化。每次启动均明确检查
+ATA 后端，正式 build/data.img 的内容保持不变。
+
+另外用独立 QEMU 镜像验证 ATA 缺盘、空数据盘、错误文件系统签名三个
+场景均返回 RAM 后端并进入可交互 shell。用
+[QEMU blkdebug 故障注入](https://www.qemu.org/docs/master/devel/testing/blkdebug.html)
+让所有数据盘写入返回 EIO，确认失败及回滚失败有界返回，writer 输出错误、
+以状态 1 退出，shell 的 ps 命令仍正常响应，数据镜像字节完全未改变。
+
+这些结果验证 QEMU 的 IDE/ATA 配置及教学系统的错误处理，不代表已经在
+物理电脑的不同磁盘控制器上验证。
+
+
+## 当前编辑器保存与工具更新
+
+从零操作、备份和逐层源码解释见 [当前版本主教程](./BEGINNER_TUTORIAL.md)，
+编辑器完整命令演练见 [user/README.md](../user/README.md)。
+
+用户 syscall 21 `replace_file(path, buffer, size)` 把创建或完整替换交给一次
+OS64FS 变更事务，成功返回写入字节数，失败返回负错误。编辑器不先做单独
+open(TRUNC)，因此随后写失败不会因两次事务拆分而提前清空原文。保存失败
+时内存编辑缓冲仍在，quit 会提醒未保存；可腾出空间后重试，或 quit! 放弃。
+
+内存/用户回归已在独立 QEMU 盘上验证编辑器多行操作、超过 4 KiB 的文本、
+拒绝超过 32 KiB 文本、短文本覆盖不留旧尾巴、quit! 不改已保存文件和冷启动
+重新载入。额外填满数据盘后保存约 8 KiB 修改，确认失败、原 18 字节文件保持
+完整、内存修改仍可 print、Shell 可继续。非法 replace_file 指针/路径/长度
+被拒绝。这些结果证明空间不足及可处理运行时错误的保护，不增加断电原子性保证。
+
+宿主 `make update-tools` 在关闭 QEMU 后更新默认 `build/data.img` 中的 /bin。
+它使用同一 OS64FS 实现在副本上写入、校验并重新挂载，更新前后对比所有非
+/bin 文件的内容、inode 与 mode；成功后才替换镜像，保留完整的
+`data.img.backup-UTC时间戳`。盘在用或空间不足时不替换原盘。普通 make clean
+保留 data.img 和这些备份，distclean 则删除整个 build。
+
+当前流程不会改用户盘里的 /readme.txt 等旧说明文本：即使其中写着历史的
+read-only，也不等于实际存储后端只读。以 storage_backend 日志、当前文档和
+跨重启读写验证为准。

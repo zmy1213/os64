@@ -1,221 +1,91 @@
-# 小白版源码阅读地图
+# 当前版本源码阅读地图
 
-这份文档不是讲“怎么构建”，而是讲：
+如果你看到许多目录却不知道从哪里开始，先拿一个刚运行过的命令追源码。完整解释与练习见 [从零主教程](./BEGINNER_TUTORIAL.md)；这里负责回答“我要研究这件事，应打开哪个文件”。
 
-> 这个仓库每一层代码到底在干什么，你应该先看谁、后看谁。
-
-如果你现在看到 `boot/`、`kernel/`、`user/` 一堆目录就头大，先看这份。
-
-## 1. 先记住整条主线
-
-这个项目当前最重要的一条链，不是所有功能一起看，而是先看这一条：
+## 1. 按实际运行顺序定位
 
 ```text
-BIOS
--> boot/stage1.asm
--> boot/stage2.asm
--> kernel/boot/boot_info.hpp
--> kernel/core/kernel_main.cpp
--> kernel/storage/boot_volume.*
--> kernel/storage/block_device.*
--> kernel/fs/os64fs.*
--> kernel/fs/file.* / directory.*
--> kernel/fs/vfs.*
--> kernel/fs/fd.*
--> kernel/syscall/*
--> kernel/shell/*
+宿主构建脚本生成镜像
+→ QEMU BIOS → stage1 → stage2 → entry64 → kernel_main
+→ 内存/中断/调度基础设施
+→ RAM 自测 → ATA 数据盘挂载
+→ Shell 与用户进程 → syscall → 文件层 → 磁盘
 ```
 
-一句话解释这条链：
+| 你想解释的现象 | 对应文件/函数 | 再往下看 |
+| --- | --- | --- |
+| make 产生什么 | scripts/build-stage1-image.sh | build-user.sh、make-volume.py、make-boot-image.py |
+| stage1 ok | boot/stage1.asm 的 start | load_stage2、BIOS int13 |
+| e820 / long mode ok | boot/stage2.asm | collect_e820、setup_page_tables、long_mode_start |
+| 第一次进入 C++ | kernel/boot/entry64.asm | BootInfo、kernel_main |
+| mem_free_pages | kernel/memory/page_allocator.cpp | E820 available/allocated 位图 |
+| 为什么高物理页能访问 | kernel/memory/paging.cpp | paging_initialize_direct_map、paging_physical_pointer |
+| 相同虚拟地址为何独立 | kernel/memory/address_space.cpp | clone/map/unmap/destroy、CR3 |
+| kmalloc 怎样切小块 | kernel/memory/heap.cpp、kmemory.cpp | 空闲链分割/合并、页映射 |
+| run 打印入口和退出码 | kernel/shell/shell.cpp 的 handle_run_command | scheduler_create_user_elf_thread |
+| ELF 文件怎样变成内存 | kernel/task/elf_loader.cpp | PT_LOAD 校验、逐页分配与拷贝 |
+| 用户堆能变大 | kernel/syscall/syscall.cpp 的 sys_brk | address_space_unmap_user_page |
+| 程序从 main 开始 | user/start.asm | 初始 argc/argv 栈布局 |
+| 用户 print 怎样到屏幕 | user/os64.hpp | syscall.cpp、SyscallContext 输出回调 |
+| sleep / waitpid 不忙等 | kernel/task/scheduler.cpp | sleeping/blocked/ready 与唤醒 |
+| 用户正在计算却被打断 | kernel/interrupts/interrupts.cpp 的 kernel_handle_irq | PIT、UserTrapFrame、切换汇编 |
+| 键盘和串口文字输入 | keyboard.cpp、serial.cpp、console.cpp | IRQ 缓冲、read_stdin_stream |
+| 文件跨重启存在 | kernel/storage/ata_pio.cpp | BlockDevice、FLUSH CACHE |
+| 保存失败怎样保护原文 | kernel/fs/os64fs.cpp 的 mutate | staged_read/staged_write、校验/回滚 |
+| edit 修改与保存 | user/programs/edit.cpp | memory.cpp、replace_file、sys_replace_file |
+| 新工具安装保留笔记 | scripts/update-tools.py、tools/update_tools.cpp | OS64FS 副本验证、镜像替换 |
 
-- `stage1`：BIOS 先执行它，它只负责最小启动和把 `stage2` 读进来。
-- `stage2`：还在比较底层的环境里，负责开 A20、拿 E820、切保护模式、开 long mode、把内核和 boot volume 读到内存。
-- `BootInfo`：这是 `stage2` 交给 64 位内核的“启动说明书”。
-- `kernel_main.cpp`：64 位内核总入口，后面几乎所有子系统都从这里被初始化和烟测。
-- `BootVolume`：把 `stage2` 预读进内存的一段连续扇区，包装成“一个最小原始卷”。
-- `BlockDevice`：把“数据来自哪里”抽象掉，让文件系统以后只面对统一的按扇区读写接口。
-- `OS64FS`：真正的文件系统，负责 superblock、inode、目录项、路径解析、文件数据读写。
-- `file` / `directory`：把 inode 级接口包成“打开文件句柄”和“打开目录句柄”。
-- `VFS`：继续做一层统一包装，让更上层不直接依赖 `OS64FS` 的磁盘格式。
-- `fd`：把打开文件句柄再包成 `0`、`1`、`2` 这种小整数文件描述符。
-- `syscall`：把上面这些能力整理成用户态能调用的接口。
-- `shell`：把这些接口变成你在 `os64>` 里实际敲的命令。
+表里列的是仓库相对路径；可在代码编辑器按文件名打开，也可在宿主用 `rg 函数名 kernel user scripts` 搜索。函数行号会随修改改变，理解调用关系比记行号更可靠。
 
-## 2. 按目录看，每层负责什么
+## 2. 第一次只读接口，再读实现
 
-### `boot/`
+`.hpp` 通常定义结构、常量和函数声明；`.cpp` 实现具体动作。先读接口能知道一层收什么、还什么。例如：
 
-- `boot/stage1.asm`
-  512 字节 boot sector。它最重要的任务不是“做很多事”，而是“先活下来，然后把 stage2 读出来”。
-- `boot/stage2.asm`
-  真正的启动大头都在这里。你如果想明白“CPU 怎么从 BIOS 走到 64 位 C++ 内核”，这就是最关键文件。
+- PageAllocator 收 BootInfo，分配时返回**物理地址**。
+- paging 收虚拟/物理地址与权限，建立映射或给物理地址转换内核指针。
+- AddressSpace 记录某进程页表根和用户窗口。
+- PCB 收集进程资源，TCB 保存线程执行状态。
+- BlockDevice 提供按扇区读/写/flush 回调，FS 不直接写设备端口。
+- FileDescriptorTable 将小整数 fd 对应到文件句柄；每进程有自己的表。
 
-### `kernel/boot/`
+看到同一个类型被多层包装，不要先问“为什么这么绕”，先问“这一层增加了什么状态或约定”。文件句柄增加当前位置，fd 表增加整数索引，syscall 增加权限边界，Shell 增加命令解释。
 
-- `boot_info.hpp`
-  定义 `stage2 -> kernel` 的交接结构。你可以把它理解成启动期参数包。
-- `segments.hpp`
-  放段选择子之类的常量，给 long mode / TSS / ring3 代码共用。
-- `entry64.asm`
-  64 位内核汇编入口，负责从汇编过渡到 C++ 的 `kernel_main`。
+## 3. 三条推荐专题路线
 
-### `kernel/memory/`
+### 从启动读到用户程序
 
-- `page_allocator.*`
-  从 E820 可用内存里切 4 KiB 物理页。
-- `paging.*`
-  建页表、做虚拟地址映射。
-- `heap.*`
-  在页表和物理页之上，继续做更好用的堆分配器。
-- `kmemory.*`
-  再往上做 `kmalloc` / `kfree` / `knew` 这层更像正常内核 API 的接口。
-- `address_space.*`
-  每个进程自己的页表根和用户地址空间骨架。
+1. stage1 的 start/load_stage2。
+2. stage2 的 start、内存地图和模式切换。
+3. entry64/kernel_main 的交接，注意 bootstrap 栈 `0x180000`。
+4. direct map、物理页分配、私有 AddressSpace。
+5. handle_run_command → ELF loader → scheduler 用户线程。
+6. user/start.asm → main → int80 → exit/reap。
 
-### `kernel/interrupts/`
+先看 [主教程第 5–8 章](./BEGINNER_TUTORIAL.md)，再用 [PROCESS_RUNTIME](./PROCESS_RUNTIME.md) 补精确边界。
 
-- `interrupts.*`
-  IDT、异常入口、trap 分发。
-- `pic.*`
-  老式 PIC 控制器初始化。
-- `pit.*`
-  定时器中断来源。
-- `keyboard.*`
-  键盘扫描码输入。
-- `interrupt_stubs.asm`
-  汇编级中断入口桩，负责把 CPU 现场整理后交给 C++。
+### 从一个文件读到 ATA
 
-### `kernel/storage/`
+1. 用户 cat 或 edit 的 open/read/replace_file。
+2. syscall 的指针与路径检查。
+3. fd → VFS → FileHandle / OS64FS。
+4. inode/data bitmap 与目录项。
+5. mutate 的暂存/提交/回滚。
+6. BlockDevice → ATA 单扇区与 flush。
 
-- `boot_volume.*`
-  把 stage2 预读卷变成可按扇区访问的原始卷对象。
-- `block_device.*`
-  把原始卷再抽象成统一块设备接口。
+正式文件使用 ATA；BootVolume 仍用于早期 RAM 自测，不能据老目录地图推断“还没有磁盘驱动”。
 
-如果你想知道“为什么文件系统还没写 ATA 驱动却已经能 `cat` 文件”，重点看这两个文件。
+### 从内存测试读到页回收
 
-### `kernel/fs/`
+1. mem_test 的 brk 检查与 >1 MiB 分配。
+2. memory::allocate/release 的块账本和分割合并。
+3. sys_brk 扩张清零、缩小与失败撤销。
+4. 地址空间 unmap/destroy 与空页表回收。
+5. 物理页 available/allocated 位图与 free_page。
 
-- `os64fs.*`
-  真正的文件系统实现，最底层、最核心。
-- `file.*`
-  打开普通文件后的句柄层。
-- `directory.*`
-  打开目录后的句柄层。
-- `vfs.*`
-  统一文件系统接口层。
-- `fd.*`
-  小整数文件描述符层。
+全 256 MiB 管理范围仍受实际 E820 可用内存约束；低 1 MiB 和 `0x170000`–`0x180000` bootstrap 栈另行保留。
 
-如果你想知道下面几个问题，重点看这里：
+## 4. 如何使用旧教程
 
-- `ls` 为什么能列目录
-- `cat` 为什么能读文件
-- `stat` 为什么能看到 inode / block 信息
-- 为什么内核上层越来越少直接碰 `Os64FsInode`
+[文档索引](./README.md) 按主题列出原专题。每篇开头都说明其历史阶段与当前差异：小 ELF、单页栈、低页池、只读 RAM 卷、全局 fd/cwd 这些早期选择后来已改变。原篇里的例题仍有助于学原理，但不能抄旧地址常量覆盖当前设计。
 
-### `kernel/task/`
-
-- `scheduler.*`
-  调度器，负责线程切换、sleep/block/wake、时间片轮转。
-- `context_switch.asm`
-  真正切换上下文的汇编部分。
-- `elf_loader.*`
-  把 ELF 用户程序装进用户地址空间。
-- `user_mode.hpp`
-  用户态进入/返回涉及的结构和辅助声明。
-
-### `kernel/syscall/`
-
-- `syscall.*`
-  把 VFS、fd、stdin/stdout、cwd 等能力整理成用户态接口。
-
-### `kernel/shell/`
-
-- `shell.*`
-  命令解析、命令执行、输出、history、行编辑等交互逻辑。
-
-### `kernel/core/`
-
-- `kernel_main.cpp`
-  当前仓库最大的总控文件。
-  它不是单纯“入口函数”，而是：
-  初始化 + 烟测 + 日志 + shell 启动 的总装配现场。
-
-如果你第一次看它就晕，很正常。正确姿势不是从第 1 行硬啃到第 5000 行，而是先知道里面大致分成哪些区块：
-
-- 串口/VGA 输出工具函数
-- 字符串/数字小工具
-- boot info / E820 / 内存初始化
-- TSS / paging / heap / kmemory 烟测
-- boot volume / filesystem / file / directory / vfs / fd 烟测
-- syscall / int80 / stdin 烟测
-- timer / scheduler / keyboard / console / shell 烟测
-- 最后把 shell 作为线程交给 scheduler 跑起来
-
-## 3. 你如果只想先看“文件系统为什么能工作”
-
-按这个顺序看最顺：
-
-1. `boot/stage2.asm`
-   看 `load_boot_volume_from_disk`
-2. `kernel/boot/boot_info.hpp`
-   看 `BootInfo` 里 boot volume 那几个字段
-3. `kernel/storage/boot_volume.hpp`
-4. `kernel/storage/block_device.hpp`
-5. `kernel/fs/os64fs.hpp`
-6. `kernel/fs/file.hpp`
-7. `kernel/fs/directory.hpp`
-8. `kernel/fs/vfs.hpp`
-9. `kernel/fs/fd.hpp`
-10. `kernel/shell/shell.cpp`
-    再回头看 `ls` / `cat` / `stat` 命令怎么调上面这些层
-
-这条阅读顺序的核心思想是：
-
-> 先看“数据从哪里来”，再看“怎么解释成文件系统”，最后看“怎么变成命令”。
-
-## 4. 你如果只想先看“用户程序怎么跑起来”
-
-按这个顺序看：
-
-1. `kernel/task/elf_loader.*`
-2. `kernel/memory/address_space.*`
-3. `kernel/task/scheduler.*`
-4. `kernel/syscall/syscall.*`
-5. `kernel/core/kernel_main.cpp`
-   重点找这些函数：
-   `run_user_mode_smoke_test`
-   `run_user_file_program_smoke_test`
-   `run_user_elf_program_smoke_test`
-   `run_scheduler_elf_thread_smoke_test`
-
-## 5. 你现在最适合的读法
-
-如果你真的是“小白模式”，不要一开始追求“全部一下看懂”。
-
-推荐这个节奏：
-
-1. 先看 `boot/stage1.asm` 和 `boot/stage2.asm`
-2. 再看这次我补注释比较多的存储/文件系统接口层
-3. 再读 `docs/README.md` 里那条顺序文档链
-4. 最后才回去啃 `kernel/core/kernel_main.cpp`
-
-因为 `kernel_main.cpp` 是“把所有东西串起来的地方”，不是“最适合第一次入门的地方”。
-
-## 6. 一句最短总结
-
-这个仓库不是“很多孤立文件”，而是这 4 层不断往上包：
-
-```text
-硬件/启动
--> 内存/中断/调度基础设施
--> 存储/文件系统/系统调用
--> shell 和用户程序
-```
-
-你每次看不懂时，都先问自己一句：
-
-> 我现在看到的这一层，下面依赖谁，上面又服务谁？
-
-这样比死记函数名更容易真的看懂。
+当前 Shell 提示符是 `os64 % `，已有 run/spawn/wait/回收与可写数据盘；主教程、PROCESS_RUNTIME 和 PERSISTENT_STORAGE 是当前使用基准。不要为了读懂代码先从 kernel_main 第 1 行读完；每次只追一条你能实际验证的链。

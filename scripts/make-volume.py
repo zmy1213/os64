@@ -81,12 +81,19 @@ class Volume:
         image[2 * BLOCK:3 * BLOCK] = data_bitmap
         return image
 
-def fixture(build, sectors=128, inodes=32):
+def fixture(build, sectors=128, inodes=32, interactive=False):
     v = Volume(sectors, inodes)
-    readme = v.file(README)
-    notes = v.file(NOTES)
+    # 启动自测按字节比较历史 fixture，因此只更新交互盘的说明文字。
+    readme = v.file((b'os64fs readme: this teaching OS has user programs, a dynamic heap, '
+                     b'a line editor, and persistent ATA storage.\n') if interactive else README)
+    notes = v.file((b'os64fs notes: run /bin/edit /note.txt to edit text. Use save, then quit. '
+                    b'Changes stay in RAM until save. There is no power-loss journal yet.\n') if interactive else NOTES)
     docs = v.directory()
-    guide = v.file(GUIDE)
+    guide = v.file((b'os64fs guide: BIOS loads the kernel from disk.img. The boot self-test uses '
+                   b'an immutable RAM fixture, then the shell mounts data.img through ATA PIO. '
+                   b'User tools call the kernel to read and replace files; save flushes writes. '
+                   b'The filesystem has I/O rollback, but no journal for unexpected power loss.\n')
+                  if interactive else GUIDE)
     hello = v.file((build / 'hello.bin').read_bytes(), 493)
     elf = v.file((build / 'hello.elf').read_bytes(), 493)
     big = v.file(b''.join(bytes([65 + i]) * BLOCK for i in range(10)))
@@ -101,14 +108,14 @@ p.add_argument('--build-dir', type=Path, required=True)
 args = p.parse_args()
 b = args.build_dir
 (b / 'boot_volume.bin').write_bytes(fixture(b).encode())
-v = fixture(b, sectors=1024, inodes=64)
+v = fixture(b, sectors=1024, inodes=64, interactive=True)
 bin_dir = v.directory()
 v.entry(v.root, 'bin', bin_dir)
 for program in sorted((b / 'user').glob('*.elf')):
     if program.name.endswith('.unstripped.elf'):
         continue
     content = program.read_bytes()
-    if len(content) > 4096:
-        raise SystemExit(f'{program.name}: executable exceeds the 4096-byte ELF staging page')
+    if len(content) > 136 * BLOCK:
+        raise SystemExit(f'{program.name}: executable exceeds the 69632-byte OS64FS file limit')
     v.entry(bin_dir, program.stem, v.file(content, 493))
 (b / 'data_volume.bin').write_bytes(v.encode())

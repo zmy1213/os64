@@ -2,37 +2,75 @@
 
 namespace {
 
-constexpr uint64_t kRecyclableLimit = 0x200000;
+uint64_t align_up(uint64_t value) {
+  return (value + kPageSize - 1) & ~(kPageSize - 1);
+}
 
-void mark_allocated(PageAllocator* allocator, uint64_t page) {
-  if (page >= kAllocatorMinAddress && page < kRecyclableLimit) {
-    const uint64_t index = (page - kAllocatorMinAddress) / kPageSize;
-    allocator->low_page_allocated[index / 64] |= 1ULL << (index % 64);
+uint64_t clipped_end(const E820Entry& entry) {
+  // 加法溢出也只能裁到管理上界，不能绕回低地址而错误释放保留页。
+  if (entry.length > UINT64_MAX - entry.base) {
+    return kAllocatorManagedLimit;
+  }
+  const uint64_t end = entry.base + entry.length;
+  return end < kAllocatorManagedLimit ? end : kAllocatorManagedLimit;
+}
+
+void change_available_range(PageAllocator* allocator, uint64_t begin,
+                             uint64_t end, bool available) {
+  for (uint64_t page = begin / kPageSize; page < end / kPageSize; ++page) {
+    const uint64_t bit = 1ULL << (page % 64);
+    uint64_t& word = allocator->available_pages[page / 64];
+    if (available) {
+      word |= bit;
+    } else {
+      word &= ~bit;
+    }
   }
 }
 
-// 把地址向上对齐到 4 KiB 边界，比如 0x1003 会变成 0x2000。
-uint64_t align_up(uint64_t value, uint64_t alignment) {
-  if (alignment == 0) {
-    return value;
-  }
-
-  const uint64_t mask = alignment - 1;
-  return (value + mask) & ~mask;
+bool usable(const E820Entry& entry) {
+  return entry.type == kE820TypeUsable && (entry.extended_attributes & 1) != 0;
 }
 
-// 把地址向下对齐到 4 KiB 边界，比如 0x2abc 会变成 0x2000。
-uint64_t align_down(uint64_t value, uint64_t alignment) {
-  if (alignment == 0) {
-    return value;
+uint64_t allocate_between(PageAllocator* allocator, uint64_t minimum,
+                           uint64_t limit) {
+  if (allocator == nullptr || minimum >= kAllocatorManagedLimit ||
+      minimum > UINT64_MAX - (kPageSize - 1)) {
+    return 0;
+  }
+  if (minimum < kAllocatorMinAddress) {
+    minimum = kAllocatorMinAddress;
+  }
+  minimum = align_up(minimum);
+  if (limit > kAllocatorManagedLimit) {
+    limit = kAllocatorManagedLimit;
+  }
+  limit &= ~(kPageSize - 1);
+  if (minimum >= limit) {
+    return 0;
   }
 
-  return value & ~(alignment - 1);
-}
-
-// 这一轮把 usable 类型粗暴理解成“只有 type=1 才能分配”。
-bool is_usable_entry(const E820Entry& entry) {
-  return entry.type == kE820TypeUsable && entry.length != 0;
+  const uint64_t first = minimum / kPageSize;
+  const uint64_t last = limit / kPageSize;
+  for (uint64_t word_index = first / 64;
+       word_index <= (last - 1) / 64; ++word_index) {
+    uint64_t candidates = allocator->available_pages[word_index] &
+                          ~allocator->allocated_pages[word_index];
+    if (word_index == first / 64) {
+      candidates &= UINT64_MAX << (first % 64);
+    }
+    if (word_index == (last - 1) / 64 && (last % 64) != 0) {
+      candidates &= (1ULL << (last % 64)) - 1;
+    }
+    if (candidates == 0) {
+      continue;
+    }
+    const uint64_t bit_index = static_cast<uint64_t>(__builtin_ctzll(candidates));
+    allocator->allocated_pages[word_index] |= 1ULL << bit_index;
+    --allocator->free_page_count;
+    return (word_index * 64 + bit_index) * kPageSize;
+  }
+  return 0;
 }
 
 }  // namespace
@@ -41,169 +79,115 @@ bool initialize_page_allocator(PageAllocator* allocator, const BootInfo* boot_in
   if (allocator == nullptr || boot_info == nullptr) {
     return false;
   }
-
   allocator->range_count = 0;
   allocator->active_range = 0;
-  allocator->recycled_page_head = 0;
-  allocator->recycled_page_count = 0;
-  for (uint64_t& word : allocator->low_page_allocated) {
-    word = 0;
+  allocator->free_page_count = 0;
+  for (uint64_t i = 0; i < kAllocatorBitmapWords; ++i) {
+    allocator->available_pages[i] = 0;
+    allocator->allocated_pages[i] = 0;
   }
-
-  if (boot_info->memory_map_ptr == 0 ||
+  if (boot_info->memory_map_ptr == 0 || boot_info->memory_map_count == 0 ||
+      boot_info->memory_map_count > kMaxUsableRanges ||
       boot_info->memory_map_entry_size != sizeof(E820Entry)) {
     return false;
   }
+  const auto* entries = reinterpret_cast<const E820Entry*>(
+      static_cast<uintptr_t>(boot_info->memory_map_ptr));
 
-  const auto* entries =
-      reinterpret_cast<const E820Entry*>(static_cast<uintptr_t>(boot_info->memory_map_ptr));
-
-  // 把 E820 里的 usable 区域筛一遍，只留下真正适合“按页分配”的那部分。
-  // 这里做完以后，`allocator->ranges[]` 就变成内核后续真正会消费的“可用页池”。
+  // 第一遍加入可用整页；位图天然去重，同一页出现两次也不会被分配两次。
   for (uint16_t i = 0; i < boot_info->memory_map_count; ++i) {
     const E820Entry& entry = entries[i];
-    if (!is_usable_entry(entry)) {
+    if (!usable(entry) || entry.length == 0 || entry.base >= kAllocatorManagedLimit) {
       continue;
     }
-
-    uint64_t region_start = entry.base;
-    uint64_t region_end = entry.base + entry.length;
-    if (region_end <= region_start) {
+    uint64_t begin = entry.base < kAllocatorMinAddress ? kAllocatorMinAddress : entry.base;
+    begin = align_up(begin);
+    const uint64_t end = clipped_end(entry) & ~(kPageSize - 1);
+    if (begin < end) {
+      change_available_range(allocator, begin, end, true);
+    }
+  }
+  // 第二遍排除保留区，哪怕保留区只覆盖了某一页的一部分，这整页也不再可用。
+  for (uint16_t i = 0; i < boot_info->memory_map_count; ++i) {
+    const E820Entry& entry = entries[i];
+    if (usable(entry) || entry.length == 0 || entry.base >= kAllocatorManagedLimit) {
       continue;
     }
-
-    // 第一版故意只从 1 MiB 以上挑页，这样能避开 BIOS、bootloader、VGA 等低地址历史包袱。
-    if (region_start < kAllocatorMinAddress) {
-      region_start = kAllocatorMinAddress;
+    const uint64_t begin = entry.base & ~(kPageSize - 1);
+    const uint64_t end = align_up(clipped_end(entry));
+    change_available_range(allocator, begin, end, false);
+  }
+  // E820 只说明硬件 RAM 是否可用，不知道内核已经把其中一段拿来当启动栈。
+  // 即使 BIOS 将这一段报告为 usable，也必须从我们的可分配页里排除。
+  change_available_range(allocator, kAllocatorBootStackBase, kAllocatorBootStackLimit, false);
+  // 目前启动卷在 0x80000，已经落在低 1 MiB 保留区；仍显式保护传入的位置，
+  // 这样以后移动启动卷时，页分配器也不会误把它覆盖掉。
+  if (boot_info->boot_volume_ptr < kAllocatorManagedLimit &&
+      boot_info->boot_volume_sector_count != 0 && boot_info->boot_volume_sector_size != 0) {
+    const uint64_t begin = boot_info->boot_volume_ptr & ~(kPageSize - 1);
+    uint64_t end = boot_info->boot_volume_ptr +
+                   static_cast<uint64_t>(boot_info->boot_volume_sector_count) *
+                       boot_info->boot_volume_sector_size;
+    if (end > kAllocatorManagedLimit) {
+      end = kAllocatorManagedLimit;
     }
-
-    region_start = align_up(region_start, kPageSize);
-    region_end = align_down(region_end, kPageSize);
-    if (region_start >= region_end) {
-      continue;
-    }
-
-    if (allocator->range_count >= kMaxUsableRanges) {
-      break;
-    }
-
-    allocator->ranges[allocator->range_count].next_free = region_start;
-    allocator->ranges[allocator->range_count].limit = region_end;
-    ++allocator->range_count;
+    change_available_range(allocator, begin, align_up(end), false);
   }
 
-  return allocator->range_count != 0;
+  // 日志用 ranges 只是可用区间的快照。分配和回收完全由位图控制。
+  uint64_t range_begin = 0;
+  for (uint64_t page = kAllocatorMinAddress / kPageSize; page <= kAllocatorPageCount; ++page) {
+    const bool available = page < kAllocatorPageCount &&
+        (allocator->available_pages[page / 64] & (1ULL << (page % 64))) != 0;
+    if (available) {
+      ++allocator->free_page_count;
+      if (range_begin == 0) {
+        range_begin = page * kPageSize;
+      }
+    } else if (range_begin != 0) {
+      if (allocator->range_count < kMaxUsableRanges) {
+        allocator->ranges[allocator->range_count++] = {range_begin, page * kPageSize};
+      }
+      range_begin = 0;
+    }
+  }
+  return allocator->free_page_count != 0;
 }
 
 uint64_t alloc_page(PageAllocator* allocator) {
-  return alloc_page_below(allocator, UINT64_MAX);
+  return allocate_between(allocator, kAllocatorMinAddress, kAllocatorManagedLimit);
 }
 
 uint64_t alloc_page_below(PageAllocator* allocator, uint64_t limit) {
-  if (allocator == nullptr) {
-    return 0;
-  }
-
-  uint64_t* link = &allocator->recycled_page_head;
-  while (*link != 0) {
-    const uint64_t page = *link;
-    auto* const next = reinterpret_cast<uint64_t*>(static_cast<uintptr_t>(page));
-    if (page < limit && limit - page >= kPageSize) {
-      *link = *next;
-      --allocator->recycled_page_count;
-      mark_allocated(allocator, page);
-      return page;
-    }
-    link = next;
-  }
-
-  // 从当前 active_range 开始找，哪一段还有空页就从哪一段拿。
-  // 这就是第一版最朴素的“顺序分配”策略：不回收、不合并，只是一直往前切页。
-  for (uint16_t i = 0; i < allocator->range_count; ++i) {
-    PageAllocatorRange& range = allocator->ranges[i];
-    if (range.next_free >= range.limit ||
-        range.limit - range.next_free < kPageSize ||
-        range.next_free >= limit || limit - range.next_free < kPageSize) {
-      continue;
-    }
-
-    const uint64_t page = range.next_free;
-    range.next_free += kPageSize;
-    allocator->active_range = i;
-    mark_allocated(allocator, page);
-    return page;
-  }
-
-  return 0;
-}
-
-bool free_page(PageAllocator* allocator, uint64_t physical_address) {
-  if (allocator == nullptr || physical_address < kAllocatorMinAddress ||
-      physical_address >= kRecyclableLimit ||
-      (physical_address & (kPageSize - 1)) != 0) {
-    return false;
-  }
-  const uint64_t index = (physical_address - kAllocatorMinAddress) / kPageSize;
-  const uint64_t bit = 1ULL << (index % 64);
-  uint64_t& word = allocator->low_page_allocated[index / 64];
-  if ((word & bit) == 0) {
-    return false;
-  }
-  word &= ~bit;
-  *reinterpret_cast<uint64_t*>(static_cast<uintptr_t>(physical_address)) =
-      allocator->recycled_page_head;
-  allocator->recycled_page_head = physical_address;
-  ++allocator->recycled_page_count;
-  return true;
+  return allocate_between(allocator, kAllocatorMinAddress, limit);
 }
 
 uint64_t alloc_page_at_least(PageAllocator* allocator, uint64_t minimum) {
-  if (allocator == nullptr || minimum > UINT64_MAX - (kPageSize - 1)) {
-    return 0;
+  return allocate_between(allocator, minimum, kAllocatorManagedLimit);
+}
+
+bool page_allocator_owns_page(const PageAllocator* allocator, uint64_t physical_address) {
+  if (allocator == nullptr || physical_address < kAllocatorMinAddress ||
+      physical_address >= kAllocatorManagedLimit ||
+      (physical_address & (kPageSize - 1)) != 0) {
+    return false;
   }
-  minimum = align_up(minimum, kPageSize);
-  for (uint16_t i = 0; i < allocator->range_count; ++i) {
-    PageAllocatorRange& range = allocator->ranges[i];
-    if (range.next_free >= range.limit || range.limit - range.next_free < kPageSize ||
-        minimum >= range.limit || range.limit - minimum < kPageSize) {
-      continue;
-    }
-    if (range.next_free < minimum) {
-      if (allocator->range_count == kMaxUsableRanges) {
-        continue;
-      }
-      // Preserve the low-address prefix for page tables and user physical pages.
-      PageAllocatorRange& suffix = allocator->ranges[allocator->range_count++];
-      suffix.next_free = minimum + kPageSize;
-      suffix.limit = range.limit;
-      range.limit = minimum;
-      mark_allocated(allocator, minimum);
-      return minimum;
-    }
-    const uint64_t page = range.next_free;
-    range.next_free += kPageSize;
-    mark_allocated(allocator, page);
-    return page;
+  const uint64_t page = physical_address / kPageSize;
+  const uint64_t bit = 1ULL << (page % 64);
+  return (allocator->available_pages[page / 64] & bit) != 0 &&
+         (allocator->allocated_pages[page / 64] & bit) != 0;
+}
+
+bool free_page(PageAllocator* allocator, uint64_t physical_address) {
+  if (!page_allocator_owns_page(allocator, physical_address)) {
+    return false;
   }
-  return 0;
+  const uint64_t page = physical_address / kPageSize;
+  allocator->allocated_pages[page / 64] &= ~(1ULL << (page % 64));
+  ++allocator->free_page_count;
+  return true;
 }
 
 uint64_t count_free_pages(const PageAllocator* allocator) {
-  if (allocator == nullptr) {
-    return 0;
-  }
-
-  // 每一段还能拿多少页 = (limit - next_free) / 4096，
-  // 最后把所有 usable 段的剩余页数加起来。
-  uint64_t total = allocator->recycled_page_count;
-  for (uint16_t i = 0; i < allocator->range_count; ++i) {
-    const PageAllocatorRange& range = allocator->ranges[i];
-    if (range.limit <= range.next_free) {
-      continue;
-    }
-
-    total += (range.limit - range.next_free) / kPageSize;
-  }
-
-  return total;
+  return allocator != nullptr ? allocator->free_page_count : 0;
 }

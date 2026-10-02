@@ -2,6 +2,7 @@
 
 #include "fs/file.hpp"
 #include "memory/paging.hpp"
+#include "memory/kmemory.hpp"
 #include "runtime/runtime.hpp"
 
 namespace {
@@ -16,14 +17,10 @@ constexpr uint8_t kElfCurrentVersion = 1;
 constexpr uint16_t kElfTypeExecutable = 2;
 constexpr uint16_t kElfMachineX86_64 = 0x3E;
 
-struct StagingPage {
-  PageAllocator* allocator;
-  uint64_t page;
-  ~StagingPage() {
-    if (page != 0) {
-      (void)free_page(allocator, page);
-    }
-  }
+// 作用域结束自动释放文件缓冲区，包括验证失败的每条返回路径。
+struct StagingBuffer {
+  uint8_t* bytes;
+  ~StagingBuffer() { if (bytes != nullptr) (void)kfree(bytes); }
 };
 
 // ELF loader 里的对齐 helper 本质上都在服务“按页映射”：
@@ -42,12 +39,6 @@ uint64_t align_up(uint64_t value, uint64_t alignment) {
   }
 
   return (value + alignment - 1) & ~(alignment - 1);
-}
-
-bool page_is_directly_accessible_in_boot_identity_map(uint64_t physical_address) {
-  // 当前教学内核还依赖“低 2 MiB 恒等映射”这层早期假设：
-  // 只有落在这段范围里的物理页，内核此刻才能直接把“物理地址当指针”去访问它。
-  return physical_address != 0 && physical_address < kPagingBootIdentityLimit;
 }
 
 bool elf_header_is_valid(const Elf64FileHeader* header, size_t file_size_bytes) {
@@ -107,6 +98,12 @@ bool loadable_segment_is_valid(const AddressSpace* user_space,
   if (segment->type != kElfProgramTypeLoad ||
       segment->memory_size == 0 ||
       segment->memory_size < segment->file_size ||
+      (segment->flags & (kElfProgramFlagExecute | kElfProgramFlagWrite)) ==
+          (kElfProgramFlagExecute | kElfProgramFlagWrite) ||
+      (segment->alignment > 1 &&
+       ((segment->alignment & (segment->alignment - 1)) != 0 ||
+        (segment->virtual_address % segment->alignment) !=
+            (segment->offset % segment->alignment))) ||
       segment->offset > file_size_bytes ||
       segment->file_size > (file_size_bytes - segment->offset)) {
     return false;
@@ -116,7 +113,7 @@ bool loadable_segment_is_valid(const AddressSpace* user_space,
       segment->virtual_address + segment->memory_size;
   if (segment_end < segment->virtual_address ||
       segment->virtual_address < user_space->user_region_base ||
-      segment_end > user_space->user_region_limit) {
+      segment_end > kUserStackGuardBase) {
     return false;
   }
 
@@ -196,24 +193,19 @@ bool load_elf_user_program(PageAllocator* allocator,
   FileStat file_stat_result;
   if (!file_handle_stat(&file_handle, &file_stat_result) ||
       file_stat_result.size_bytes == 0 ||
-      file_stat_result.size_bytes > kPagingPageSize) {
+      file_stat_result.size_bytes > kElfLoaderMaxFileBytes) {
     (void)file_close(&file_handle);
     return false;
   }
 
-  const uint64_t staging_physical_page =
-      alloc_page_below(allocator, kPagingBootIdentityLimit);
-  const StagingPage staging_owner{allocator, staging_physical_page};
-  if (!page_is_directly_accessible_in_boot_identity_map(staging_physical_page)) {
+  // 文件字节先进入连续的内核堆缓冲区。ELF 中的虚拟地址不是文件偏移。
+  const StagingBuffer staging_owner{
+      static_cast<uint8_t*>(kmalloc(file_stat_result.size_bytes))};
+  auto* const staging_buffer = staging_owner.bytes;
+  if (staging_buffer == nullptr) {
     (void)file_close(&file_handle);
     return false;
   }
-
-  // 当前教学版本先把整个 ELF 文件读进 1 张 staging page，
-  // 这样后面解析 header 和按字节拷段内容都很直观。
-  auto* const staging_buffer =
-      reinterpret_cast<uint8_t*>(static_cast<uintptr_t>(staging_physical_page));
-  memory_set(staging_buffer, 0, kPagingPageSize);
   const size_t bytes_read =
       file_read(&file_handle, staging_buffer, file_stat_result.size_bytes);
   const bool close_ok = file_close(&file_handle);
@@ -276,6 +268,7 @@ bool load_elf_user_program(PageAllocator* allocator,
   uint32_t loadable_segment_count = 0;
   uint32_t total_page_count = 0;
   uint64_t first_page_physical = 0;
+  uint64_t image_end = user_space->user_region_base;
   for (uint16_t i = 0; i < file_header->program_header_count; ++i) {
     if (program_headers[i].type != kElfProgramTypeLoad) {
       continue;
@@ -305,21 +298,21 @@ bool load_elf_user_program(PageAllocator* allocator,
     }
 
     const uint64_t page_flags =
-        (program_headers[i].flags & kElfProgramFlagWrite) != 0
-            ? kPageWritable
-            : 0;
+        ((program_headers[i].flags & kElfProgramFlagWrite) != 0 ? kPageWritable : 0) |
+        ((program_headers[i].flags & kElfProgramFlagExecute) == 0 ? kPageNoExecute : 0);
+    if (load_limit > image_end) image_end = load_limit;
 
     // 这里先解决“这个段需要住在哪些用户页里”。
     // 先把房子准备好，后面再往里面搬文件字节。
     // 先把这个段覆盖到的每一页都分出来并映射进用户地址空间。
     for (uint32_t page_index = 0; page_index < page_count; ++page_index) {
       const uint64_t physical_page =
-          alloc_page_below(allocator, kPagingBootIdentityLimit);
-      if (!page_is_directly_accessible_in_boot_identity_map(physical_page)) {
+          alloc_page(allocator);
+      if (physical_page == 0 || paging_physical_pointer(physical_page) == nullptr) {
         return false;
       }
 
-      memory_set(reinterpret_cast<void*>(static_cast<uintptr_t>(physical_page)),
+      memory_set(paging_physical_pointer(physical_page),
                  0, kPagingPageSize);
       if (!address_space_map_user_page(user_space, allocator,
                                        load_base + page_index * kPagingPageSize,
@@ -337,21 +330,17 @@ bool load_elf_user_program(PageAllocator* allocator,
     // 第 2 步再把文件里真正存在的字节拷进去。
     // `memory_size > file_size` 的尾巴天然就保持 0，
     // 这就是最小版 `.bss` 零填充效果。
-    for (uint64_t byte_index = 0; byte_index < program_headers[i].file_size;
-         ++byte_index) {
-      const uint64_t virtual_address =
-          program_headers[i].virtual_address + byte_index;
-      const uint64_t physical_address =
-          address_space_resolve_mapping(user_space, virtual_address);
-      if (!page_is_directly_accessible_in_boot_identity_map(physical_address)) {
-        return false;
-      }
-
-      // 注意这里是“按 ELF 里声明的虚拟地址一个字节一个字节放进去”，
-      // 不是简单把整个文件原样拷到一片连续内存里。
-      auto* const destination =
-          reinterpret_cast<uint8_t*>(static_cast<uintptr_t>(physical_address));
-      *destination = staging_buffer[program_headers[i].offset + byte_index];
+    uint64_t copied = 0;
+    while (copied < program_headers[i].file_size) {
+      const uint64_t virtual_address = program_headers[i].virtual_address + copied;
+      const uint64_t physical_address = address_space_resolve_mapping(user_space, virtual_address);
+      void* const destination = paging_physical_pointer(physical_address);
+      if (destination == nullptr) return false;
+      uint64_t chunk = kPagingPageSize - (virtual_address & (kPagingPageSize - 1));
+      if (chunk > program_headers[i].file_size - copied)
+        chunk = program_headers[i].file_size - copied;
+      memory_copy(destination, staging_buffer + program_headers[i].offset + copied, chunk);
+      copied += chunk;
     }
   }
 
@@ -376,5 +365,6 @@ bool load_elf_user_program(PageAllocator* allocator,
   out_program->loadable_segment_count = loadable_segment_count;
   out_program->mapped_page_count = total_page_count;
   out_program->segment_flags = first_loadable_segment->flags;
+  out_program->image_end = image_end;
   return true;
 }

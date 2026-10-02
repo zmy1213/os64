@@ -1,10 +1,14 @@
 # 从 Long Mode 到 C++ 内核
 
+> **文档状态：历史阶段详解——从 Long Mode 到 C++ 内核。**
+> 正文中的“当前”“这一轮”“下一步”和日志数值指该篇对应的开发阶段，不是最新版本的能力清单。BIOS → 自写 stage1/stage2 → entry64 → kernel_main 仍是当前启动路线；完整镜像由 make build 生成，当前内核加载地址/扇区数由脚本生成。内核后续内存和进程功能已继续升级。
+> 初次运行请读 [从零开始的当前版本教程](./BEGINNER_TUTORIAL.md)；最新行为见 [进程运行时](./PROCESS_RUNTIME.md) 与 [持久化存储](./PERSISTENT_STORAGE.md)。代码片段用于解释原理，不要按旧篇重建/覆盖整个当前仓库；历史 smoke 输出不要求逐字匹配。
+
 这份文档专门讲这一轮做的事：
 
 - 为什么 `stage2` 不在 `long mode ok` 就结束
 - 为什么现在先用固定地址加载 `kernel.bin`
-- 为什么还要多一个 `kernel_entry.asm`
+- 为什么还要多一个 `kernel/boot/entry64.asm`
 - 为什么要传 `BootInfo`
 
 ---
@@ -155,7 +159,7 @@ BIOS
 所以你在 `QEMU` 里启动它时，也要把它当成软盘挂上：
 
 ```bash
-qemu-system-x86_64 -drive format=raw,file=disk.img,if=floppy,index=0
+make run-gui
 ```
 
 如果你把它当成普通硬盘挂载，前 18 个线性扇区有时还会“碰巧正常”，
@@ -168,7 +172,7 @@ qemu-system-x86_64 -drive format=raw,file=disk.img,if=floppy,index=0
 
 ---
 
-## 5. 为什么不是直接跳 C++，还要加 `kernel_entry.asm`
+## 5. 为什么不是直接跳 C++，还要加 `kernel/boot/entry64.asm`
 
 因为 C++ 编译器默认假设很多前提已经成立，比如：
 
@@ -183,7 +187,7 @@ qemu-system-x86_64 -drive format=raw,file=disk.img,if=floppy,index=0
 3. 调用 `kernel_main`
 4. 如果返回，就统一退出或停机
 
-你可以把 `kernel_entry.asm` 理解成：
+你可以把 `kernel/boot/entry64.asm` 理解成：
 
 - `stage2` 和 `kernel_main.cpp` 之间的转接头
 

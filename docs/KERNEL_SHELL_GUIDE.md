@@ -1,5 +1,9 @@
 # 从控制台行输入到最小 Shell
 
+> **文档状态：历史阶段详解——从控制台行输入到最小 Shell。**
+> 正文中的“当前”“这一轮”“下一步”和日志数值指该篇对应的开发阶段，不是最新版本的能力清单。当前已经有可运行、可回收的 ELF 用户进程和可写入 ATA 数据盘的文件系统；正文里的早期烟测是学习材料，日常操作请按主教程。
+> 初次运行请读 [从零开始的当前版本教程](./BEGINNER_TUTORIAL.md)；最新行为见 [进程运行时](./PROCESS_RUNTIME.md) 与 [持久化存储](./PERSISTENT_STORAGE.md)。代码片段用于解释原理，不要按旧篇重建/覆盖整个当前仓库；历史 smoke 输出不要求逐字匹配。
+
 > 这份文档记录的是 shell 的第一版形态：`help / mem / ticks`。
 > 当前仓库已经继续扩到 `heap / irq / clear / uptime / echo`，建议接着看 [KERNEL_SHELL_EXPANSION_GUIDE.md](./KERNEL_SHELL_EXPANSION_GUIDE.md)。
 

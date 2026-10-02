@@ -12,14 +12,19 @@
 // - 64 位 little-endian ELF
 // - x86_64
 // - ET_EXEC
-// - 很小的多段用户程序
+// - 有界的多段用户程序（最多 1 MiB 段内存）
 //
-// 这里先把它限制成“最多几个 PT_LOAD 段、最多几十页”，
-// 目的是先把：
+// 大小上限让错误 ELF 不能耗尽内核资源；文件上限同时受 OS64FS 格式约束。
+// 装载流程是：
 // 文件系统 -> ELF 头 -> 多段映射 -> ring3 入口
 // 这条主链讲清楚。
 constexpr uint32_t kElfLoaderMaxProgramHeaders = 8;
-constexpr uint32_t kElfLoaderMaxLoadablePages = 32;
+constexpr uint32_t kElfLoaderMaxLoadablePages = 256;
+// 文件系统当前能保存的最大文件；装载缓冲区来自内核堆，不再挤进一页。
+constexpr uint32_t kElfLoaderMaxFileBytes = 69632;
+constexpr uint64_t kUserStackBytes = 16 * kPageSize;
+constexpr uint64_t kUserStackBottom = kUserAddressSpaceDefaultStackTop - kUserStackBytes;
+constexpr uint64_t kUserStackGuardBase = kUserStackBottom - kPageSize;
 
 constexpr uint32_t kElfProgramTypeLoad = 1;
 constexpr uint32_t kElfProgramFlagExecute = 0x1;
@@ -71,11 +76,12 @@ struct LoadedUserElfProgram {
   uint32_t loadable_segment_count;    // 当前 ELF 里一共有多少个 PT_LOAD 段。
   uint32_t mapped_page_count;         // 所有 PT_LOAD 段合起来最终一共映射了多少张用户页。
   uint32_t segment_flags;             // 第 1 个 PT_LOAD 段的 PF_R / PF_W / PF_X。
+  uint64_t image_end;                 // 所有段结束位置向上对齐；用户堆从这里开始。
 };
 
 // 把 OS64FS 里的一个 ELF 文件真正装进用户地址空间。
 // 这一步会做几件关键事情：
-// 1. 打开文件并读进 staging page
+// 1. 打开文件并读进内核堆缓冲区
 // 2. 校验 ELF header / program header
 // 3. 为每个 PT_LOAD 段分配并映射用户页
 // 4. 把文件里的字节拷进映射后的用户页

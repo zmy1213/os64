@@ -128,7 +128,8 @@ bool ensure_heap_mapping(KernelHeap* heap, uint64_t additional_bytes) {
     }
 
     if (!map_page(heap->page_allocator, heap->mapped_limit, physical_page,
-                  kPageWritable)) {
+                  kPageWritable | kPageNoExecute)) {
+      (void)free_page(heap->page_allocator, physical_page);
       return false;
     }
 

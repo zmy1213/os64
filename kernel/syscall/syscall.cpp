@@ -5,6 +5,7 @@
 #include "interrupts/pit.hpp"
 #include "runtime/runtime.hpp"
 #include "task/scheduler.hpp"
+#include "memory/paging.hpp"
 
 namespace {
 
@@ -355,6 +356,9 @@ bool user_syscall_arguments_valid(const SyscallInterruptFrame* frame) {
     }
     case kSyscallNumberWaitPid:
       return frame->rsi == 0 || user_range_valid(frame->rsi, sizeof(int32_t), true);
+    case kSyscallNumberReplaceFile:
+      return user_path_valid(frame->rdi) && frame->rdx <= kMaxUserTransfer &&
+             user_range_valid(frame->rsi, frame->rdx, false);
     default:
       return true;
   }
@@ -520,6 +524,11 @@ int64_t dispatch_syscall_registers(uint64_t syscall_number,
     case kSyscallNumberWaitPid:
       return sys_waitpid(static_cast<int32_t>(argument0),
                           reinterpret_cast<int32_t*>(argument1));
+    case kSyscallNumberBrk:
+      return static_cast<int64_t>(sys_brk(argument0));
+    case kSyscallNumberReplaceFile:
+      return sys_replace_file(context, reinterpret_cast<const char*>(argument0),
+                               reinterpret_cast<const void*>(argument1), argument2);
     default:
       (void)argument3;
       return syscall_status_result(kSyscallInvalidArgument);
@@ -1133,6 +1142,77 @@ SyscallStatus sys_sync(SyscallContext* context) {
   }
   VfsMount mount = *context->fd_table->vfs;
   return vfs_sync(&mount) ? kSyscallOk : kSyscallIoError;
+}
+
+// 一次文件系统事务完成替换，不采用“先清空，再写入”两次独立操作。
+int32_t sys_replace_file(SyscallContext* context, const char* path,
+                         const void* buffer, size_t size) {
+  if (!syscall_context_is_ready(context) || path == nullptr ||
+      size > kMaxUserTransfer || (size != 0 && buffer == nullptr))
+    return kSyscallInvalidArgument;
+  char resolved[kSyscallPathCapacity];
+  if (!syscall_resolve_path(context, path, resolved, sizeof(resolved)))
+    return kSyscallInvalidArgument;
+  VfsMount mount = *context->fd_table->vfs;
+  return vfs_write_file(&mount, resolved, buffer, size)
+      ? static_cast<int32_t>(size) : kSyscallIoError;
+}
+
+// brk 只改变当前进程的堆。实际页按 4 KiB 分配，break 按字节记录。
+// 这是立即分配版本：没有缺页时再分配的 demand paging。
+uint64_t sys_brk(uint64_t requested_break) {
+  auto* const thread = scheduler_active_thread();
+  auto* const process = thread != nullptr ? thread->owner : nullptr;
+  if (process == nullptr || process->is_kernel_process ||
+      process->user_heap_base == 0 || process->page_allocator == nullptr) return 0;
+  const uint64_t old_break = process->user_heap_break;
+  if (requested_break == 0 || requested_break == old_break) return old_break;
+  if (requested_break < process->user_heap_base ||
+      requested_break > process->user_heap_limit) return old_break;
+  const auto page_end = [](uint64_t value) {
+    return (value + kPageSize - 1) & ~(kPageSize - 1);
+  };
+  const uint64_t old_end = page_end(old_break);
+  const uint64_t new_end = page_end(requested_break);
+  auto* const allocator = process->page_allocator;
+  auto* const space = &process->address_space;
+  if (new_end > old_end) {
+    uint64_t cursor = old_end;
+    for (; cursor < new_end; cursor += kPageSize) {
+      const uint64_t physical = alloc_page(allocator);
+      void* const bytes = paging_physical_pointer(physical);
+      if (physical == 0 || bytes == nullptr) {
+        if (physical != 0) (void)free_page(allocator, physical);
+        break;
+      }
+      memory_set(bytes, 0, kPageSize); // 不把上一个进程的内容交给新申请者。
+      if (!address_space_map_user_page(space, allocator, cursor, physical,
+                                       kPageWritable | kPageNoExecute)) {
+        (void)free_page(allocator, physical);
+        break;
+      }
+    }
+    if (cursor != new_end) {
+      // 中途缺内存时撤销本次映射，break 保持原值。
+      while (cursor > old_end) {
+        cursor -= kPageSize;
+        (void)address_space_unmap_user_page(space, allocator, cursor);
+      }
+      return old_break;
+    }
+  }
+  if (requested_break < old_break) {
+    // 整页归还。最后一页里不再属于堆的尾巴也清零，避免再次增长时读到旧数据。
+    for (uint64_t address = new_end; address < old_end; address += kPageSize)
+      (void)address_space_unmap_user_page(space, allocator, address);
+    if (requested_break < new_end) {
+      const uint64_t physical = address_space_resolve_mapping(space, requested_break);
+      void* const tail = paging_physical_pointer(physical);
+      if (tail != nullptr) memory_set(tail, 0, new_end - requested_break);
+    }
+  }
+  process->user_heap_break = requested_break;
+  return requested_break;
 }
 
 extern "C" void kernel_handle_syscall(SyscallInterruptFrame* frame) {

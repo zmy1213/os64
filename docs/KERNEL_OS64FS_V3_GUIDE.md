@@ -1,5 +1,9 @@
 # 从第一版只读文件系统到带位图和一致性校验的 OS64FS v3
 
+> **文档状态：历史阶段详解——从第一版只读文件系统到带位图和一致性校验的 OS64FS v3。**
+> 正文中的“当前”“这一轮”“下一步”和日志数值指该篇对应的开发阶段，不是最新版本的能力清单。当前是可读写的 OS64FS v3：RAM 启动卷用于回归，正式交互使用 ATA 数据盘；写入、删除、flush 和运行时失败回滚已实现。本篇的只读/RAM 卷说法属于早期阶段。
+> 初次运行请读 [从零开始的当前版本教程](./BEGINNER_TUTORIAL.md)；最新行为见 [进程运行时](./PROCESS_RUNTIME.md) 与 [持久化存储](./PERSISTENT_STORAGE.md)。代码片段用于解释原理，不要按旧篇重建/覆盖整个当前仓库；历史 smoke 输出不要求逐字匹配。
+
 这一步不是“又多读了几个文件”那么简单。
 
 它真正做的升级是：
@@ -136,7 +140,7 @@ superblock 不再只是“布局说明书”，
 ## 3. OS64FS v3 现在的真实布局
 
 当前这份教学镜像还是放在 `boot volume` 里，
-由 [scripts/build-stage1-image.sh](/Users/zhuzhumingyang/githubProjects/aiProjects/os64/scripts/build-stage1-image.sh:1) 负责生成。
+由 [scripts/build-stage1-image.sh](../scripts/build-stage1-image.sh) 负责生成。
 
 真实布局现在是：
 
@@ -357,8 +361,8 @@ free_data_block_count = 102
 
 位置在：
 
-- [kernel/fs/os64fs.hpp](/Users/zhuzhumingyang/githubProjects/aiProjects/os64/kernel/fs/os64fs.hpp:1)
-- [kernel/fs/os64fs.cpp](/Users/zhuzhumingyang/githubProjects/aiProjects/os64/kernel/fs/os64fs.cpp:678)
+- [kernel/fs/os64fs.hpp](../kernel/fs/os64fs.hpp)
+- [kernel/fs/os64fs.cpp](../kernel/fs/os64fs.cpp)
 
 这样一来，
 如果文件系统挂载失败，

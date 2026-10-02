@@ -1,5 +1,9 @@
 # Stage1 写入说明
 
+> **文档状态：历史阶段详解——Stage1 写入说明。**
+> 正文中的“当前”“这一轮”“下一步”和日志数值指该篇对应的开发阶段，不是最新版本的能力清单。BIOS → 自写 stage1/stage2 → entry64 → kernel_main 仍是当前启动路线；完整镜像由 make build 生成，当前内核加载地址/扇区数由脚本生成。内核后续内存和进程功能已继续升级。
+> 初次运行请读 [从零开始的当前版本教程](./BEGINNER_TUTORIAL.md)；最新行为见 [进程运行时](./PROCESS_RUNTIME.md) 与 [持久化存储](./PERSISTENT_STORAGE.md)。代码片段用于解释原理，不要按旧篇重建/覆盖整个当前仓库；历史 smoke 输出不要求逐字匹配。
+
 这份文档专门讲：
 
 > 下一步为什么先写 `stage1 boot sector`，以及写它的时候到底在写什么。
@@ -398,7 +402,7 @@ stage1 ok
 运行：
 
 ```bash
-qemu-system-x86_64 -drive format=raw,file=disk.img,if=floppy,index=0
+make run-gui
 ```
 
 ### Step E：观察现象

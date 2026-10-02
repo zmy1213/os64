@@ -67,6 +67,9 @@ struct ProcessControlBlock {
   uint64_t fault_vector;
   uint64_t fault_address;
   PageAllocator* page_allocator;
+  uint64_t user_heap_base;          // ELF 段后第一个页边界，不能缩到这里以下。
+  uint64_t user_heap_break;         // 已申请字节区间的末尾，不包含末尾地址。
+  uint64_t user_heap_limit;         // 栈保护页起点；堆与栈不能互相覆盖。
   bool auto_reap;
   ProcessState state;                              // 当前进程大体处在什么生命周期阶段。
   uint32_t live_thread_count;                      // 这个进程还有多少线程没退出。
@@ -141,12 +144,12 @@ struct SchedulerState {
 // 它专门把这次用户 ELF 线程启动时最值得观察的几样东西带回来：
 // - 创建出来的 process / thread
 // - ELF loader 解析出的 entry / segment 信息
-// - 映射成用户栈的那张物理页
+// - 用户栈最顶端那一张物理页（其余栈页属于进程地址空间）
 struct SchedulerElfThreadLoadResult {
   ProcessControlBlock* process;   // 新创建出来的用户进程对象。
   ThreadControlBlock* thread;     // 挂到 ready queue 里的那条用户线程对象。
   LoadedUserElfProgram program;   // ELF loader 解析和映射出的关键信息摘要。
-  uint64_t stack_physical_page;   // 这条用户线程初始用户栈对应的物理页地址。
+  uint64_t stack_physical_page;   // 栈顶下面第一张页的物理地址，便于观察日志。
 };
 
 // 初始化调度器总状态。

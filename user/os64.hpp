@@ -35,6 +35,17 @@ inline int64_t close(int fd) { return syscall(4,fd); }
 inline int64_t yield() { return syscall(11); }
 inline int64_t sleep(uint64_t ms) { return syscall(14,ms); }
 inline int64_t sync() { return syscall(18); }
+// break 是“当前用户堆的末尾地址”，不是已经使用的字节数。
+// brk(0) 查询末尾；失败仍返回旧末尾，所以调用方必须比较返回值。
+inline uintptr_t brk(uintptr_t new_break=0) {
+  return static_cast<uintptr_t>(syscall(20,new_break));
+}
+// 完整替换文件，返回字节数；失败返回负错误码。
+// 本次操作用一笔文件系统事务完成，但还没有突然断电后的日志恢复。
+inline int64_t replace_file(const char* path, const void* data, size_t size) {
+  return syscall(21,reinterpret_cast<uint64_t>(path),
+                 reinterpret_cast<uint64_t>(data),size);
+}
 inline int64_t spawn(const char* path, const char* const* argv, size_t argc) {
   return syscall(15,reinterpret_cast<uint64_t>(path),reinterpret_cast<uint64_t>(argv),argc);
 }

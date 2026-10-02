@@ -5,10 +5,10 @@ import shutil
 build = Path(__file__).resolve().parent.parent / 'build'
 if build.is_dir():
     for path in build.iterdir():
-        if path.name == 'data.img':
+        if path.name == 'data.img' or path.name.startswith('data.img.backup-'):
             continue
         if path.is_dir():
             shutil.rmtree(path)
         else:
             path.unlink()
-print('Build outputs removed; persistent data.img retained.')
+print('Build outputs removed; persistent data.img and backups retained.')

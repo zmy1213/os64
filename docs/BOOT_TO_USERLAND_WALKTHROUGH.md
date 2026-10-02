@@ -1,5 +1,9 @@
 # 原版启动与内核实现讲解
 
+> **文档状态：历史阶段详解——原版启动与内核实现讲解。**
+> 正文中的“当前”“这一轮”“下一步”和日志数值指该篇对应的开发阶段，不是最新版本的能力清单。当前已经有可运行、可回收的 ELF 用户进程和可写入 ATA 数据盘的文件系统；正文里的早期烟测是学习材料，日常操作请按主教程。
+> 初次运行请读 [从零开始的当前版本教程](./BEGINNER_TUTORIAL.md)；最新行为见 [进程运行时](./PROCESS_RUNTIME.md) 与 [持久化存储](./PERSISTENT_STORAGE.md)。代码片段用于解释原理，不要按旧篇重建/覆盖整个当前仓库；历史 smoke 输出不要求逐字匹配。
+
 这份文档保留早期开发过程，部分“当前功能”描述属于历史状态。最新使用方式和能力边界见 [主 README](../README.md)。
 
 # os64
@@ -255,7 +259,7 @@ os64>
 - `OS64FS v3` 现在已经明确拆成：`superblock + inode bitmap + data bitmap + inode table + data area`
 - 挂载文件系统时，内核现在不只会“把结构读出来”，还会做一次最小一致性校验，检查位图和 inode 实际占用是否一致
 - shell 里的 `disk` 命令现在也不只会显示总字节数，还会显示 `inode/data block` 的已用和空闲统计
-- 这意味着当前文件系统虽然仍然是只读的，但已经开始具备更接近正式系统的“资源分配元数据骨架”
+- 该历史阶段仍然只读；当前版本已经实现文件/目录写入和 ATA 持久化，见 PERSISTENT_STORAGE.md
 - kernel 里又在 `OS64FS` 上面补了 `FileHandle` 文件句柄层
 - kernel 里还在 `OS64FS` 上面补了 `DirectoryHandle` 目录句柄层
 - kernel 里现在又在文件句柄和目录句柄上面补了第一版 `VFS`
@@ -320,24 +324,13 @@ build/disk.img
 
 ### 如果你的 QEMU 不在默认位置
 
-这个仓库的 `Makefile` 默认用了：
-
-```text
-/opt/homebrew/bin/qemu-system-x86_64
-```
-
-如果你机器上的 QEMU 不在这里，
-可以这样指定：
+当前脚本优先从 PATH 发现 QEMU，也支持 macOS 的 Homebrew 安装位置。需要指定时，使用真实可执行文件路径，例如：
 
 ```bash
-make QEMU=/你的/qemu-system-x86_64 run-stage1-gui
+QEMU_BIN="$(command -v qemu-system-x86_64)" make run-gui
 ```
 
-或者：
-
-```bash
-make QEMU=/你的/qemu-system-x86_64 run-stage1
-```
+如果 `command -v` 没有输出，先安装 QEMU 并运行 `make check-env`，不要照抄某台机器的绝对路径。
 
 一句话总结：
 
@@ -351,7 +344,7 @@ make QEMU=/你的/qemu-system-x86_64 run-stage1
 
 这里我给你选最适合“从零学习”的路线：
 
-> `BIOS -> MBR boot sector -> second stage loader -> 32/64 位切换 -> kernel`
+> `BIOS -> 软盘 boot sector -> second stage loader -> 32/64 位切换 -> kernel`
 
 也就是：
 
@@ -368,13 +361,13 @@ make QEMU=/你的/qemu-system-x86_64 run-stage1
 
 - 16 位实模式
 - BIOS 中断
-- MBR 启动扇区
+- 启动扇区（本仓库使用软盘镜像，没有硬盘 MBR 分区表）
 - A20
 - GDT
 - 保护模式
 - 页表
 - long mode
-- ELF 内核加载
+- 构建时链接 ELF、启动时按生成的布局加载 kernel.bin（stage2 不解析内核 ELF）
 
 这比直接用 `Limine` 难，但学到的底层知识更多。
 
@@ -399,8 +392,8 @@ make QEMU=/你的/qemu-system-x86_64 run-stage1
 
 第一阶段完成标准：
 
-1. BIOS 能执行你的 MBR
-2. 你的 MBR 能加载 second stage
+1. BIOS 能执行你的启动扇区
+2. 你的启动扇区能加载 second stage
 3. second stage 能进入 64 位模式
 4. 能跳到你的 kernel
 5. kernel 能打印 `hello from os64 kernel`
@@ -656,7 +649,7 @@ hexdump -C disk.img | head
 运行方式：
 
 ```bash
-qemu-system-x86_64 -drive format=raw,file=disk.img,if=floppy,index=0
+make run-gui
 ```
 
 这里要特意加上 `if=floppy`，因为当前这张 `disk.img` 是按 1.44MB 软盘几何参数来做的，

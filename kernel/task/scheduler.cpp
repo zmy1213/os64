@@ -85,10 +85,6 @@ bool is_user_thread_ready_to_enter(const ThreadControlBlock* thread) {
          thread->user_mode.user_stack_selector != 0;
 }
 
-bool page_is_directly_accessible_in_boot_identity_map(uint64_t physical_address) {
-  return physical_address != 0 && physical_address < kPagingBootIdentityLimit;
-}
-
 uint64_t scheduler_kernel_root_physical(const SchedulerState* scheduler) {
   // 调度器视角里的“kernel root”通常就是 0 号内核进程那份地址空间根。
   // 这样线程切回 bootstrap 或普通 kernel thread 时，就知道该恢复哪份 CR3。
@@ -606,7 +602,8 @@ bool scheduler_prepare_user_arguments(ProcessControlBlock* process,
     return false;
   }
   const uint64_t top = thread->user_mode.user_stack_pointer;
-  const uint64_t bottom = align_down(top - 1, kPagingPageSize);
+  const uint64_t bottom = process->user_heap_base != 0
+      ? kUserStackBottom : align_down(top - 1, kPagingPageSize);
   uint64_t pointers[kMaxArguments + 1];
   size_t lengths[kMaxArguments];
   memory_set(pointers, 0, sizeof(pointers));
@@ -930,7 +927,7 @@ bool scheduler_create_user_elf_thread(
   // 1. create user process
   // 2. 初始化 syscall/fd/cwd 视图
   // 3. 把 ELF 段装进这份进程地址空间
-  // 4. 再单独补一页用户栈
+  // 4. 再准备带保护页的用户栈与动态堆边界
   // 5. 最后创建 user thread
   ProcessControlBlock* const process =
       scheduler_create_user_process(scheduler, allocator, process_name);
@@ -953,32 +950,35 @@ bool scheduler_create_user_elf_thread(
     return false;
   }
 
-  const uint64_t stack_physical_page =
-      alloc_page_below(allocator, kPagingBootIdentityLimit);
-  if (!page_is_directly_accessible_in_boot_identity_map(stack_physical_page)) {
+  // 16 张独立物理页组成 64 KiB 用户栈。紧挨栈底的那一页不映射：
+  // 当栈向下溢出时，CPU 会触发页错误，终止该用户进程而非破坏堆。
+  if (user_stack_pointer != kUserAddressSpaceDefaultStackTop ||
+      address_space_resolve_mapping(&process->address_space, kUserStackGuardBase) != 0) {
     (void)scheduler_discard_process(scheduler, process->pid);
     return false;
   }
-
-  memory_set(reinterpret_cast<void*>(
-                 static_cast<uintptr_t>(stack_physical_page)),
-             0,
-             kPagingPageSize);
-
-  // 这里先继续保持“1 条线程只有 1 页初始用户栈”的教学布局。
-  // 当前调用方传进来的通常是那一页顶端，例如 0x800000。
-  // 所以真正要映射的是它下面那页页框起点。
-  const uint64_t stack_page_virtual_address =
-      align_down(user_stack_pointer - 1, kPagingPageSize);
-  // 再补 1 页初始用户栈，这样线程第一次进 ring 3 时就有可用栈顶。
-  if (!address_space_map_user_page(&process->address_space, allocator,
-                                   stack_page_virtual_address,
-                                   stack_physical_page,
-                                   kPageWritable)) {
-    (void)free_page(allocator, stack_physical_page);
-    (void)scheduler_discard_process(scheduler, process->pid);
-    return false;
+  uint64_t stack_physical_page = 0;
+  for (uint64_t address = kUserStackBottom; address < user_stack_pointer;
+       address += kPageSize) {
+    const uint64_t physical = alloc_page(allocator);
+    void* const bytes = paging_physical_pointer(physical);
+    if (physical == 0 || bytes == nullptr) {
+      if (physical != 0) (void)free_page(allocator, physical);
+      (void)scheduler_discard_process(scheduler, process->pid);
+      return false;
+    }
+    memory_set(bytes, 0, kPageSize);
+    if (!address_space_map_user_page(&process->address_space, allocator,
+                                    address, physical, kPageWritable | kPageNoExecute)) {
+      (void)free_page(allocator, physical);
+      (void)scheduler_discard_process(scheduler, process->pid);
+      return false;
+    }
+    if (address == user_stack_pointer - kPageSize) stack_physical_page = physical;
   }
+  process->user_heap_base = program.image_end;
+  process->user_heap_break = program.image_end;
+  process->user_heap_limit = kUserStackGuardBase;
 
   ThreadControlBlock* const thread =
       scheduler_create_user_thread(scheduler, process, allocator,

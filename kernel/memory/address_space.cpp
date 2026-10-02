@@ -10,12 +10,11 @@ constexpr uint64_t kPageLarge = 0x080;                 // PS=1：说明这一项
 constexpr size_t kPageTableEntryCount = 512;           // x86_64 每层页表固定 512 项。
 
 uint64_t* table_from_physical_address(uint64_t physical_address) {
-  if (physical_address == 0 || physical_address >= kPagingBootIdentityLimit) {
+  if (physical_address == 0) {
     return nullptr;
   }
 
-  return reinterpret_cast<uint64_t*>(
-      static_cast<uintptr_t>(physical_address & kPageMask));
+  return static_cast<uint64_t*>(paging_physical_pointer(physical_address & kPageMask));
 }
 
 uint64_t allocate_clone_table_page(PageAllocator* allocator) {
@@ -23,13 +22,14 @@ uint64_t allocate_clone_table_page(PageAllocator* allocator) {
     return 0;
   }
 
-  const uint64_t page = alloc_page_below(allocator, kPagingBootIdentityLimit);
-  if (page == 0 || page >= kPagingBootIdentityLimit) {
+  const uint64_t page = alloc_page_below(allocator, paging_managed_physical_limit());
+  if (page == 0) {
     return 0;
   }
 
   auto* const table = table_from_physical_address(page);
   if (table == nullptr) {
+    (void)free_page(allocator, page);
     return 0;
   }
 
@@ -84,6 +84,7 @@ uint64_t clone_page_table_level(PageAllocator* allocator,
 
   auto* const destination = table_from_physical_address(cloned_page);
   if (destination == nullptr) {
+    (void)free_page(allocator, cloned_page);
     return 0;
   }
 
@@ -109,7 +110,8 @@ uint64_t clone_page_table_level(PageAllocator* allocator,
       continue;
     }
 
-    // A child receives kernel mappings, never aliases of its parent's user pages.
+    // 保留内核映射，但不沿用父进程的用户数据页。否则子进程能直接改写父进程内存。
+    // 页表本身（包括高 direct map 的表）都已经深拷贝，销毁时不会释放别人的表。
     destination[index] = (entry & kPageUser) != 0 ? 0 : entry;
   }
 
@@ -132,6 +134,15 @@ bool user_region_contains(uint64_t virtual_address) {
   return virtual_address >= kUserAddressSpaceBase &&
          virtual_address < kUserAddressSpaceLimit &&
          (virtual_address & (kPagingPageSize - 1)) == 0;
+}
+
+bool table_is_empty(const uint64_t* table) {
+  for (size_t index = 0; index < kPageTableEntryCount; ++index) {
+    if ((table[index] & kPagePresent) != 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace
@@ -182,6 +193,7 @@ bool clone_address_space_from_root(AddressSpace* space, PageAllocator* allocator
   space->root_physical_address = cloned_root;
   space->root_virtual_address = table_from_physical_address(cloned_root);
   if (space->root_virtual_address == nullptr) {
+    destroy_table(allocator, cloned_root, 4, false);
     return false;
   }
 
@@ -201,13 +213,12 @@ bool address_space_map_user_page(AddressSpace* space, PageAllocator* allocator,
 
   if (!user_region_contains(virtual_address) ||
       physical_address < kAllocatorMinAddress ||
-      physical_address >= kPagingBootIdentityLimit ||
-      (physical_address & (kPagingPageSize - 1)) != 0) {
+      physical_address >= paging_managed_physical_limit() ||
+      !page_allocator_owns_page(allocator, physical_address)) {
     return false;
   }
 
-  const bool already_mapped = address_space_user_range_valid(
-      space, virtual_address, 1, false);
+  const bool already_mapped = address_space_resolve_mapping(space, virtual_address) != 0;
   if (already_mapped) {
     return false;
   }
@@ -222,6 +233,55 @@ bool address_space_map_user_page(AddressSpace* space, PageAllocator* allocator,
     ++space->mapped_user_pages;
   }
 
+  return true;
+}
+
+bool address_space_unmap_user_page(AddressSpace* space, PageAllocator* allocator,
+                                   uint64_t virtual_address) {
+  if (space == nullptr || allocator == nullptr || !space->ready ||
+      !space->owns_page_table_root || !user_region_contains(virtual_address)) {
+    return false;
+  }
+  uint64_t physical_tables[4] = {space->root_physical_address, 0, 0, 0};
+  uint64_t* tables[4] = {table_from_physical_address(physical_tables[0]), nullptr,
+                         nullptr, nullptr};
+  uint16_t indices[4] = {};
+  // 保存整条路径。清掉叶子后，需要从下往上判断是否可以剪掉空的页表页。
+  for (uint8_t level = 0; level < 4; ++level) {
+    if (tables[level] == nullptr) {
+      return false;
+    }
+    indices[level] = static_cast<uint16_t>((virtual_address >> (39 - level * 9)) & 0x1FF);
+    const uint64_t entry = tables[level][indices[level]];
+    if ((entry & (kPagePresent | kPageUser)) != (kPagePresent | kPageUser) ||
+        (level < 3 && (entry & kPageLarge) != 0)) {
+      return false;
+    }
+    if (level < 3) {
+      physical_tables[level + 1] = entry & kPageMask;
+      tables[level + 1] = table_from_physical_address(physical_tables[level + 1]);
+    }
+  }
+  const uint64_t physical_page = tables[3][indices[3]] & kPageMask;
+  if (!page_allocator_owns_page(allocator, physical_page)) {
+    return false;
+  }
+  tables[3][indices[3]] = 0;
+  // 当前正在使用这份 CR3 时，TLB 仍可能记着旧映射；先让它失效再释放页。
+  if (space->root_physical_address == paging_current_root_physical()) {
+    asm volatile("invlpg (%0)" : : "r"(virtual_address) : "memory");
+  }
+  (void)free_page(allocator, physical_page);
+  if (space->mapped_user_pages != 0) {
+    --space->mapped_user_pages;
+  }
+  for (int level = 3; level > 0; --level) {
+    if (!table_is_empty(tables[level])) {
+      break;
+    }
+    tables[level - 1][indices[level - 1]] = 0;
+    (void)free_page(allocator, physical_tables[level]);
+  }
   return true;
 }
 
@@ -291,15 +351,15 @@ bool address_space_copy_to_user(const AddressSpace* space, uint64_t address,
   const auto* cursor = static_cast<const uint8_t*>(source);
   while (bytes != 0) {
     const uint64_t physical = address_space_resolve_mapping(space, address);
-    if (physical == 0 || physical >= kPagingBootIdentityLimit) {
+    void* const destination = paging_physical_pointer(physical);
+    if (physical == 0 || destination == nullptr) {
       return false;
     }
     size_t chunk = kPagingPageSize - (address & (kPagingPageSize - 1));
     if (chunk > bytes) {
       chunk = bytes;
     }
-    memory_copy(reinterpret_cast<void*>(static_cast<uintptr_t>(physical)),
-                cursor, chunk);
+    memory_copy(destination, cursor, chunk);
     address += chunk;
     cursor += chunk;
     bytes -= chunk;

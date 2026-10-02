@@ -5,42 +5,45 @@
 
 #include "boot/boot_info.hpp"
 
-constexpr uint64_t kPageSize = 4096;              // 先固定 4 KiB 页，这是 x86_64 最基础的页大小。
-constexpr uint64_t kAllocatorMinAddress = 0x100000;  // 第一版先只从 1 MiB 以上挑页，避开低地址杂项区。
-constexpr uint16_t kMaxUsableRanges = 16;         // 和 stage2 当前最多缓存 16 条 E820 记录保持一致。
+constexpr uint64_t kPageSize = 4096;
+// bootloader、内核和启动卷都在低 1 MiB 内；这一段从不交给分配器。
+constexpr uint64_t kAllocatorMinAddress = 0x100000;
+// entry64.asm 的内核启动栈从 0x180000 向下长，单独保留 64 KiB。
+constexpr uint64_t kAllocatorBootStackBase = 0x170000;
+constexpr uint64_t kAllocatorBootStackLimit = 0x180000;
+// 教程先管理低 256 MiB。机器有更多内存时，超出的部分暂时不会被使用。
+constexpr uint64_t kAllocatorManagedLimit = 256ULL * 1024 * 1024;
+constexpr uint64_t kAllocatorPageCount = kAllocatorManagedLimit / kPageSize;
+constexpr uint64_t kAllocatorBitmapWords = kAllocatorPageCount / 64;
+constexpr uint16_t kMaxUsableRanges = 16;
 
-// 每个 range 代表“一段已经确认可用，并且已经按页对齐好的物理内存区间”。
 struct PageAllocatorRange {
-  uint64_t next_free;   // 下一次 alloc_page() 应该从哪里拿页。
-  uint64_t limit;       // 这个区间的结束地址（不包含 limit 本身）。
+  // 仅供启动日志展示；真正的分配状态保存在下面的位图里。
+  uint64_t next_free;
+  uint64_t limit;
 };
 
-// 这是第一版物理页分配器的全部状态。
-// 现在先不做 buddy/slab，只做“从 usable 区域里按顺序切 4 KiB 页”。
 struct PageAllocator {
-  PageAllocatorRange ranges[kMaxUsableRanges];  // 记录所有能拿来分配页的 usable 区间。
-  uint16_t range_count;                         // 一共收集到了多少段 usable 区间。
-  uint16_t active_range;                        // 当前正在从哪一段里分配。
-  uint64_t recycled_page_head;
-  uint64_t recycled_page_count;
-  // Only the early identity-mapped 1–2 MiB pool can currently be freed.
-  // Ownership bits reject double frees without touching live page contents.
-  uint64_t low_page_allocated[4];
+  PageAllocatorRange ranges[kMaxUsableRanges];
+  uint16_t range_count;
+  uint16_t active_range;
+  uint64_t free_page_count;
+  // 一个位代表一张物理页：available=可分配，allocated=已借给调用者。
+  // 两个位图共 16 KiB，不必把链表指针写入待回收页，也能拒绝重复释放。
+  uint64_t available_pages[kAllocatorBitmapWords];
+  uint64_t allocated_pages[kAllocatorBitmapWords];
 };
 
-// 读 BootInfo 里的 E820 表，把“可用物理内存”整理成若干可分配区间。
-// `allocator` 是要被填好的分配器状态对象；
-// `boot_info` 提供 BIOS -> stage2 -> kernel 传下来的内存地图。
+// 读取 E820；只有完整位于 usable 区间的页才可用。保留区与 usable 重叠时保留优先。
 bool initialize_page_allocator(PageAllocator* allocator, const BootInfo* boot_info);
 
-// 真正分配 1 个 4 KiB 物理页。
-// 成功返回物理地址；失败返回 0。
+// 返回的是物理地址，不是可直接解引用的 C++ 指针。访问时使用 paging_physical_pointer。
+// 页分配器本身只修改位图，所以在 direct map 建立之前也可以分配 bootstrap 页表。
 uint64_t alloc_page(PageAllocator* allocator);
 uint64_t alloc_page_below(PageAllocator* allocator, uint64_t limit);
 uint64_t alloc_page_at_least(PageAllocator* allocator, uint64_t minimum);
 bool free_page(PageAllocator* allocator, uint64_t physical_address);
-
-// 统计“目前还剩下多少张没被拿走的页”，主要给调试和状态输出用。
+bool page_allocator_owns_page(const PageAllocator* allocator, uint64_t physical_address);
 uint64_t count_free_pages(const PageAllocator* allocator);
 
 #endif

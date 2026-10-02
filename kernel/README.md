@@ -1,304 +1,72 @@
-# kernel 目录说明
+# kernel 源码入口
 
-现在 `kernel/` 已经按职责拆成 11 类：
+这里说明当前内核的分工。零基础先读 [当前主教程](../docs/BEGINNER_TUTORIAL.md)；需要精确的用户内存/回收语义读 [PROCESS_RUNTIME.md](../docs/PROCESS_RUNTIME.md)，需要磁盘故障边界读 [PERSISTENT_STORAGE.md](../docs/PERSISTENT_STORAGE.md)。旧的“第一版”专题是开发阶段记录。
+
+## 先追一条可观察的链
 
 ```text
-kernel/
-├── boot/
-│   ├── boot_info.hpp
-│   ├── entry64.asm
-│   └── linker.ld
-├── console/
-│   ├── console.hpp
-│   └── console.cpp
-├── core/
-│   └── kernel_main.cpp
-├── fs/
-│   ├── os64fs.hpp
-│   ├── os64fs.cpp
-│   ├── file.hpp
-│   ├── file.cpp
-│   ├── directory.hpp
-│   ├── directory.cpp
-│   ├── vfs.hpp
-│   ├── vfs.cpp
-│   ├── fd.hpp
-│   └── fd.cpp
-├── interrupts/
-│   ├── interrupts.hpp
-│   ├── interrupts.cpp
-│   ├── interrupt_stubs.asm
-│   ├── pic.hpp
-│   ├── pic.cpp
-│   ├── pit.hpp
-│   ├── pit.cpp
-│   ├── keyboard.hpp
-│   └── keyboard.cpp
-├── memory/
-│   ├── address_space.hpp
-│   ├── address_space.cpp
-│   ├── page_allocator.hpp
-│   ├── page_allocator.cpp
-│   ├── paging.hpp
-│   ├── paging.cpp
-│   ├── heap.hpp
-│   ├── heap.cpp
-│   ├── kmemory.hpp
-│   └── kmemory.cpp
-├── storage/
-│   ├── boot_volume.hpp
-│   ├── boot_volume.cpp
-│   ├── block_device.hpp
-│   └── block_device.cpp
-├── shell/
-│   ├── shell.hpp
-│   └── shell.cpp
-├── syscall/
-│   ├── syscall.hpp
-│   └── syscall.cpp
-├── task/
-│   ├── scheduler.hpp
-│   ├── scheduler.cpp
-│   └── context_switch.asm
-└── runtime/
-    ├── runtime.hpp
-    └── runtime.cpp
+boot/stage2.asm 传 BootInfo
+→ boot/entry64.asm 设置内核栈并调用 kernel_main
+→ 初始化内存/异常/文件接口/时钟/调度/键盘，执行 RAM fixture 回归
+→ 挂载 ATA 正式数据卷（失败回退 RAM）
+→ 安装 syscall 服务，创建 Shell 进程/线程
+→ Shell run 装载独立用户 ELF
+→ ring 3 int80 请求服务/退出
+→ 等待、回收，再回 Shell
 ```
 
----
+`core/kernel_main.cpp` 很长，因为同时保留了最早的 smoke 与当前初始化。第一次不要从头硬读；在实际操作后按下表搜索函数，再看它依赖的接口。
 
-## 1. `boot/`
+## 模块地图
 
-这里放“真正和启动入口强绑定”的文件：
+| 目录 | 当前职责 | 第一遍先读 |
+| --- | --- | --- |
+| boot | ELF 链接布局、64 位入口、BootInfo 和段选择子 | entry64.asm、boot_info.hpp |
+| core | 初始化、自测、错误诊断、正式数据盘与 Shell 装配 | kernel_main、start_kernel_shell_under_scheduler |
+| memory | E820 物理页双位图、直接映射、私有页表、内核堆 | page_allocator.hpp、paging.hpp、address_space.hpp |
+| interrupts | IDT/GDT/TSS、异常/IRQ/int80 汇编入口、PIC/PIT、PS/2 与串口 | interrupts.hpp、interrupt_stubs.asm |
+| task | PCB/TCB、ready/sleep/block/wake、用户启动/退出/回收 | scheduler.hpp、elf_loader.hpp |
+| syscall | 用户指针检查、当前进程上下文、编号分发与服务 | syscall.hpp、kernel_handle_syscall |
+| storage | RAM BootVolume、统一 BlockDevice、ATA PIO/flush | block_device.hpp、ata_pio.hpp |
+| fs | OS64FS v3 读写/事务与 inode，文件/目录句柄、VFS、fd | os64fs.hpp、vfs.hpp、fd.hpp |
+| shell | 命令解析、cwd、文件修改、run/wait/reap、观察和电源命令 | handle_run_command、shell_run_once |
+| console | VGA 输出和内核交互行编辑 | console.hpp |
+| runtime | 无宿主 libc 时的基础内存工具 | runtime.hpp |
 
-- `entry64.asm`
-  long mode 以后，CPU 第一次进入 64 位内核时先落到这里。
-- `boot_info.hpp`
-  这是 stage2 交给内核的最小启动信息结构。
-- `linker.ld`
-  负责决定内核各段最终被链接到什么地址。
+## 内存：三个分配层不要混用
 
-一句话理解：
+1. `alloc_page/free_page` 分配/归还整张物理 4 KiB 页。物理页位图最高管理 256 MiB，E820 usable 范围和保留区决定哪些可以分配。
+2. `paging_initialize_direct_map` 建 `0xffff800000000000 + physical` 的 supervisor 访问窗口，`map_page_in_root` 建指定虚拟→物理映射；CR3/PTE 仍保存物理地址。C++ 访问物理页内容用 `paging_physical_pointer`。
+3. `heap_alloc/heap_free` 与 `kmalloc/kfree` 管 16–20 MiB 内核堆中的小对象。固定堆容量可复用，不在每次 kfree 时归还整个物理页。
 
-> `boot/` 管“内核怎么被启动起来”。
+低 1 MiB 保留给启动器、内核、启动卷和设备布局；**bootstrap 内核栈另在物理 `0x170000`–`0x180000` 保留 64 KiB**。entry64 的栈顶是 `0x180000`，不能把这段页误发给用户堆。
 
----
+`address_space` 管每个进程的私有页表。克隆会复制页表树，共享内核 supervisor 物理页，用户页面按新程序重新装载；不是 fork/COW。destroy 释放拥有的用户数据与页表。unmap 回收用户叶页及空私有层级，当前映射失效时刷新相应 TLB 项。
 
-## 2. `core/`
+用户 brk 与内核堆不同：进程在 4–8 MiB 用户窗口内立即分配，ELF 后开始，到 `0x7ef000` 为止；栈 `0x7f0000`–`0x800000`，中间一页 guard 不映射。支持 NX 的 CPU 上数据/堆/栈不可执行。这里没有 demand paging。
 
-这里先放内核主控入口：
+## 任务和中断：上下文由谁保存
 
-- `kernel_main.cpp`
+`scheduler.cpp` 创建进程/线程，决定谁 ready、谁等待以及何时回收。`context_switch.asm` 保存暂停内核调用所需的寄存器、RSP、RFLAGS，并切 CR3；`interrupt_stubs.asm` 保存用户 IRQ/syscall/异常的完整寄存器现场，最终 iretq 回用户态。不能只看切换汇编保存少量寄存器，就判断用户抢占没有保存其他寄存器。
 
-它现在负责：
+用户程序可以被 PIT timer 抢占；内核仍在明确调度点切换。IRQ0 在可能切换之前发 PIC EOI，避免暂停的 IRQ 处理器阻塞后续时钟。TSS.rsp0 随当前线程指向专用进入栈。用户线程还有独立的 bootstrap/resume 栈，避免反复 int80 覆盖最初返回现场。
 
-- 串口/VGA 状态输出
-- BootInfo 检查
-- E820 打印
-- 页分配器初始化
-- 页表测试
-- 堆测试
-- boot volume / 原始块设备测试
-- 只读文件系统挂载和路径读取测试
-- 文件句柄 open/read/close/stat 测试
-- 目录句柄 open/read/rewind/close 测试
-- VFS mount/stat/open/read/close 测试
-- 文件描述符表 fd_open/fd_read/fd_close 测试
-- 系统调用外观 sys_open/sys_read/sys_write/sys_close 测试
-- 第一版 `int 0x80` 软中断 syscall 烟测
-- 定时器中断测试
-- 基于 tick 的最小等待 / sleep 测试
-- 键盘 IRQ + 字符缓冲区测试
-- 第一版 `stdin/read(0)` 键盘字符流烟测
-- 第一版 `process/thread/scheduler` + priority/sleep/block/wake 烟测
-- 第一次真正 `iretq` 进入 ring 3，再由用户态 `int 0x80` 打回内核的 smoke test
-- 第一版 scheduler-managed user thread：由调度器把一条 user thread 真正切进 ring 3，并在 `exit` 后正式回收线程
-- 正式 `UserTrapFrame` + 每用户线程独立内核进入栈：user thread 现在能在 syscall 里主动 `yield`，切去 helper thread，再恢复回 ring 3 继续跑
-- 第一版 user timer preemption：user thread 现在还能在 ring 3 自旋时被 IRQ0 抢占，切去 helper thread，再沿着原来的 IRQ 返回链回到用户态
-- 控制台回显 + 最小行输入测试
-- 最小 shell 命令测试
-- shell 当前工作目录 `pwd` / `cd` / 相对路径测试
-- 正常启动后创建 `kernel-shell` 进程和 `shell-main` 线程，再把真实交互 shell 交给 scheduler
-- 异常测试入口
+最后一条线程退出唤醒等待者；`scheduler_reap_process` 清理 fd、页/页表、内核栈、PCB/TCB。孤儿自动回收在另一线程栈上进行。FPU/SIMD 现场、SMP、多用户线程 API 尚未实现。
 
-一句话理解：
+## 系统调用：服务存在不等于任何指针都可用
 
-> `core/` 管“内核起来以后，先按什么顺序初始化自己”。
+`kernel_handle_syscall` 识别用户来源，`user_syscall_arguments_valid` 检查每页 present/user/writable 与字符串结束，`current_dispatch_context` 取当前线程所属进程的 fd/cwd/output 视图。`dispatch_syscall_registers` 把 RAX 编号与 RDI/RSI/RDX/RCX 转交服务。
 
----
+当前有文件/目录/终端操作、exit/yield/sleep/getpid/spawn/waitpid、brk，以及单次 replace_file。stdin 等待能阻塞并被键盘/串口输入唤醒。用户异常走结束当前进程路径；内核异常仍诊断并停机。
 
-## 3. `console/`
+## 存储：两个后端与一个格式
 
-这里放最小控制台模块：
+`boot_volume` 是 stage2 预读的固定 RAM fixture，供原里程碑测试使用。正式交互探测 ATA primary master：`ata_pio` 实现 IDENTIFY、512 字节单扇区 PIO、FLUSH CACHE；`block_device` 给 RAM/ATA 同样的接口。没有可挂载数据盘时使用 RAM 回退，日志明确标 volatile。
 
-- `console.cpp/.hpp`
-  负责 VGA 控制台字符输出、退格、换行，以及第一版行输入接口。
+`os64fs` 已是**可读写的 v3**，不是旧 v1 只读实现。`mutate` 暂存有界扇区变更和缓存快照，校验后写入/flush，运行时错误尝试回滚；不可恢复则取消挂载。没有磁盘日志、断电恢复或自动 fsck。
 
-一句话理解：
+`file`/`directory` 提供带位置的句柄，`vfs` 提供统一接口，`fd` 给每进程小整数句柄。`sys_replace_file` 将编辑器的完整保存交给一次事务，避免 TRUNC 与 write 拆成两笔操作。硬链接、符号链接、文件权限与现代块设备驱动不在当前范围。
 
-> `console/` 管“字符怎么显示出来、怎么被拼成一整行输入”。
+## 修改前怎样验证
 
----
-
-## 4. `interrupts/`
-
-这里放和异常/中断入口有关的代码：
-
-- `interrupt_stubs.asm`
-  真正离 CPU 最近的汇编入口；现在 IRQ 和 `int 0x80` 都会把完整寄存器帧交给 C++，方便保存用户态被抢占时的机器现场。
-- `interrupts.cpp/.hpp`
-  IDT、异常名字表、kernel-side GDT/TSS 初始化、ring 3 可用段描述符、开关中断、通用 trap/IRQ 接入逻辑；现在也负责“timer IRQ 从 ring 3 抢占 user thread”这条路径，以及“键盘 IRQ 把 block 在 `read(0)` 里的 user thread 再唤醒回来”这条路径。
-- `pic.cpp/.hpp`
-  初始化 8259A PIC，把硬件 IRQ 重映射到 32~47，并在 IRQ 结束后发 EOI。
-- `pit.cpp/.hpp`
-  初始化 8253/8254 PIT，让 IRQ0 周期性地产生时钟 tick，并提供最小 `wait/sleep` 接口。
-- `keyboard.cpp/.hpp`
-  读取 IRQ1 键盘扫描码，翻译最小字符集，并把字符放进环形缓冲区。
-
-一句话理解：
-
-> `interrupts/` 管“CPU 一出异常、硬件一来中断，先怎么接住它”。
-
----
-
-## 5. `memory/`
-
-这里放和内存管理直接有关的模块：
-
-- `page_allocator.*`
-  从 E820 usable 区域里分物理页。
-- `paging.*`
-  管页表和虚拟地址映射。
-- `address_space.*`
-  在页表接口之上再包一层“进程视角的地址空间对象”，让 PCB 开始真的携带自己的页表根和用户区布局。
-- `heap.*`
-  在页表和物理页之上，提供更像“分配器”的堆接口。
-- `kmemory.*`
-  在堆之上再包一层正式入口，给后面的 C++ 对象分配提供 `kmalloc/kfree/knew/kdelete`。
-
-一句话理解：
-
-> `memory/` 管“物理内存怎么拿、虚拟地址怎么映射、每进程页表根怎么组织、堆内存怎么分，以及对象怎么落到堆上”。
-
----
-
-## 6. `fs/`
-
-这里放第一版文件系统模块：
-
-- `os64fs.cpp/.hpp`
-  负责只读 `OS64FS v1` 的挂载、路径查找、目录遍历和文件读取。
-- `file.cpp/.hpp`
-  在 `OS64FS` 上面提供第一版文件句柄接口，包括 `file_open`、`file_read`、`file_close` 和 `file_stat`。
-- `directory.cpp/.hpp`
-  在 `OS64FS` 上面提供第一版目录句柄接口，包括 `directory_open`、`directory_read`、`directory_rewind` 和 `directory_close`。
-- `vfs.cpp/.hpp`
-  在文件句柄和目录句柄上面提供第一版 VFS 入口，包括 `vfs_stat`、`vfs_open_file`、`vfs_open_directory` 等接口。
-- `fd.cpp/.hpp`
-  在 VFS 上面提供第一版文件描述符表，包括 `fd_open`、`fd_read`、`fd_seek`、`fd_stat` 和 `fd_close`。
-
-一句话理解：
-
-> `fs/` 管“原始块数据怎样被解释成目录、文件和路径，并把底层 inode / 目录项逐层包成 VFS 和 fd 这种更接近真实 OS 的访问入口”。
-
----
-
-## 7. `shell/`
-
-这里放最小 shell 模块：
-
-- `shell.cpp/.hpp`
-  负责提示符、命令解析、内建命令执行，以及第一版交互循环；现在又把“一轮真实交互”抽成 `shell_run_once()`，让 smoke test 和真实 scheduler 线程复用同一条路径。
-  现在已经能通过 `pwd` / `cd` 管当前目录，通过 `ls` / `cat` / `stat` 观察文件系统，其中 `ls` / `stat` 走 VFS，`cat` 进一步走 fd 表。
-
-一句话理解：
-
-> `shell/` 管“读到一整行之后，系统到底要怎么解释并执行它，包括当前目录和相对路径这种交互状态”。
-
----
-
-## 8. `storage/`
-
-这里放和“启动介质数据如何被内核读取”有关的代码：
-
-- `boot_volume.cpp/.hpp`
-  负责表示 stage2 预读进内存的一段原始连续扇区。
-- `block_device.cpp/.hpp`
-  再往上一层，把 `BootVolume` 包装成统一的块设备读接口。
-
-一句话理解：
-
-> `storage/` 管“内核现在怎样先拿到一段原始块设备数据，即使还没有真正的磁盘控制器驱动”。
-
----
-
-## 9. `syscall/`
-
-这里放第一版系统调用外观：
-
-- `syscall.cpp/.hpp`
-  现在先提供 `SyscallContext`，以及 `sys_open`、`sys_read`、`sys_write`、`sys_stat`、`sys_seek`、`sys_close`，再往前补了 `sys_getcwd`、`sys_chdir`、`sys_stat_path`、`sys_listdir`。
-  它先把“上层通过 fd、cwd、路径、错误码访问内核服务”的形状定下来，后来又往前补了第一版 `int 0x80` 软中断分发器，以及公开 syscall fd `0/1/2 = stdin/stdout/stderr`、`3+ = 普通文件` 这层边界翻译；现在 `sys_read(0)` 也已经能从键盘字符流读输入，第一版用户态 `exit` 也会从这里接回内核 smoke test。这一步继续往前后，`int 0x80` 分发在有当前线程时也会优先取“当前线程所属进程”的 `SyscallContext`，而不是只看全局默认上下文；再进一步以后，来自 ring 3 的 `int 0x80` 如果用户原本开着 IF，还会在 syscall 分发期间重新开中断，让 `read(0)` 这种阻塞式用户态 syscall 真能等到键盘 IRQ。
-
-一句话理解：
-
-> `syscall/` 管“以后用户程序请求内核服务时，先看到什么统一入口，这些调用共享哪些上下文状态，以及第一版 CPU 软中断入口怎么把寄存器转进这些服务”。
-
----
-
-## 10. `task/`
-
-这里放第一版任务系统模块：
-
-- `scheduler.cpp/.hpp`
-  现在先放 `ProcessControlBlock`、`ThreadControlBlock`、`SchedulerState`，以及分优先级 ready queue、idle thread、`sleep/block/wake` 骨架、线程创建/退出、时间片请求和协作式切换入口；正常启动时的 `shell-main` 线程也已经真的挂到这层来运行。这一步里它又开始区分 `kernel thread` 和 `user thread`，并补了第一版 `user process` / `user thread` 创建入口；后来又继续把每进程自己的 `FileDescriptorTable + SyscallContext` 正式挂进 `ProcessControlBlock`。再往前一步以后，它还开始把“暂停下来的内核上下文依赖哪份页表根”也一起保存下来，所以线程切换现在不只保存 `RSP`，还会保存/恢复对应 `CR3`。
-- `context_switch.asm`
-  这是第一版真正的线程上下文切换汇编。当前先保存 kernel thread 需要的 callee-saved 寄存器和 `RSP`；后来又继续扩成“切换线程前先保存当前 `RSP`，再切到下一条线程需要的 `CR3`，最后恢复下一条线程的 `RSP`”。这一步里它还额外承载了第一次 `iretq` 进入 ring 3、以及从用户态 `exit` 接回内核的入口/返回器，现在这条路径已经开始被真正的 user thread 复用。
-
-一句话理解：
-
-> `task/` 管“谁是进程、谁是线程、线程怎样拥有独立栈、调度器怎样决定下一次把 CPU 交给谁”。
-
----
-
-## 11. `runtime/`
-
-这里放 freestanding 内核里最小的运行时工具：
-
-- `runtime.cpp/.hpp`
-
-现在先只有：
-
-- `memory_set`
-- `memory_copy`
-
-后面如果再补：
-
-- `memory_compare`
-- `string_length`
-- 其它最小 libc 替代
-
-也会继续放这里。
-
-一句话理解：
-
-> `runtime/` 管“没有宿主 libc 时，内核自己最基础的工具函数”。
-
----
-
-## 12. 为什么现在这样分
-
-因为如果所有文件都继续平铺在 `kernel/` 根目录，
-后面一多起来你会很快分不清：
-
-- 哪些是启动相关
-- 哪些是内存管理
-- 哪些是中断/异常
-- 哪些只是基础工具函数
-
-现在这套分类方式的目标不是“追求复杂目录层级”，
-而是让你一眼就能先按职责找到文件。
-
-一句话总结：
-
-> 现在 `kernel/` 不是按“文件类型”分，而是按“这个模块在内核里负责什么”分。
+参考主 README 的测试命令。新内存测试分宿主位图 sanitizer 与真实 QEMU 用户流程；存储测试同时有宿主故障注入和冷启动持久化。普通 build/clean 保留用户数据盘；更新用户工具使用停止 QEMU 后的 `make update-tools`，不要用 reset-data 代替更新。

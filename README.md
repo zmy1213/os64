@@ -2,9 +2,15 @@
 
 一个从自写 BIOS 启动器开始的 x86_64 教学操作系统。内核和用户程序都直接运行在 QEMU 的虚拟 CPU 上，不依赖宿主操作系统的进程、文件接口或 C 标准库。
 
-目前已连通从启动到日常交互的完整教学流程：64 位内核、物理页和内核堆、用户地址空间、时钟抢占与阻塞调度、ELF 用户进程、系统调用、可保存到磁盘的文件系统、键盘/串口终端和 Shell。
+目前已连通从启动到日常交互的完整教学流程：64 位内核、可回收物理页和内核堆、用户地址空间与动态堆、时钟抢占与阻塞调度、ELF 用户进程、系统调用、可保存到磁盘的文件系统、键盘/串口终端、Shell 和用户态行式文本编辑器。
 
 目标平台是 QEMU 的单核传统 PC：BIOS、VGA 文本显示、8259 PIC、PIT、PS/2 键盘、16550 串口和 IDE ATA 数据盘。
+
+## 从零开始读
+
+没有操作系统基础，先读 **[从零开始的当前版本教程](docs/BEGINNER_TUTORIAL.md)**。它从宿主/客体、工具安装、第一次启动和安全备份讲起，再按真实函数追启动、内存、用户程序、系统调用和文件保存，最后用编辑器完成一个实际应用实验。
+
+[源码阅读地图](docs/BEGINNER_SOURCE_MAP.md) 帮你定位文件；[文档索引](docs/README.md) 区分当前说明与历史专题。旧教程正文中的“当前”“这一轮”指对应开发阶段，不能作为最新功能和地址布局清单。
 
 ## 快速启动
 
@@ -43,6 +49,7 @@ append /work/note.txt _os64
 cat /work/note.txt
 run /bin/writer /saved.txt saved_after_reboot
 run /bin/spawn_test
+run /bin/mem_test
 ps
 mem
 sync
@@ -64,7 +71,7 @@ shutdown
 | 系统信息 | `mem`、`heap`、`disk`、`ticks`、`uptime`、`irq`、`bootinfo`、`e820`、`cpu` |
 | 终端与电源 | `help`、`echo`、`history`、`clear`、`reboot`、`shutdown` |
 
-用户程序及 ABI 见 [user/README.md](user/README.md)。
+在 Shell 单独运行 `run /bin/edit /work/lesson.txt`。编辑器运行后，在 `edit> ` 输入 `append hello`、`print`、`save`、`quit`；回到 Shell 后 `cat /work/lesson.txt`。未保存时 `quit` 会提醒，`quit!` 丢弃内存修改。它是逐行操作的文本编辑器，最大文本 32 KiB，不是全屏编辑器。用户程序、内存库和 ABI 见 [user/README.md](user/README.md)。
 
 ## 镜像和保存
 
@@ -79,7 +86,15 @@ shutdown
 | `kernel.elf`、`kernel.bin` | 可调试的内核 ELF 与裸内核映像 |
 | `user/` | 独立编译的用户 ELF 文件 |
 
-首次构建创建 `data.img`。之后的构建和 `make clean` 保留它，已有文件不会被模板覆盖。更新内核不需要重置数据盘；用户工具更新后，已有数据盘里的旧工具也会被保留。
+首次构建创建 `data.img`。之后的构建和 `make clean` 保留它，clean 也保留 `data.img.backup-*`，已有文件不会被模板覆盖。更新内核不需要重置数据盘；用户工具重新编译后，盘里的旧工具也会保留。
+
+已有数据盘需要安装新版 `/bin` 时，先在 os64 中 `shutdown` 并确认 QEMU 已退出，然后在宿主运行：
+
+```sh
+make update-tools
+```
+
+它使用真实 OS64FS 实现在副本上只更新 `/bin`，检查成功后才替换数据镜像，保留其他文件并创建完整的 `data.img.backup-UTC时间戳` 备份。磁盘在用、空间不足或校验失败时拒绝更新。该目标更新默认 `build/data.img`，不要与运行中的 QEMU 同时执行。
 
 `make reset-data` 会用新模板覆盖数据盘，删除其中保存的文件；`make distclean` 删除全部构建产物和数据盘。要保留文件，先备份 `build/data.img`。
 
@@ -101,21 +116,25 @@ make test
 - 三次冷启动，检查保存文件、跨间接块内容和删除结果。
 - 内核页错误和非法指令的诊断路径。
 - 宿主 ASan/UBSan 存储测试，检查空间不足、坏元数据、部分 I/O 失败与回滚。
+- 宿主物理页位图测试，以及 QEMU 大于旧 4 KiB 上限的 ELF、1 MiB 用户堆、缩堆清零、重复回收、64 KiB 栈、guard/NX、编辑器操作和冷启动保存测试。
 
-系统测试使用自己的临时数据盘，并检查用户 `build/data.img` 的摘要保持不变。日志位于 `build/system-test/` 和 `build/*.serial.log`。各项也可以单独运行：`make test-stage1`、`make test-system`、`make test-storage-host`、`make test-page-fault`、`make test-invalid-opcode`。
+系统测试使用自己的临时数据盘，并检查用户 `build/data.img` 的摘要保持不变。日志位于 `build/system-test/`、`build/memory-user-test/` 和 `build/*.serial.log`。各项也可以单独运行：`make test-stage1`、`make test-system`、`make test-storage-host`、`make test-memory-host`、`make test-memory-user`、`make test-page-fault`、`make test-invalid-opcode`。
 
 ## 当前边界
 
-这是能独立启动、运行用户程序并保存文件的教学系统。它使用固定资源上限：8 个进程、16 条线程、4–8 MiB 用户虚拟窗口、单页用户栈；ELF 文件最多 4096 字节，最多 8 个程序段、32 张装载页。内核堆位于 16–20 MiB，正式运行前预映射，以保证进程共享的内核映射一致。
+这是能独立启动、运行用户程序并保存文件的教学系统。物理页管理覆盖 E820 可用区间中的低 256 MiB，通过 `0xffff800000000000` 起的内核直接映射访问，分配页可回收；超过该管理上限的内存暂不使用，默认 QEMU RAM 为 128 MiB。
+
+固定上限仍有：8 个进程、16 条线程、4–8 MiB 用户窗口。用户栈是 64 KiB（`0x7f0000`–`0x800000`），下方有一页不映射的 guard；动态堆由 `brk` 立即分配，不能越过 `0x7ef000`。ELF 文件最多 69,632 字节、8 个程序头、256 张装载页，拒绝 RWX 段和占用栈区域的段。支持 NX 的 CPU 上代码不可写，数据/堆/栈不可执行；启动日志报告 `nx_enabled`。内核堆仍固定在 16–20 MiB，预映射并由进程共享。
 
 文件系统数据盘当前有 64 个 inode 槽位；格式最多支持 128 个 inode 槽位，单文件最多 69,632 字节。`rm` 可以删除文件和空目录，仍打开的文件与活动工作目录不能删除。
 
-用户态支持时钟抢占；内核线程在受控的睡眠、阻塞和让出点调度。尚未实现 SMP、多用户权限、`fork`、信号、管道、动态链接、虚拟内存换页、FPU/SIMD 上下文、网络协议栈、图形桌面、USB/AHCI/NVMe 或 UEFI，不能运行 Linux 二进制，也没有做真实硬件兼容认证。
+用户态支持时钟抢占；内核线程在受控的睡眠、阻塞和让出点调度。尚未实现 SMP、多用户权限、`fork`/`exec` 替换、信号、管道、动态链接、demand paging/换页、FPU/SIMD 上下文、网络协议栈、图形桌面、USB/AHCI/NVMe 或 UEFI，不能运行 Linux 二进制，也没有做真实硬件兼容认证。用户栈保护不代表所有内核栈都有 guard；运行时文件事务不提供断电一致性。
 
 ## 阅读实现
 
-- [启动到用户态的原版讲解](docs/BOOT_TO_USERLAND_WALKTHROUGH.md)：保留最初的逐步教程。
-- [原有专题索引](docs/README.md)：汇编启动、页表、调度器、Shell 与系统调用。
+- [当前版本主教程](docs/BEGINNER_TUTORIAL.md)：从第一次运行到实际源码和实验。
+- [启动到用户态的原版讲解](docs/BOOT_TO_USERLAND_WALKTHROUGH.md)：保留早期开发过程，已标记适用阶段。
+- [专题索引](docs/README.md)：当前阅读路径与历史原理补充。
 - [进程运行与回收](docs/PROCESS_RUNTIME.md)：新的进程生命周期和异常隔离。
 - [持久化存储](docs/PERSISTENT_STORAGE.md)：ATA、OS64FS 写入、失败回滚与限制。
 - [用户程序](user/README.md)：入口栈、ABI 和编译方式。

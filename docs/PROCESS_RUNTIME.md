@@ -18,7 +18,7 @@ mem
 ```
 
 `scheduler_create_user_elf_thread` 依次创建 PCB、克隆内核页表、初始化进程
-自己的 cwd/fd 表和输出回调、装载 ELF、映射一页用户栈，再创建用户 TCB。
+自己的 cwd/fd 表和输出回调、装载 ELF、映射 64 KiB 用户栈并留下保护页、初始化用户堆边界，再创建用户 TCB。
 `scheduler_prepare_user_arguments` 把参数字符串及指针写入这份新地址空间。
 shell 等待该 PID 退出，打印退出码，然后显式回收它，因此反复运行程序
 不会把固定的 PCB/TCB 槽位永久占满。
@@ -37,8 +37,8 @@ shell 等待该 PID 退出，打印退出码，然后显式回收它，因此反
 ```
 
 公开的 spawn 接口当前最多接受 8 个参数，每个字符串最多 63 字节。
-用户栈仍只有 4096 字节，参数和程序自己的调用栈共同使用这一页；大数组或
-深递归应避免放在用户栈上。没有参数时，spawn 自动把程序路径作为 argv[0]。
+用户栈为 64 KiB（16 页），参数和调用栈共同使用它；下方的 4 KiB 页保持未映射。
+这不是自动增长栈，过深递归仍会触发页错误。没有参数时，spawn 自动把程序路径作为 argv[0]。
 
 ## 创建、等待和退出
 
@@ -53,6 +53,8 @@ shell 等待该 PID 退出，打印退出码，然后显式回收它，因此反
 | 14 sleep | 毫秒换算为 PIT tick 后阻塞，到期由 timer 唤醒 |
 | 15 spawn | 装载新 ELF，继承 cwd 和控制台输出，成功返回子 PID |
 | 16 waitpid | 只允许等待自己的子进程，获取退出码并回收其资源 |
+| 20 brk | 查询/改变当前进程用户堆末尾，立即分配或释放页 |
+| 21 replace_file | 在一次文件事务中创建或替换整个文件，供编辑器保存 |
 
 spawn 设置 `parent_pid` 为当前线程所属进程的 PID。新进程获得独立 fd 表，
 不会复制父进程已经打开的普通文件描述符。cwd 及输出回调由系统调用层复制。
@@ -77,7 +79,7 @@ status 指向 32 位整数。普通程序应使用能放进 int32_t 的退出码
 每次正式启动成功后，进程拥有：
 
 - 从内核 root 克隆的私有页表树；spawn 不从父用户 root 复制用户页。
-- ELF PT_LOAD 段的用户物理页，以及一页初始用户栈。
+- ELF PT_LOAD 段的用户物理页、16 页用户栈，以及运行时申请的用户堆页。
 - 两根各 32 KiB 的 supervisor 内核栈，分配自可回收内核堆。
 - 自己的 fd 表、cwd、退出状态，以及 PCB/TCB 槽位。
 
@@ -95,26 +97,74 @@ ELF staging 页在所有返回路径上释放；装载或线程创建失败时�
 
 ## 地址空间与分配限制
 
-| 虚拟地址范围 | 当前用途 |
+| 地址范围 | 当前用途 |
 | --- | --- |
-| 0–2 MiB | 启动恒等映射，内核、早期页表及低物理页访问 |
-| 4–8 MiB | 每个进程独立的用户窗口，栈从 8 MiB 向下增长 |
-| 16–20 MiB | 内核堆，supervisor 映射 |
+| 0–2 MiB 虚拟地址 | 保留启动恒等映射，低地址内核及早期数据 |
+| 物理 `0x170000`–`0x180000` | 专门保留 64 KiB bootstrap 内核栈，栈顶由 entry64 设置 |
+| `0x400000`–`0x800000` 虚拟地址 | 每个进程独立的 4 MiB 用户窗口 |
+| ELF 段结束后的页边界–当前 break | 已申请的用户堆，最大末尾 `0x7ef000` |
+| `0x7ef000`–`0x7f0000` | 不映射的 4 KiB 栈 guard |
+| `0x7f0000`–`0x800000` | 64 KiB 用户栈，向低地址使用 |
+| 16–20 MiB 虚拟地址 | 固定 4 MiB 内核堆，supervisor 映射 |
+| `0xffff800000000000` 起 | 内核对物理 0–256 MiB 的 supervisor 直接映射 |
 
-创建调度用户进程之前，内核预映射完整的 4 MiB 堆容量，再克隆用户页表。
-因此，后续用户 syscall 中申请的 fd 缓冲、文件系统事务对象和内核栈，
-在用户 root 和内核 root 下都能通过相同虚拟地址访问。内核堆数据页从
-2 MiB 以上分配，保留有限的低页供页表和用户程序使用。
+表中每个上界都不包含自身。`entry64.asm` 把内核入口 RSP 设置为物理
+`0x180000` 对应的低恒等映射地址；这根 bootstrap 栈不在低 1 MiB 内。
+物理分配器必须额外保留 `0x170000`–`0x180000`，否则更大的用户堆可能覆盖
+仍在使用的启动调用现场。低 1 MiB 则整体保留给 bootloader、内核、启动卷及设备区间。
 
-当前页表及用户物理页仍要求落在 1–2 MiB 可分配池中。`alloc_page_below`
-限制分配范围，`free_page` 使用 ownership 位图拒绝重复释放，并通过可回收
-页链复用该池。高地址内核堆物理页不逐页返还给物理分配器；堆内对象通过
-kfree 复用已经映射的容量。这还不是通用物理内存管理器。
+创建正式用户进程之前，内核预映射完整 4 MiB 内核堆，再克隆页表树。
+后续 syscall 中申请的 fd 缓冲、事务对象和内核栈因此能在所有进程中使用
+相同内核虚拟地址。内核 supervisor 物理页共享；私有页表树分别拥有并回收。
+堆内对象通过 kfree 复用容量，固定堆数据页不在每次 kfree 时返还物理分配器。
 
-ELF loader 当前接受 little-endian x86_64 ET_EXEC、最多 8 个 program
-headers、最多 32 张 PT_LOAD 页，文件自身不超过 4096 字节。构建使用紧凑
-文件偏移和分离的虚拟段地址。加载前检查范围和重叠，入口必须位于可执行
-PT_LOAD 段；段的写权限进入 PTE。尚未实现 NX，因此数据页仍可能执行。
+### 物理页与直接映射
+
+`initialize_page_allocator` 通过 E820 构造 available/allocated 双位图，总计
+16 KiB。一页对应一位，管理上限为 256 MiB；实际可用容量依机器 E820 决定，
+默认运行脚本给 QEMU 128 MiB。只接受完整的 usable 页，保留/禁用区间优先排除。
+`free_page` 检查可分配属性和 ownership，拒绝非本分配器页面与重复释放。
+
+`paging_initialize_direct_map` 先借旧低 2 MiB 映射建立两张 bootstrap 页表，
+用 supervisor-only 的 2 MiB 大页建立高地址访问窗口。之后所有管理范围内的
+页表页与用户物理页都能通过 `paging_physical_pointer` 访问：
+
+```text
+内核访问指针 = 0xffff800000000000 + 物理地址
+```
+
+CR3 和 PTE 仍保存物理地址，不把直接映射指针写进页表的物理地址字段。
+映射整个范围只意味着内核能寻址；它不会把设备洞或 BIOS reserved 变成可分配 RAM。
+相比历史的 1–2 MiB 专用低页池，页表与用户数据页现在可以从整个管理范围分配和回收。
+
+### ELF 与页面保护
+
+ELF loader 接受 little-endian x86_64 ET_EXEC，最多 8 个 program headers、
+合计 256 张 PT_LOAD 页，文件自身最多 69,632 字节。文件由 kmalloc 暂存，
+所有返回路径释放缓冲。装载前检查长度/地址溢出、段页面重叠、入口属于可执行段，
+拒绝 RWX 段，拒绝任何段侵入 guard/栈；各页先清零，再逐页拷贝文件内容。
+BSS 的运行内存长度可以大于文件长度，仍受 256 页限制。
+
+CPUID 支持 NX 时内核设置 EFER.NXE，代码页不可写，数据、用户堆和栈 NX；
+高直接映射及内核堆也不可执行。CPU 不支持 NX 时不设置非法 bit 63，启动日志
+明确报告 `nx_enabled=0`，此时不能宣称硬件禁止执行数据页。没有 ASLR。
+
+### 用户堆 brk
+
+每进程保存 `user_heap_base`、`user_heap_break`、`user_heap_limit`。
+base 是 ELF 所有段结束后向上页对齐的地址，初始 break 等于 base，limit
+为栈 guard 起点 `0x7ef000`。`sys_brk(0)` 查询；`sys_brk(new_break)` 成功
+返回请求地址，越界或缺内存时返回旧 break，所以调用方必须比较实际返回值。
+
+break 按字节记录，物理页按 4 KiB 分配。扩张立即分配并清零新页；中途失败
+撤销本次映射。缩小释放不再需要的整页；保留页中被裁掉的尾部清零，防止
+重新增长时暴露旧数据。`address_space_unmap_user_page` 同时回收空的私有页表层级，
+修改当前 CR3 的映射后用 invlpg 使对应缓存失效。没有 mmap、共享内存、COW、
+demand paging 或交换区。
+
+用户库 [memory.hpp](../user/memory.hpp) 的 `memory::allocate/release/resize`
+在 brk 之上提供小块分配、16 字节对齐、分割合并和尾部归还。应用不能在库
+仍拥有活块时绕过它手动移动 break；这是单线程教学库，不是完整 libc。
 
 ## 切换和中断
 
@@ -141,11 +191,15 @@ PIT IRQ0 完成 tick 记账后、在可能切换线程之前发送 PIC EOI。中
 ## 当前边界与验证
 
 PCB 固定 8 个，TCB 固定 16 个，idle 和 shell 也占用槽位。实现面向单 CPU、
-单个用户主线程的自有程序，没有 fork、exec 替换、signals、用户 mmap/brk、
-动态链接器、POSIX/Linux ABI、FPU/SIMD 上下文、SMP、权限用户模型、用户栈
-guard page 或 demand paging。内核栈虽然加大，仍没有硬件溢出 guard。
+单个用户主线程的自有程序，没有 fork、exec 替换、signals、用户 mmap、
+动态链接器、POSIX/Linux ABI、FPU/SIMD 上下文、SMP、权限用户模型或 demand paging。
+用户栈已有 guard 与固定 64 KiB 映射；内核栈仍没有普遍的硬件溢出 guard。
 
 `make test-system` 覆盖正式启动、argv、spawn/wait、用户 sleep/抢占、坏指针、
 用户 fault 后继续运行，以及连续 55 次程序启动后空闲物理页数保持不变。
 较早 `make test-stage1` 保留寄存器、trap frame、TSS、调度与 shell 烟测。
+`make test-memory-host` 覆盖 E820 重叠/禁用区、bootstrap 栈保留、分配与重复释放。
+`make test-memory-user` 在 QEMU 中覆盖大于旧 4 KiB 上限的 ELF、1 MiB 堆、
+缩堆清零/边界拒绝、16 KiB 实际局部栈数组、重复运行回收、stack guard/NX、
+编辑器多行/超限处理与冷启动保存；NX 测试以启动日志支持状态为条件。
 完整测试命令和最新结果以仓库 README 及实际测试输出为准。

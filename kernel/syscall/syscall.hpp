@@ -44,8 +44,8 @@ enum SyscallNumber : uint64_t {
   kSyscallNumberStatPath = 7,
   kSyscallNumberListDir = 8,
   kSyscallNumberWrite = 9,  // 这次先追加，不去重排前一轮已经用起来的编号。
-  kSyscallNumberExit = 10,  // 第一版用户态先靠它告诉内核：“我已经跑完，可以回到 smoke test 继续了”。
-  kSyscallNumberYield = 11, // 第一版“用户线程主动让出 CPU”入口；这一步先主要服务于用户态恢复烟测。
+  kSyscallNumberExit = 10,  // 结束当前用户进程，保存退出码并唤醒等待者。
+  kSyscallNumberYield = 11, // 用户线程主动让出 CPU，之后从原调用点继续。
   kSyscallNumberMkdir = 12,
   kSyscallNumberGetPid = 13,
   kSyscallNumberSleep = 14,
@@ -54,6 +54,8 @@ enum SyscallNumber : uint64_t {
   kSyscallNumberUnlink = 17,
   kSyscallNumberSync = 18,
   kSyscallNumberOpenFlags = 19,
+  kSyscallNumberBrk = 20,
+  kSyscallNumberReplaceFile = 21,
 };
 
 // 这是第一版“写输出”回调。
@@ -64,11 +66,8 @@ using SyscallWriteHandler = size_t (*)(int32_t fd,
                                        size_t bytes_to_write,
                                        void* context);
 
-// SyscallContext 是第一版“系统调用上下文”。
-// 现在还没有进程，所以它先保存两样最关键的状态：
-// 1. 当前这组调用共用哪张 fd 表
-// 2. 当前工作目录 cwd 是什么
-// 以后有进程后，这里会自然长成“当前进程的内核视图”。
+// 每个进程自己的系统调用视图：fd 表、当前目录和控制台输出回调。
+// 内核启动自测也能显式安装一份上下文，复用同样的文件接口。
 struct SyscallContext {
   FileDescriptorTable* fd_table;                    // 以后 open/read/close 都会先从这里进入 fd 层。
   char current_working_directory[kSyscallPathCapacity];  // 现在先把 cwd 放进 syscall 上下文，而不是留在 shell 私有状态里。
@@ -98,8 +97,7 @@ bool install_syscall_write_handler(SyscallContext* context,
                                    SyscallWriteHandler handler,
                                    void* write_context);
 
-// 现在还没有进程切换，所以 CPU 真正打进来的 syscall 统一先看“当前激活的上下文”。
-// 以后这里自然会升级成“当前线程/当前进程的上下文”。
+// 为启动自测安装后备上下文；调度器运行时优先取当前线程所属进程的上下文。
 bool install_syscall_dispatch_context(SyscallContext* context);
 bool syscall_dispatch_is_ready();
 
@@ -120,14 +118,14 @@ SyscallStatus sys_chdir(SyscallContext* context, const char* path);
 int32_t sys_open(SyscallContext* context, const char* path,
                  uint32_t flags = 0);
 
-// 成功返回读到的字节数，EOF/当前无可读字符时返回 0，失败返回负数 SyscallStatus。
+// 返回字节数，文件 EOF 返回 0，失败返回负数 SyscallStatus；正常 stdin 无字符时阻塞。
 // 现在：
 // - `fd == 0` 会走第一版 stdin 键盘字符流
-// - `fd >= 3` 会走只读文件路径
+// - `fd >= 3` 检查该文件句柄的读权限并读取文件
 int32_t sys_read(SyscallContext* context, int32_t fd,
                  void* buffer, size_t bytes_to_read);
 
-// 成功返回真正写出的字节数；当前第一版只支持 stdout/stderr。
+// 返回写出字节数；stdout/stderr 输出控制台，普通文件要求句柄有写权限。
 int32_t sys_write(SyscallContext* context, int32_t fd,
                   const void* buffer, size_t bytes_to_write);
 
@@ -165,6 +163,10 @@ int32_t sys_waitpid(int32_t pid, int32_t* status);
 SyscallStatus sys_mkdir(SyscallContext* context, const char* path);
 SyscallStatus sys_unlink(SyscallContext* context, const char* path);
 SyscallStatus sys_sync(SyscallContext* context);
+// 0 查询末尾；成功返回新末尾，失败返回原末尾（并非负错误码）。
+uint64_t sys_brk(uint64_t requested_break);
+int32_t sys_replace_file(SyscallContext* context, const char* path,
+                         const void* buffer, size_t size);
 
 // 这是 `int 0x80` 打进内核后的 C++ 总入口。
 // 汇编 stub 会先把寄存器现场整理成 `SyscallInterruptFrame`，

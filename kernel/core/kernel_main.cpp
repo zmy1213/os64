@@ -659,8 +659,8 @@ bool bounded_text_equals(const char* actual,
   return expected[limit] == '\0';
 }
 
-bool page_is_directly_accessible_in_boot_identity_map(uint64_t physical_address) {
-  return physical_address != 0 && physical_address < kPagingBootIdentityLimit;
+bool page_is_accessible_to_kernel(uint64_t physical_address) {
+  return physical_address != 0 && paging_physical_pointer(physical_address) != nullptr;
 }
 
 const uint8_t* user_mode_smoke_program_bytes() {
@@ -723,16 +723,16 @@ bool load_user_program_file(PageAllocator* allocator,
   }
 
   const uint64_t code_physical_page = alloc_page(allocator);
-  if (!page_is_directly_accessible_in_boot_identity_map(code_physical_page)) {
+  if (!page_is_accessible_to_kernel(code_physical_page)) {
     (void)file_close(&file_handle);
     return false;
   }
 
-  memory_set(reinterpret_cast<void*>(static_cast<uintptr_t>(code_physical_page)),
+  memory_set(paging_physical_pointer(code_physical_page),
              0, kPageSize);
   const size_t bytes_read =
       file_read(&file_handle,
-                reinterpret_cast<void*>(static_cast<uintptr_t>(code_physical_page)),
+                paging_physical_pointer(code_physical_page),
                 file_stat_result.size_bytes);
   const bool close_ok = file_close(&file_handle);
   if (!close_ok || bytes_read != file_stat_result.size_bytes) {
@@ -963,6 +963,29 @@ bool run_tss_smoke_test() {
 
 // 这一步才是真正把“物理页分配器”和“页表管理器”接起来：
 // 先拿到一个物理页，再把它映射到一个新的虚拟地址，然后实际写进去读出来。
+bool run_direct_map_smoke_test(PageAllocator* allocator) {
+  const uint64_t free_before = count_free_pages(allocator);
+  uint64_t physical = alloc_page_at_least(allocator, 32ULL * 1024 * 1024);
+  if (physical == 0) physical = alloc_page_at_least(allocator, kPagingBootIdentityLimit);
+  if (physical == 0) return false;
+  auto* const value = static_cast<volatile uint64_t*>(paging_physical_pointer(physical));
+  if (value == nullptr) { (void)free_page(allocator, physical); return false; }
+  *value = kPagingTestPattern;
+  const bool mapped = *value == kPagingTestPattern &&
+      resolve_physical_address_in_root(paging_current_root_physical(),
+                                       kPagingDirectMapBase + physical) == physical;
+  serial_write_string("direct_map_high_page_phys=0x");
+  serial_write_hex64(physical);
+  serial_write_crlf();
+  const bool returned = free_page(allocator, physical);
+  const bool rejected_twice = !free_page(allocator, physical);
+  const bool ok = mapped && returned && rejected_twice &&
+                  count_free_pages(allocator) == free_before;
+  serial_write_string(ok ? "direct map high page ok" : "direct map high page bad");
+  serial_write_crlf();
+  return ok;
+}
+
 bool run_paging_smoke_test(PageAllocator* allocator) {
   if (allocator == nullptr) {
     return false;
@@ -1107,9 +1130,9 @@ bool run_user_mode_smoke_test(PageAllocator* allocator,
   const uint64_t code_physical_page = alloc_page(allocator);
   const uint64_t shared_physical_page = alloc_page(allocator);
   const uint64_t stack_physical_page = alloc_page(allocator);
-  if (!page_is_directly_accessible_in_boot_identity_map(code_physical_page) ||
-      !page_is_directly_accessible_in_boot_identity_map(shared_physical_page) ||
-      !page_is_directly_accessible_in_boot_identity_map(stack_physical_page)) {
+  if (!page_is_accessible_to_kernel(code_physical_page) ||
+      !page_is_accessible_to_kernel(shared_physical_page) ||
+      !page_is_accessible_to_kernel(stack_physical_page)) {
     return false;
   }
 
@@ -1118,11 +1141,11 @@ bool run_user_mode_smoke_test(PageAllocator* allocator,
     return false;
   }
 
-  memory_set(reinterpret_cast<void*>(static_cast<uintptr_t>(code_physical_page)),
+  memory_set(paging_physical_pointer(code_physical_page),
              0, kPageSize);
-  memory_copy(reinterpret_cast<void*>(static_cast<uintptr_t>(code_physical_page)),
+  memory_copy(paging_physical_pointer(code_physical_page),
               user_mode_smoke_program_bytes(), program_size);
-  memory_set(reinterpret_cast<void*>(static_cast<uintptr_t>(stack_physical_page)),
+  memory_set(paging_physical_pointer(stack_physical_page),
              0, kPageSize);
 
   if (!address_space_map_user_page(&user_space, allocator,
@@ -1253,11 +1276,11 @@ bool run_user_file_program_smoke_test(PageAllocator* allocator,
   }
 
   const uint64_t stack_physical_page = alloc_page(allocator);
-  if (!page_is_directly_accessible_in_boot_identity_map(stack_physical_page)) {
+  if (!page_is_accessible_to_kernel(stack_physical_page)) {
     return false;
   }
 
-  memory_set(reinterpret_cast<void*>(static_cast<uintptr_t>(stack_physical_page)),
+  memory_set(paging_physical_pointer(stack_physical_page),
              0, kPageSize);
   if (!address_space_map_user_page(&user_space, allocator,
                                    kUserModeStackPageVirtualAddress,
@@ -1382,11 +1405,11 @@ bool run_user_elf_program_smoke_test(PageAllocator* allocator,
   }
 
   const uint64_t stack_physical_page = alloc_page(allocator);
-  if (!page_is_directly_accessible_in_boot_identity_map(stack_physical_page)) {
+  if (!page_is_accessible_to_kernel(stack_physical_page)) {
     return false;
   }
 
-  memory_set(reinterpret_cast<void*>(static_cast<uintptr_t>(stack_physical_page)),
+  memory_set(paging_physical_pointer(stack_physical_page),
              0, kPageSize);
   if (!address_space_map_user_page(&user_space, allocator,
                                    kUserModeStackPageVirtualAddress,
@@ -4015,9 +4038,9 @@ bool run_scheduler_user_thread_smoke_test(PageAllocator* allocator,
   const uint64_t code_physical_page = alloc_page(allocator);
   const uint64_t shared_physical_page = alloc_page(allocator);
   const uint64_t stack_physical_page = alloc_page(allocator);
-  if (!page_is_directly_accessible_in_boot_identity_map(code_physical_page) ||
-      !page_is_directly_accessible_in_boot_identity_map(shared_physical_page) ||
-      !page_is_directly_accessible_in_boot_identity_map(stack_physical_page)) {
+  if (!page_is_accessible_to_kernel(code_physical_page) ||
+      !page_is_accessible_to_kernel(shared_physical_page) ||
+      !page_is_accessible_to_kernel(stack_physical_page)) {
     return false;
   }
 
@@ -4026,15 +4049,15 @@ bool run_scheduler_user_thread_smoke_test(PageAllocator* allocator,
     return false;
   }
 
-  memory_set(reinterpret_cast<void*>(static_cast<uintptr_t>(code_physical_page)),
+  memory_set(paging_physical_pointer(code_physical_page),
              0, kPageSize);
-  memory_copy(reinterpret_cast<void*>(static_cast<uintptr_t>(code_physical_page)),
+  memory_copy(paging_physical_pointer(code_physical_page),
               user_mode_yield_program_bytes(), program_size);
   memory_set(
-      reinterpret_cast<void*>(static_cast<uintptr_t>(shared_physical_page)),
+      paging_physical_pointer(shared_physical_page),
       0,
       kPageSize);
-  memory_set(reinterpret_cast<void*>(static_cast<uintptr_t>(stack_physical_page)),
+  memory_set(paging_physical_pointer(stack_physical_page),
              0, kPageSize);
 
   if (!address_space_map_user_page(&process->address_space, allocator,
@@ -4077,8 +4100,7 @@ bool run_scheduler_user_thread_smoke_test(PageAllocator* allocator,
   SchedulerUserYieldHelperContext helper_context;
   memory_set(&helper_context, 0, sizeof(helper_context));
   helper_context.shared_page =
-      reinterpret_cast<volatile uint64_t*>(
-          static_cast<uintptr_t>(shared_physical_page));
+      static_cast<volatile uint64_t*>(paging_physical_pointer(shared_physical_page));
   helper_context.wake_target = thread;
   helper_context.scancode = kBlockedStdinScancode;
   ThreadControlBlock* const helper_thread =
@@ -4163,8 +4185,7 @@ bool run_scheduler_user_thread_smoke_test(PageAllocator* allocator,
   const uint64_t kernel_root_physical =
       g_scheduler.processes[0].address_space.root_physical_address;
   const volatile uint64_t* const shared_page =
-      reinterpret_cast<volatile uint64_t*>(
-          static_cast<uintptr_t>(shared_physical_page));
+      static_cast<volatile uint64_t*>(paging_physical_pointer(shared_physical_page));
   const uint64_t preempt_arm_flag = shared_page[0];
   const uint64_t preempt_done_flag = shared_page[1];
   const uint64_t stdin_arm_flag = shared_page[2];
@@ -5190,6 +5211,24 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 
   if (!initialize_page_allocator(&g_page_allocator, boot_info)) {
     write_status_line(kMemoryStatusRow, "page allocator bad");
+    return;
+  }
+
+  // stage2 只映射低 2 MiB；先建立高地址物理窗口，再允许使用更高的页。
+  if (!paging_initialize_direct_map(&g_page_allocator)) {
+    write_status_line(kMemoryStatusRow, "direct map bad");
+    return;
+  }
+  serial_write_string("direct_map_physical_limit=");
+  serial_write_u64(paging_managed_physical_limit());
+  serial_write_crlf();
+  serial_write_string("direct map ok");
+  serial_write_crlf();
+  serial_write_string("nx_enabled=");
+  serial_write_u64(paging_no_execute_enabled() ? 1 : 0);
+  serial_write_crlf();
+  if (!run_direct_map_smoke_test(&g_page_allocator)) {
+    write_status_line(kMemoryStatusRow, "direct map test bad");
     return;
   }
 

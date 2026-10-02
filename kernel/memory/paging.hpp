@@ -8,10 +8,19 @@
 
 constexpr uint64_t kPagingPageSize = 4096;             // x86_64 最基础的页大小就是 4 KiB。
 constexpr uint64_t kPagingBootIdentityLimit = 0x200000;  // stage2 目前只保证低 2 MiB 被恒等映射。
+constexpr uint64_t kPagingDirectMapBase = 0xFFFF800000000000ULL;
 
 constexpr uint64_t kPagePresent = 0x001;               // 页表项存在位。
 constexpr uint64_t kPageWritable = 0x002;              // 页表项可写位。
-constexpr uint64_t kPageUser = 0x004;                  // 以后用户态页会需要 U/S=1，这一轮先把这个标志位单独命名出来。
+constexpr uint64_t kPageUser = 0x004;                  // U/S=1 允许 ring 3 访问；整条页表路径都必须允许用户访问。
+constexpr uint64_t kPageNoExecute = 1ULL << 63;
+
+// 用 supervisor-only 的高虚拟地址访问物理 RAM：虚拟地址=基址+物理地址。
+// 初始化时只用旧低地址恒等映射创建两张页表；完成后页表可以放在整个管理范围内。
+bool paging_initialize_direct_map(PageAllocator* allocator);
+void* paging_physical_pointer(uint64_t physical_address);
+uint64_t paging_managed_physical_limit();
+bool paging_no_execute_enabled();
 
 // 读取 CPU 当前正在使用的 CR3，也就是“当前活动页表根”的物理地址。
 uint64_t paging_current_root_physical();
@@ -30,7 +39,7 @@ bool map_page_in_root(PageAllocator* allocator, uint64_t root_physical_address,
                       uint64_t flags);
 
 // 批量做恒等映射：虚拟地址 == 物理地址。
-// 这在早期内核特别常见，因为这样最容易调试，也最方便直接碰低地址页表页。
+// 用于保留启动阶段的低地址映射；一般物理内存访问改用上面的 direct map。
 bool map_identity_range(PageAllocator* allocator, uint64_t start, uint64_t end,
                         uint64_t flags);
 

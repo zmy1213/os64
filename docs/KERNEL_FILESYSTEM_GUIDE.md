@@ -1,8 +1,12 @@
 # 从原始块设备到第一版只读文件系统
 
+> **文档状态：历史阶段详解——从原始块设备到第一版只读文件系统。**
+> 正文中的“当前”“这一轮”“下一步”和日志数值指该篇对应的开发阶段，不是最新版本的能力清单。当前是可读写的 OS64FS v3：RAM 启动卷用于回归，正式交互使用 ATA 数据盘；写入、删除、flush 和运行时失败回滚已实现。本篇的只读/RAM 卷说法属于早期阶段。
+> 初次运行请读 [从零开始的当前版本教程](./BEGINNER_TUTORIAL.md)；最新行为见 [进程运行时](./PROCESS_RUNTIME.md) 与 [持久化存储](./PERSISTENT_STORAGE.md)。代码片段用于解释原理，不要按旧篇重建/覆盖整个当前仓库；历史 smoke 输出不要求逐字匹配。
+
 > 注意：
 > 这篇文档讲的是“第一版只读 `OS64FS v1` 是怎么搭起来的”。
-> 如果你想看当前代码里已经升级后的位图、一致性校验和 `OS64FSV3` 布局，请继续看 [KERNEL_OS64FS_V3_GUIDE.md](./KERNEL_OS64FS_V3_GUIDE.md)。
+> 位图和 v3 格式的早期解释见 [KERNEL_OS64FS_V3_GUIDE.md](./KERNEL_OS64FS_V3_GUIDE.md)；当前可读写、ATA 持久化与恢复边界请读 [PERSISTENT_STORAGE.md](./PERSISTENT_STORAGE.md)。
 
 这一步开始，你的内核不再只是“能读某个扇区”，
 而是正式跨进：
