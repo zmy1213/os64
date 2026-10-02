@@ -1,4 +1,5 @@
 #include "os64.hpp"
+#include "smp.hpp"
 
 namespace {
 // user.ld 把 const 数据放在 RX 段。内核可以从这里读，但不能把输出写进来。
@@ -93,12 +94,42 @@ bool udp_boundaries() {
     if (!rejected(syscall(39, 1, address, valid_payload, sizeof(payload)),
                   -2, "UDP receive metadata") ||
         !rejected(syscall(39, 1, valid_metadata, address, sizeof(payload)),
-                  -2, "UDP receive payload")) return false;
+                  -2, "UDP receive payload") ||
+        !rejected(syscall(40, 1, address, valid_payload, sizeof(payload), 1),
+                  -2, "UDP wait metadata") ||
+        !rejected(syscall(40, 1, valid_metadata, address, sizeof(payload), 1),
+                  -2, "UDP wait payload")) return false;
   }
   return rejected(syscall(39, 1, valid_metadata, valid_payload, 1201),
                   -2, "UDP large receive capacity") &&
          rejected(syscall(39, 1, valid_metadata, valid_payload, high_bit | 1),
-                  -2, "UDP high receive capacity");
+                  -2, "UDP high receive capacity") &&
+         rejected(syscall(40, high_bit | 1, valid_metadata, valid_payload, 8, 1),
+                  -2, "UDP wait high handle") &&
+         rejected(syscall(40, 1, valid_metadata, valid_payload, 1201, 1),
+                  -2, "UDP wait large capacity") &&
+         rejected(syscall(40, 1, valid_metadata, valid_payload, high_bit | 1, 1),
+                  -2, "UDP wait high capacity") &&
+         rejected(syscall(40, 1, valid_metadata, valid_payload, 8, 60001),
+                  -2, "UDP wait excessive timeout") &&
+         rejected(syscall(40, 1, valid_metadata, valid_payload, 8, high_bit | 1),
+                  -2, "UDP wait high timeout") &&
+         rejected(syscall(40, 1, valid_metadata, valid_payload, 8, UINT64_MAX),
+                  -2, "UDP wait truncated infinite timeout");
+}
+
+bool smp_boundaries() {
+  const uint64_t invalid_outputs[] = {
+    0, bad_address, kernel_address, guard_address, stack_end_crossing,
+    UINT64_MAX - 63, reinterpret_cast<uint64_t>(read_only),
+  };
+  for (uint64_t address : invalid_outputs)
+    if (!rejected(syscall(41, address), -1, "SMP snapshot output")) return false;
+  SmpSnapshot snapshot{};
+  return smp_snapshot(&snapshot) == 0 && snapshot.abi_version == 1 &&
+         snapshot.online_cpus > 0 && snapshot.online_cpus <= 4 &&
+         snapshot.current_cpu < 4 &&
+         (snapshot.online_mask & (1ULL << snapshot.current_cpu)) != 0;
 }
 }
 
@@ -134,5 +165,11 @@ extern "C" int main(int, char**) {
   print("badptr performance boundaries rejected\n");
   if (!udp_boundaries()) return 12;
   print("badptr UDP boundaries rejected\n");
+  if (!smp_boundaries()) return 13;
+  print("badptr SMP boundaries rejected\n");
+  if (!rejected(sleep(UINT64_MAX), -1, "sleep overflowing duration") ||
+      !rejected(sleep(high_bit | 1), -1, "sleep high duration") ||
+      !rejected(sleep(86400001), -1, "sleep over one day") || sleep(0) != 0) return 14;
+  print("badptr sleep boundaries rejected\n");
   return 0;
 }

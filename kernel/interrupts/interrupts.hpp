@@ -71,6 +71,8 @@ uint64_t tss_double_fault_ist1();
 uint16_t tss_io_map_base();
 
 bool initialize_idt();
+// AP 装载共享 IDT，但建立本 CPU 的 GDT/TSS/IST。
+bool initialize_secondary_interrupts();
 const char* exception_name(uint64_t vector);
 
 // `sti`：打开可屏蔽中断。

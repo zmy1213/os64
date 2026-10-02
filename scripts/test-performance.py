@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Isolated real-guest CPU/FPU checks and optional same-TCG Linux comparison.
 
-No user data image is mounted. Each guest runs on one qemu64 vCPU with 128 MiB.
+No user data image is mounted. Each guest uses equal qemu64 vCPU counts and 128 MiB.
 Linux receives the exact same bench.cpp and compute loop with an ABI adapter.
 """
 import argparse
@@ -50,15 +50,16 @@ def symbol_bytes(path, wanted):
     raise AssertionError(f'Symbol {wanted} missing: {path}')
 
 class SerialVM:
-    def __init__(self, qemu, build, assets, temporary, logs, guest, boot, data_image=None):
+    def __init__(self, qemu, build, assets, temporary, logs, guest, boot, data_image=None, cpus=1):
         self.guest = guest
+        self.cpus = cpus
         self.prompt = 'os64 % ' if guest == 'os64' else 'linux-bench % '
         self.log = logs / f'{guest}-{boot}.serial.log'
         self.error = logs / f'{guest}-{boot}.qemu.log'
         self.log.write_bytes(b'')
         serial = temporary / 'serial.sock'
         serial.unlink(missing_ok=True)
-        self.arguments = [str(qemu), '-accel', 'tcg', '-cpu', 'qemu64', '-smp', '1',
+        self.arguments = [str(qemu), '-accel', 'tcg,thread=multi' if cpus>1 else 'tcg', '-cpu', 'qemu64', '-smp', str(cpus),
                           '-m', '128M', '-display', 'none', '-no-reboot', '-monitor', 'none', '-nic', 'none',
                           '-chardev', f'socket,id=com1,path={serial},server=on,wait=off,logfile={self.log}',
                           '-serial', 'chardev:com1']
@@ -100,6 +101,20 @@ class SerialVM:
                 raise AssertionError('OS64 did not mount the isolated persistent ATA image')
             if guest == 'linux' and 'linux_bench_ready' not in self.text():
                 raise AssertionError('Linux did not run the isolated benchmark init')
+            if guest == 'os64':
+                match = re.search(r'smp_online_cpus=(\d+)', self.text())
+                if not match or int(match.group(1)) != cpus:
+                    raise AssertionError(f'OS64 did not bring up exactly {cpus} CPUs')
+                self.online_cpus = list(range(cpus))
+            else:
+                match = re.search(r'linux_online_cpus=([0-9,-]+)', self.text())
+                self.online_cpus = []
+                if match:
+                    for part in match.group(1).split(','):
+                        bounds = [int(value) for value in part.split('-')]
+                        self.online_cpus += list(range(bounds[0], bounds[-1]+1))
+                if self.online_cpus != list(range(cpus)):
+                    raise AssertionError(f'Linux sysfs online CPUs disagree with -smp {cpus}: {self.online_cpus}')
         except Exception:
             self.stop()
             raise
@@ -167,6 +182,22 @@ class SerialVM:
         fields['host_command_seconds'] = wall
         return fields
 
+    def cpu_evidence(self):
+        if self.guest == 'os64':
+            output, _ = self.shell('smp')
+            records = {int(cpu): {'user_dispatches': int(dispatches), 'user_ticks': int(ticks)}
+                       for cpu, dispatches, ticks in re.findall(
+                           r'cpu=(\d+) apic_id=\d+ user_dispatches=(\d+) user_ticks=(\d+)', output)}
+        else:
+            output, _ = self.shell('/bin/busybox cat /proc/stat')
+            records = {}
+            for cpu, fields in re.findall(r'^cpu(\d+)\s+([0-9 ]+)', output, re.MULTILINE):
+                values = [int(value) for value in fields.split()]
+                records[int(cpu)] = {'user_ticks': values[0]+values[1]}
+        if sorted(records) != self.online_cpus:
+            raise AssertionError(f'Per-CPU execution evidence missing: {output}')
+        return records
+
     def stop(self):
         if hasattr(self, 'process') and self.process.poll() is None:
             self.process.terminate()
@@ -192,6 +223,7 @@ def main():
     parser.add_argument('--qemu', type=Path, required=True)
     parser.add_argument('--build-dir', type=Path, required=True)
     parser.add_argument('--assets', type=Path)
+    parser.add_argument('--cpus', type=int, choices=[1,2,4], default=1)
     parser.add_argument('--samples', type=int, default=31)
     parser.add_argument('--compare-linux', action='store_true')
     parser.add_argument('--quick', action='store_true', help='Only correctness/FPU/resource stress; no timing report')
@@ -200,12 +232,12 @@ def main():
         parser.error('Use at least three samples')
     b = args.build_dir.resolve()
     assets = (args.assets or b / 'benchmark-deps').resolve()
-    logs = b / 'performance-results'
+    logs = b / ('performance-results' if args.cpus==1 else f'performance-results-{args.cpus}cpu')
     logs.mkdir(parents=True, exist_ok=True)
     original = digest(b / 'data.img') if (b / 'data.img').exists() else None
     manifest = {'host': platform.platform(), 'qemu': subprocess.check_output([str(args.qemu), '--version'], text=True).splitlines()[0],
                 'benchmark_harness_sha256': digest(Path(__file__)),
-                'configuration': {'accelerator': 'tcg', 'cpu': 'qemu64', 'vcpus': 1, 'memory_MiB': 128},
+                'configuration': {'accelerator': 'tcg', 'cpu': 'qemu64', 'vcpus': args.cpus, 'tcg_threads': 'multi' if args.cpus>1 else 'default', 'memory_MiB': 128},
                 'kernel_optimization': 'O2 (build must use default KERNEL_OPT_LEVEL=2)',
                 'user_optimization': 'Os, freestanding, no automatic SSE',
                 'samples_per_scenario': args.samples, 'workload_total_updates': 480000000,
@@ -238,7 +270,7 @@ def main():
         temporary = Path(temporary_name)
         vm = None
         try:
-            vm = SerialVM(args.qemu, b, assets, temporary, logs, 'os64', 'checks')
+            vm = SerialVM(args.qemu, b, assets, temporary, logs, 'os64', 'checks', cpus=args.cpus)
             output, _ = vm.shell('run /bin/fp_test', timeout=90)
             if 'fp_test SSE_x87_isolation_ok' not in output or 'run_exit_code=0' not in output:
                 raise AssertionError(f'Floating-point state isolation failed: {output}')
@@ -247,6 +279,10 @@ def main():
                 output, _ = vm.shell(command, timeout=90)
                 if marker not in output or 'run_exit_code=0' not in output:
                     raise AssertionError(f'{command}: {output}')
+            if args.cpus>1:
+                output, _ = vm.shell('run /bin/smp_test', timeout=90)
+                if 'smp_test twelve_workers_pin_compute_wake_resources_ok' not in output or 'run_exit_code=0' not in output or f'smp_test online_cpus={args.cpus}' not in output:
+                    raise AssertionError(f'SMP compute/pin/wake/resources failed: {output}')
             for repeat in range(4):
                 for workers in [8, 12]:
                     vm.bench(workers, 2000000, 65536 if repeat & 1 else 0)
@@ -264,7 +300,7 @@ def main():
             if 'logsave ok' not in output:
                 raise AssertionError(f'Log persistence failed: {output}')
             vm.shutdown(); vm = None
-            vm = SerialVM(args.qemu, b, assets, temporary, logs, 'os64', 'log-cold', data_image=temporary / 'data.img')
+            vm = SerialVM(args.qemu, b, assets, temporary, logs, 'os64', 'log-cold', data_image=temporary / 'data.img', cpus=args.cpus)
             output, _ = vm.shell('cat /performance.log')
             if not all(marker in output for marker in saved_markers):
                 raise AssertionError('Cold boot lost the saved spawn/exit log records')
@@ -280,10 +316,11 @@ def main():
                 second = args.samples - first
                 guests = [('os64', first), ('linux', first), ('linux', second), ('os64', second)] if args.compare_linux else [('os64', args.samples)]
                 for block, (guest, count) in enumerate(guests):
-                    vm = SerialVM(args.qemu, b, assets, temporary, logs, guest, block)
+                    vm = SerialVM(args.qemu, b, assets, temporary, logs, guest, block, cpus=args.cpus)
                     manifest.setdefault('qemu_arguments', {})[f'{guest}-{block}'] = vm.arguments
                     if guest == 'linux':
                         manifest['linux_kernel'] = re.search(r'linux_kernel=([^\r\n]+)', vm.text()).group(1)
+                    cpu_before = vm.cpu_evidence()
                     for name, workers, iterations, yielding in SCENARIOS:
                         vm.bench(workers, iterations, yielding) # warm-up is omitted
                         for sample in range(count):
@@ -291,6 +328,12 @@ def main():
                             measured.update(guest=guest, scenario=name, block=block, sample=sample)
                             manifest['raw_samples'].append(measured)
                         print(f'{guest} block {block}: {name}, {count} measured samples complete', flush=True)
+                    cpu_after = vm.cpu_evidence()
+                    if any(cpu_after[cpu]['user_ticks'] <= cpu_before[cpu]['user_ticks'] for cpu in vm.online_cpus):
+                        raise AssertionError(f'Not every online CPU performed user work: {cpu_before}, {cpu_after}')
+                    manifest.setdefault('runtime_cpu_evidence', {})[f'{guest}-{block}'] = {
+                        'online_cpus': vm.online_cpus, 'before': cpu_before, 'after': cpu_after,
+                        'scope': 'OS64 running user-thread local timer ticks; Linux /proc/stat user+nice jiffies; positivity only, different scopes'}
                     vm.stop(); vm = None
                 for guest in ['os64', 'linux'] if args.compare_linux else ['os64']:
                     summary = {}
@@ -311,7 +354,7 @@ def main():
         raise AssertionError('Benchmark changed the user persistent data disk')
     manifest['user_data_unchanged'] = True
     (logs / 'results.json').write_text(json.dumps(manifest, indent=2) + '\n')
-    lines = ['# Single-vCPU TCG benchmark', '', f'QEMU: {manifest["qemu"]}', '',
+    lines = [f'# {args.cpus}-vCPU TCG benchmark', '', f'QEMU: {manifest["qemu"]}', '',
              '| Guest | Scenario | Samples | p50 seconds | p99 seconds | p50 million updates/s | p50 MiB/s |',
              '|---|---|---:|---:|---:|---:|---:|']
     for guest, scenarios in manifest['summary'].items():
@@ -319,7 +362,7 @@ def main():
             lines.append(f'| {guest} | {name} | {values["samples"]} | {values["p50_seconds"]:.2f} | {values["p99_seconds"]:.2f} | {values["p50_million_updates_per_second"]:.2f} | {values["p50_MiB_per_second"]:.2f} |')
     lines += ['', 'CPU scenarios complete 480 million integer updates; pipe transfers and verifies 32 MiB through a 4096-byte pipe. Same source files, both -Os; OS64 kernel -O2.',
               '100 Hz measurement quantization is 10 ms. At 31 samples p99 is the maximum; this is an exploratory tail, not a production p99 estimate.',
-              'Single qemu64 vCPU, 128 MiB, TCG, one guest running at a time, ABBA guest order, one warm-up per block/scenario.',
+              f'{args.cpus} qemu64 vCPU(s), 128 MiB, TCG, one guest running at a time, ABBA guest order, one warm-up per block/scenario.',
               'OS64 all-thread context switch counts and Linux SELF+reaped CHILDREN rusage counters have different scopes; do not compare them directly.',
               'These are emulator-specific CPU/scheduling measurements, not a claim that OS64 is generally faster than Linux.',
               'Raw samples, binary/asset hashes and exact QEMU arguments: results.json. All temporary guest disks were isolated; original data.img unchanged.', '']

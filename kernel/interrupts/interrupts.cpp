@@ -1,5 +1,6 @@
 #include "interrupts/interrupts.hpp"
 #include "net/network.hpp"
+#include "cpu/smp.hpp"
 
 #include "boot/segments.hpp"
 #include "interrupts/keyboard.hpp"
@@ -102,12 +103,22 @@ extern "C" uintptr_t irq_stub_table[kHardwareIrqCount];
 extern "C" void syscall_interrupt_stub();
 
 IdtEntry g_idt[kIdtEntryCount];        // 把整张 IDT 先放在内核自己的静态内存里。
-TaskStateSegment64 g_kernel_tss;       // 第一版内核 TSS。先只开最关键的 RSP0 + IST1。
-alignas(16) uint8_t g_kernel_tss_rsp0_stack[kKernelTssStackBytes];
-alignas(16) uint8_t g_kernel_double_fault_ist_stack[kKernelTssStackBytes];
-alignas(16) uint64_t g_kernel_gdt[kKernelGdtQwordCount];
-bool g_tss_ready = false;
-uint64_t g_kernel_tss_default_rsp0 = 0;  // 先记住“系统最初那根通用 RSP0”，后面非 user thread 运行时可以回退到它。
+// 每颗 CPU 的 TR 必须指向自己的 TSS；RSP0、IST 和 busy 描述符不能共享。
+struct CpuInterruptState {
+  TaskStateSegment64 tss;
+  alignas(16) uint8_t default_stack[kKernelTssStackBytes];
+  alignas(16) uint8_t ist_stack[kKernelTssStackBytes];
+  alignas(16) uint64_t gdt[kKernelGdtQwordCount];
+  bool ready;
+  uint64_t default_rsp0;
+};
+CpuInterruptState g_cpu_interrupts[kSmpMaxCpuCount]{};
+CpuInterruptState& cpu_interrupt_state() {
+  return g_cpu_interrupts[smp_current_cpu_index()];
+}
+extern "C" void irq_stub_240();
+extern "C" void irq_stub_241();
+extern "C" void irq_stub_255();
 
 void set_idt_gate(uint8_t vector, void (*handler)(),
                   uint8_t type_attributes = kInterruptGateType,
@@ -136,7 +147,7 @@ uint64_t stack_top_address(const uint8_t* stack, size_t bytes) {
 }
 
 void build_kernel_gdt() {
-  memory_set(g_kernel_gdt, 0, sizeof(g_kernel_gdt));
+  memory_set(cpu_interrupt_state().gdt, 0, sizeof(cpu_interrupt_state().gdt));
 
   // 前 5 项先和 stage2 保持完全兼容：
   // 0 = null
@@ -144,32 +155,32 @@ void build_kernel_gdt() {
   // 2 = 32 位数据段
   // 3 = 64 位代码段
   // 4 = 64 位数据段
-  g_kernel_gdt[0] = 0x0000000000000000ULL;
-  g_kernel_gdt[1] = 0x00cf9a000000ffffULL;
-  g_kernel_gdt[2] = 0x00cf92000000ffffULL;
-  g_kernel_gdt[3] = 0x00af9a000000ffffULL;
-  g_kernel_gdt[4] = 0x00cf92000000ffffULL;
+  cpu_interrupt_state().gdt[0] = 0x0000000000000000ULL;
+  cpu_interrupt_state().gdt[1] = 0x00cf9a000000ffffULL;
+  cpu_interrupt_state().gdt[2] = 0x00cf92000000ffffULL;
+  cpu_interrupt_state().gdt[3] = 0x00af9a000000ffffULL;
+  cpu_interrupt_state().gdt[4] = 0x00cf92000000ffffULL;
 
   // 64 位 TSS 描述符一共占 16 字节，也就是两个 GDT 槽位。
   // type=0x9 表示 available 64-bit TSS；P=1 表示描述符有效。
-  const uint64_t base = reinterpret_cast<uint64_t>(&g_kernel_tss);
-  const uint32_t limit = sizeof(g_kernel_tss) - 1;
+  const uint64_t base = reinterpret_cast<uint64_t>(&cpu_interrupt_state().tss);
+  const uint32_t limit = sizeof(cpu_interrupt_state().tss) - 1;
 
-  g_kernel_gdt[5] =
+  cpu_interrupt_state().gdt[5] =
       static_cast<uint64_t>(limit & 0xFFFF) |                     // limit[15:0]
       ((base & 0xFFFFFFULL) << 16) |                              // base[23:0]
       (static_cast<uint64_t>(0x89) << 40) |                       // type=0x9, present=1
       (static_cast<uint64_t>((limit >> 16) & 0x0F) << 48) |       // limit[19:16]
       (static_cast<uint64_t>((base >> 24) & 0xFF) << 56);         // base[31:24]
-  g_kernel_gdt[6] = base >> 32;                                   // base[63:32]
+  cpu_interrupt_state().gdt[6] = base >> 32;                                   // base[63:32]
 
   // ring 3 段这一步先只做成最经典的平坦段：
   // - user data: type=0xF2
   // - user code: type=0xFA, L=1
   //
   // 这样第一次 `iretq` 落到 CPL=3 时，CPU 至少已经有合法的用户代码段/数据段可用。
-  g_kernel_gdt[7] = 0x00cff2000000ffffULL;
-  g_kernel_gdt[8] = 0x00affa000000ffffULL;
+  cpu_interrupt_state().gdt[7] = 0x00cff2000000ffffULL;
+  cpu_interrupt_state().gdt[8] = 0x00affa000000ffffULL;
 }
 
 void load_kernel_gdt_and_tss(const GdtPointer* gdt_pointer) {
@@ -266,7 +277,7 @@ void capture_current_user_preempt_trap_frame(
 }  // namespace
 
 bool initialize_tss() {
-  if (g_tss_ready) {
+  if (cpu_interrupt_state().ready) {
     return true;
   }
 
@@ -274,37 +285,37 @@ bool initialize_tss() {
   // 而是给 CPU 提供：
   // - ring3 -> ring0 时要切到哪根栈
   // - double fault 时的应急 IST 栈
-  memory_set(&g_kernel_tss, 0, sizeof(g_kernel_tss));
-  g_kernel_tss.rsp0 =
-      stack_top_address(g_kernel_tss_rsp0_stack,
-                        sizeof(g_kernel_tss_rsp0_stack));   // 以后 ring 3 -> ring 0 时，CPU 先切到这根内核栈。
-  g_kernel_tss_default_rsp0 = g_kernel_tss.rsp0;
-  g_kernel_tss.ist1 =
-      stack_top_address(g_kernel_double_fault_ist_stack,
-                        sizeof(g_kernel_double_fault_ist_stack));  // double fault 单独走应急栈，避免沿用可能已损坏的当前栈。
+  memory_set(&cpu_interrupt_state().tss, 0, sizeof(cpu_interrupt_state().tss));
+  cpu_interrupt_state().tss.rsp0 =
+      stack_top_address(cpu_interrupt_state().default_stack,
+                        sizeof(cpu_interrupt_state().default_stack));   // 以后 ring 3 -> ring 0 时，CPU 先切到这根内核栈。
+  cpu_interrupt_state().default_rsp0 = cpu_interrupt_state().tss.rsp0;
+  cpu_interrupt_state().tss.ist1 =
+      stack_top_address(cpu_interrupt_state().ist_stack,
+                        sizeof(cpu_interrupt_state().ist_stack));  // double fault 单独走应急栈，避免沿用可能已损坏的当前栈。
 
   // 如果 I/O bitmap 不准备使用，就把偏移设到 TSS 末尾之后；
   // 这样 CPU 会把它理解成“没有额外的 I/O 权限位图”。
-  g_kernel_tss.io_map_base =
-      static_cast<uint16_t>(sizeof(g_kernel_tss));
+  cpu_interrupt_state().tss.io_map_base =
+      static_cast<uint16_t>(sizeof(cpu_interrupt_state().tss));
 
   build_kernel_gdt();
 
   GdtPointer gdt_pointer{};
-  gdt_pointer.limit = static_cast<uint16_t>(sizeof(g_kernel_gdt) - 1);
-  gdt_pointer.base = reinterpret_cast<uint64_t>(&g_kernel_gdt[0]);
+  gdt_pointer.limit = static_cast<uint16_t>(sizeof(cpu_interrupt_state().gdt) - 1);
+  gdt_pointer.base = reinterpret_cast<uint64_t>(&cpu_interrupt_state().gdt[0]);
 
   load_kernel_gdt_and_tss(&gdt_pointer);
-  g_tss_ready = (read_task_register_selector() == kKernelTssSelector);
-  return g_tss_ready;
+  cpu_interrupt_state().ready = (read_task_register_selector() == kKernelTssSelector);
+  return cpu_interrupt_state().ready;
 }
 
 bool tss_is_ready() {
-  return g_tss_ready;
+  return cpu_interrupt_state().ready;
 }
 
 uint16_t tss_task_register_selector() {
-  if (!g_tss_ready) {
+  if (!cpu_interrupt_state().ready) {
     return 0;
   }
 
@@ -312,28 +323,28 @@ uint16_t tss_task_register_selector() {
 }
 
 uint64_t tss_kernel_rsp0() {
-  return g_kernel_tss.rsp0;
+  return cpu_interrupt_state().tss.rsp0;
 }
 
 uint64_t tss_default_kernel_rsp0() {
-  return g_kernel_tss_default_rsp0;
+  return cpu_interrupt_state().default_rsp0;
 }
 
 bool tss_set_kernel_rsp0(uint64_t rsp0) {
-  if (!g_tss_ready || rsp0 == 0) {
+  if (!cpu_interrupt_state().ready || rsp0 == 0) {
     return false;
   }
 
-  g_kernel_tss.rsp0 = rsp0;
+  cpu_interrupt_state().tss.rsp0 = rsp0;
   return true;
 }
 
 uint64_t tss_double_fault_ist1() {
-  return g_kernel_tss.ist1;
+  return cpu_interrupt_state().tss.ist1;
 }
 
 uint16_t tss_io_map_base() {
-  return g_kernel_tss.io_map_base;
+  return cpu_interrupt_state().tss.io_map_base;
 }
 
 bool initialize_idt() {
@@ -355,6 +366,10 @@ bool initialize_idt() {
                  reinterpret_cast<void (*)()>(irq_stub_table[irq]));
   }
 
+  set_idt_gate(kSmpTimerVector, irq_stub_240);
+  set_idt_gate(kSmpRescheduleVector, irq_stub_241);
+  set_idt_gate(kSmpSpuriousVector, irq_stub_255);
+
   // 第一版真正的 syscall 入口先走 `int 0x80`。
   // 这里先把门权限放成 DPL=3，这样以后真的有 ring 3 时可以继续沿用。
   set_idt_gate(kSyscallInterruptVector,
@@ -370,6 +385,15 @@ bool initialize_idt() {
   idt_pointer.base = reinterpret_cast<uint64_t>(&g_idt[0]);
 
   load_idt(&idt_pointer);                           // 真正把 IDT 地址告诉 CPU。
+  return true;
+}
+
+bool initialize_secondary_interrupts() {
+  if (!initialize_tss()) return false;
+  // IDT 内容只由 BSP 建立；AP 只装载，避免覆盖正在使用的中断门。
+  const IdtPointer pointer{static_cast<uint16_t>(sizeof(g_idt)-1),
+                           reinterpret_cast<uint64_t>(g_idt)};
+  load_idt(&pointer);
   return true;
 }
 
@@ -401,6 +425,18 @@ void wait_for_interrupt() {
 
 extern "C" void kernel_handle_irq(const RegisterInterruptFrame* frame) {
   if (frame == nullptr) {
+    return;
+  }
+
+  if (frame->vector == kSmpSpuriousVector) return; // spurious 向量不发送 EOI。
+  if (frame->vector == kSmpTimerVector || frame->vector == kSmpRescheduleVector) {
+    if (frame->vector == kSmpTimerVector) scheduler_handle_local_timer_tick();
+    // EOI 必须在切换栈之前完成，否则 AP 下一次时钟可能永远不再送达。
+    smp_local_apic_eoi();
+    ThreadControlBlock* const thread = scheduler_active_thread();
+    if (thread && thread->execution_mode == kThreadExecutionModeUser &&
+        register_frame_came_from_user_mode(frame) && scheduler_yield_if_requested())
+      capture_current_user_preempt_trap_frame(frame);
     return;
   }
 

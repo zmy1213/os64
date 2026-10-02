@@ -15,12 +15,14 @@
 | ICMP | 发出 ping，接收正确的回包，也回复发给本机的 echo request |
 | UDP | 校验和、二进制数据、0 字节包、最大 1200 字节有效载荷 |
 | 用户 UDP socket | 4 个全系统槽，每槽 4 个接收包；PID 所有权和过期句柄检查 |
+| 阻塞 UDP 接收 | 0 毫秒探测、有限超时、无限等待；报文、关闭、进程退出或网卡故障唤醒 |
+| 多核协作 | BSP 单 RX worker，AP 用户进程等待共享 inbox；内核用 BKL 串行保护共享状态 |
 | 回显服务 | 内核占用 UDP 9000 端口，收到什么字节就回复什么字节 |
 | 自动实验 | 协议边界测试、真实 QEMU 通信、抓包、吞吐和时延测量 |
 
 没有实现 TCP、HTTP、DNS、DHCP、IPv6、TLS，也没有宣称可以运行浏览器。UDP 接口是本教程的接口，不是 POSIX `socket()` 兼容层。没有网卡时，文件、Shell、进程等本地功能仍然可以运行。
 
-## 2. 先运行三个实验
+## 2. 先运行四个实验
 
 ### 实验 A：从操作系统 ping 虚拟网关
 
@@ -115,6 +117,34 @@ run_exit_code=0
 这个程序不仅收一条字符串。它轮流发送 0、1、257、1200 字节的二进制包，检查每个回包的源地址、端口、长度与每个字节。它还启动子进程，证明子进程不能关闭或使用父进程的网络句柄。
 
 如果原有 `build/data.img` 是早期版本，新增用户工具可能尚未进入该盘。先在 os64 中 `shutdown`，再到宿主机运行 `make update-tools`，然后重新 `make run`。更新会保留非工具文件并建立备份；不要为了刷新工具而随意 `make reset-data`，后者会清除数据盘内容。
+
+### 实验 D：计算时继续接收网络数据
+
+先保持实验 C 的宿主 UDP 服务运行。想观察 4 个虚拟 CPU，关闭原来的虚拟机，再在宿主机使用 `OS64_CPUS=4 make run`；`OS64_CPUS` 的值是虚拟 CPU 数，启动脚本允许 1–4，本章自动回归选择 1、2、4。多核启动与失败处理见 [AP 启动教程](SMP_BOOT_TUTORIAL.md)，运行与等待规则见 [多核调度教程](SMP_SCHEDULER_TUTORIAL.md)。进入 os64 输入：
+
+```text
+run /bin/udp_test timeout
+run /bin/udp_test arp_timeout
+run /bin/udp_mixed 10.0.2.2 5151 3 64 100000000
+```
+
+`udp_test timeout` 启动一个子进程，在无人向其端口发包时请求等待 25 毫秒，检查 3–6 个全局 tick 内返回 -1，以及关闭后的旧句柄被拒绝。多核时等待子进程须实际在 AP 执行；上限只用于这个无计算争用的实验，不是所有负载下的调度时限承诺。`udp_test arp_timeout` 启动子进程，向测试 NAT 中无人使用的 `10.0.2.77` 发包；必须等未缓存 ARP 的 1 秒超时后返回 -1。多核时这个子进程运行在 AP，专门检查它能让 BSP 推进 tick，没有持内核锁 HLT。`udp_mixed` 创建一个网络接收子进程和三个计算子进程，每个计算者做一亿次确定的整数运算。网络接收者与宿主往返 64 个包，仍然逐字节验证 0、1、257、1200 字节的数据。
+
+成功结果包含：
+
+```text
+udp_test blocking_timeout_ok
+udp_mixed sent=64
+udp_mixed received=64
+udp_mixed receiver=ok
+udp_mixed online_cpus=4
+udp_mixed correctness=ok
+run_exit_code=0
+```
+
+`udp_mixed receiving_cpu` 是网络用户进程实际执行的 CPU 编号，0 是 BSP，1–3 是 AP。每颗 CPU 的 `user_dispatches` 与 `user_ticks` 增量说明它实际调度过用户线程；结合计算结果校验，才能确认工作分布。`user_ticks` 按当前用户 TCB 记账，也包含该线程的内核服务时段，不是纯 ring3 周期或 CPU 利用率。仅看到 `online_cpus=4` 不足以证明运算并行。完整实验脚本会检查多核组接收者运行在 AP，并检查计算组至少两颗 CPU 的用户 tick 增长。
+
+这里的进程协作使用了前一章的 pipe。父进程先创建接收者，接收者等待 pipe 中的一字节；父进程创建所有计算者后写入 `g`，网络测试才开始。这样不会出现“网络实验早就结束，计算负载随后才启动”的假混合实验。接收者等待 UDP 时让出自己的 CPU，网卡仍由 BSP 上的一个内核 worker 处理。我们没有实现多队列网卡，也没有让多个 AP 同时修改同一 RX ring。
 
 ## 3. 字节、地址、端口分别是什么
 
@@ -234,7 +264,7 @@ header 不属于 Ethernet、IP 或应用数据。因为没有协商 ANY_LAYOUT�
   → 复制 payload 和 metadata 到用户缓冲区
 ```
 
-worker 使用有界预算，每次最多处理 32 包。IRQ 模式下，已经完成的包还没处理完时先让出 CPU，再继续下一轮，队列为空则阻塞等待；IRQ 不可用时每 tick 检查一次。包解析过程中不会打印串口日志，也不会主动调度；ARP、ping 的等待则会睡眠，让其它可运行进程继续计算。这个批次边界保证持续网络流量不会让一个内核 worker 永远占着 CPU。接收队列始终有界，不能把收件箱扩成无限内存。
+worker 使用有界预算，每次最多处理 32 包。IRQ 模式下，已经完成的包还没处理完时先让出 CPU，再继续下一轮，队列为空则阻塞等待；IRQ 不可用时每 tick 检查一次。包解析过程中不会打印串口日志，也不会主动调度；ARP、ping 的等待则会睡眠，让其它可运行进程继续计算；调度睡眠失败就结束本次操作，不退回持锁 HLT。这个批次边界保证持续网络流量不会让一个内核 worker 永远占着 CPU。接收队列始终有界，不能把收件箱扩成无限内存。
 
 驱动把一个 RX 缓冲区交给协议层，协议层在回调返回前处理完或复制有效数据。随后 descriptor chain 会重新发布给网卡。不能在 inbox 中只保存 RX 指针：下一次 DMA 会覆盖同一张页，用户稍后读取的就可能是别的包。
 
@@ -244,9 +274,9 @@ worker 使用有界预算，每次最多处理 32 包。IRQ 模式下，已经�
 
 `network_handle_irq(line)` 先确认这是网卡所用的 line，再读取 `io_base + 19` 的 ISR 寄存器。读取会清除设备中断源，使 INTx 电平撤销；随后才由共享 IRQ 入口给 PIC 发送 EOI。ISR=0 表示没有本网卡事件，不能把共享 line 上其它设备的中断误认成网卡。实际解析 Ethernet/UDP 的工作留给普通 worker，IRQ 不分配内存、不复制包、不输出串口日志。[virtio 规范](https://docs.oasis-open.org/virtio/virtio/v1.0/csprd05/virtio-v1.0-csprd05.html) 的 4.1.5.5 节描述了 read-to-clear 的用途。
 
-最容易出错的是“检查队列为空”和“登记线程 blocked”之间的时刻。假如包就在此时完成，IRQ 看到线程还在运行，wake 没有效果；线程随后却睡下去，就漏掉了唯一通知。`network_wait_for_event()` 因此先 `cli`，比较 used index 与 last_used，若无包则在保持中断关闭的情况下让调度器登记 blocked，登记完才重新开中断。包先完成会被 index 检查发现；包后完成则会唤醒已登记的线程。
+最容易出错的是“检查队列为空”和“登记线程 blocked”之间的时刻。假如包就在此时完成，IRQ 看到线程还在运行，wake 没有效果；线程随后却睡下去，就漏掉了唯一通知。`network_wait_for_event()` 因此先 `cli`，比较 used index 与 last_used，若无包则在保持中断关闭的情况下让调度器登记 blocked 并保存旧线程上下文；目标上下文准备好后才允许中断，恢复等待者后也会恢复中断状态。包先完成会被 index 检查发现；包后完成则会唤醒已登记的线程。
 
-这是单核的等待协议，IRQ 唤醒本身也不承诺立即获得 CPU。当其它用户计算进程占满 CPU 时，网络 worker 仍需等调度器安排；应用的 UDP receive 目前也仍是非阻塞接口。中断主要消除网络空闲时的周期唤醒，并缩短空闲机器上等待下一 tick 的延迟。
+网卡 IRQ 和唯一的 RX worker 都在 BSP；AP 用户进程通过共享 inbox 等待数据，内核路径由 BKL 跨 CPU 串行保护，`cli` 只屏蔽当前 CPU 的中断。IRQ 唤醒本身不承诺立即获得 CPU：计算进程占满 BSP 时，worker 仍需等调度器安排。应用既可调用原非阻塞 `udp_receive`，也可用 `udp_receive_wait` 阻塞或指定超时。中断消除空闲时的周期检查，实际时延仍受锁和调度影响；这里没有多队列网络。
 
 ## 8. 每层先验长度，再读字段
 
@@ -290,14 +320,50 @@ checksum 不只是把字节相加：它按 16 位大端字求和，把溢出的�
 | 37 | `udp_close(handle)` | 关闭当前进程的 socket |
 | 38 | `udp_send(handle, ip, port, data, bytes)` | 发送完整数据报；第五参数从 R8 传入 |
 | 39 | `udp_receive(handle, metadata, data, capacity)` | 非阻塞取一个完整数据报 |
+| 40 | `udp_receive_wait(handle, metadata, data, capacity, timeout_ms)` | 等待一个完整数据报；第五参数同样用 R8 |
 
 返回规则：发送/接收成功返回字节数；`-1` 表示暂时没有包、资源忙或 ARP 超时；`-2` 表示参数或句柄错误；`-3` 表示没有可用网卡。收到零字节 UDP 数据报时返回 0，因此“没有数据”必须使用 `-1`，不能也用 0。
 
-`UdpDatagram` 含源地址、源端口、目的端口、有效载荷长度，共 12 字节（包含尾部对齐字节）。缓冲区太小时返回错误并保留完整包，下次可以换更大的缓冲区重试。一个 socket 的 inbox 满时丢弃新包并增加计数，内核不会无限申请内存。
+`UdpDatagram` 含源地址、源端口、目的端口、有效载荷长度，共 12 字节；偏移 10 的两字节是显式 `reserved` 字段，当前内核总是写 0，避免把未初始化填充字节复制给用户。缓冲区太小时返回错误并保留完整包，下次可以换更大的缓冲区重试。一个 socket 的 inbox 满时丢弃新包并增加计数，内核不会无限申请内存。
 
 句柄包含槽编号和 generation。槽关闭后再打开会更换 generation，所以旧句柄不会误操作新的 socket。另一个 PID 即使猜中句柄，也不能 send、receive 或 close；进程退出时内核调用 `network_udp_close_owner(pid)` 回收全部 socket。9000 是内核回显服务的保留端口，用户不能绑定它。
 
-这仍是有界教学 API：没有 `poll/select`、阻塞 receive、TCP stream、FD socket 或多网卡路由。应用目前用 `udp_receive()` 配合 `sleep(1)` 等待。看懂这一层以后，再把 socket 纳入统一文件描述符和等待队列，才不会只是在接口上堆名字。
+### 接收函数怎样等待
+
+旧的 `udp_receive()` 保持非阻塞行为，原有程序无需修改。新函数 `udp_receive_wait()` 把等待交给调度器，避免应用反复 `receive + sleep`。它接收的第五参数是一个 32 位毫秒数：
+
+| `timeout_ms` | 行为 |
+|---|---|
+| 0 | 只检查一次；没有包立即返回 -1 |
+| 1–60000 | 等到收到包，或有限截止时间到达 |
+| `UINT32_MAX` | 无限等待，直到收到包、关闭或设备故障 |
+| 其它值 | 返回 -2；包括用裸 syscall 传入高 32 位不为零的数 |
+
+仍然用非负字节数表示收到完整包，零字节包返回 0；`-1` 表示探测为空或有限超时，`-2` 表示参数、所有权或过期句柄错误，`-3` 表示网卡不可用。如果调用已经阻塞，等待中的 socket 随后被关闭，返回 `-4`。如果进入调用前就已关闭，则属于旧句柄错误，返回 `-2`。
+
+BSP 的 PIT 每秒 100 tick，是整个系统的统一时间源；AP 的本地 timer 只用于抢占，不再增加全局时间。因此 25 毫秒向上取整为 3 tick，实际唤醒后返回还会受到调度延迟影响。每次虚假唤醒都沿用原来的绝对截止时间，不把超时重新延长。这里的超时精度约 10 毫秒，不是纳秒定时器。
+
+还有一个容易忽略的单位问题：PIT tick 从 PIT 启动时计数，调度器 `total_ticks` 从调度器初始化时归零。即使它们每秒都加 100，也不能直接把两者的绝对值比较。网络传入的是 PIT 的绝对截止 tick；调度器先检查它是否已过期，再用 `剩余 tick = deadline - PIT 当前 tick`，把这个差值加到调度器自己的当前 tick 上。每次唤醒重新等待仍沿用同一个 PIT deadline。否则把启动期间的几十个 tick 偏移也当成剩余等待，25 毫秒可能错误地等六百多毫秒。真实 `timeout_waiter` 同时检查下界 3 与上界 6 tick，调度器的独立测试另外覆盖两个时钟零点不一致、已过期与溢出。协议层宿主 stub 只模拟等待顺序，不能替代这个调度器转换测试。
+
+代码路径可以按下面的顺序读：
+
+```text
+用户 udp_receive_wait → int 0x80 → syscall 40 参数与可写页检查
+  → network_udp_receive_wait
+  → 检查 socket inbox
+  → 有包：重验输出页，复制整包，返回字节数
+  → 无包：登记 TCB + tid，scheduler_block_current_thread_until
+  → BSP 收包 worker 把包放入 inbox，scheduler_wake_thread
+  → 等待者在原 CPU 恢复，重新检查句柄、设备、inbox 和 deadline
+```
+
+每个 socket 的等待者数组固定为调度器最大线程数，不能无限增长。一个包唤醒一个有效等待者；关闭、owner 退出或设备故障唤醒全部等待者。等待项同时记录 TCB 指针与 tid，线程槽被重用时不会唤醒恰好占据同一地址的新线程。socket 自己还有 generation，关闭后重开的槽也不会把新进程的数据交给旧等待者。收到通知不意味着条件一定仍成立，所以恢复后始终重新检查。
+
+等待前的“检查没有包 → 登记等待者 → 设为 Blocked”在持有 BKL 且本 CPU `cli` 的临界区内完成。BKL 是跨 CPU 共享的内核锁；`cli` 只能屏蔽当前 CPU 的中断，单独使用它不能阻止另一颗 CPU 修改 inbox。线程切换时内核锁按 CPU 保留，进入用户态或 idle 后释放，这样 BSP worker 能继续拿锁收包。不同 CPU 的用户态运算仍可并行，当前内核工作则串行；这是这一阶段清楚且可验证的同步边界。
+
+输出用户地址在系统调用入口检查一次，真正从等待恢复、复制报文前再检查一次。等待期间若用户映射改变，不能把旧检查当成永久通行证。小缓冲区返回 -2 时不消费包；0 字节包允许传 `nullptr` 与 capacity=0，metadata 仍须是可写的 12 字节区域。
+
+这仍是有界教学 API：没有 `poll/select`、TCP stream、FD socket 或多网卡路由。把 socket 纳入统一文件描述符是后续兼容工作；当前的等待行为已经完整接到调度器，不需要应用自己忙等。
 
 ## 10. 测试为什么分两层
 
@@ -307,7 +373,7 @@ checksum 不只是把字节相加：它按 16 位大端字求和，把溢出的�
 bash scripts/test-network-host.sh
 ```
 
-它用 ASan/UBSan 检查 ARP、ICMP、奇数与最大长度 UDP、错误 checksum、错误 length、分片拒绝、0 字节包、收件箱满、缓冲太小、跨 PID 与旧句柄，以及 10000 个随机 Ethernet 帧。它适合验证字节解析和内存边界，但不能证明 PCI 端口、DMA 或 QEMU 网卡真的工作。
+它用 ASan/UBSan 检查 ARP、ICMP、奇数与最大长度 UDP、错误 checksum、错误 length、分片拒绝、0 字节包、收件箱满、缓冲太小、跨 PID 与旧句柄，以及 10000 个随机 Ethernet 帧。等待模型另外模拟有限超时、虚假唤醒、关闭后立即重用槽、owner 退出、设备故障、等待后用户输出映射失效，以及 AP 不主动消费 RX ring。另有 AP 冷 ARP 通过 BSP worker 恢复，以及调度 sleep 失败时 ARP/ICMP 必须失败返回、不能 HLT 的注入测试。它适合验证字节解析和内存边界，但不能证明 PCI 端口、DMA 或 QEMU 网卡真的工作。
 
 同一脚本还运行 `tests/network_irq_host.cpp`：执行真实 `network_irq.cpp` 的等待协议，用模型替代 CPU 中断标志、网卡寄存器与调度器。它专门模拟“检查为空之后、登记睡眠之后，包才完成”的时序，检查先清设备源再 wake、共享 IRQ 不误认、已有包不睡眠、持续流量批次让出 CPU，以及中断不可用时回退轮询。真实 PCI 路由与电平中断仍由下一层 QEMU 测试验证。
 
@@ -318,7 +384,15 @@ make build
 bash scripts/test-network.sh
 ```
 
-它复制模板到临时数据盘，启动真实 virtio-net，运行 ping、宿主往返和用户 UDP 程序，并重复运行故意不关闭 socket 的用户程序。结束时确认用户的原 `build/data.img` 摘要没有改变。
+它复制模板到临时数据盘，启动真实 virtio-net，运行 ping、宿主往返、非阻塞 UDP、阻塞超时、AP 未缓存 ARP 超时，以及无计算者/三个计算者的两组混合实验，再重复运行故意不关闭 socket 的用户程序。结束时检查用户的原 `build/data.img` 摘要和剩余物理页数。多核运行可用：
+
+```sh
+bash scripts/test-network.sh --cpus 1 --label smp-1 --require-irq
+bash scripts/test-network.sh --cpus 2 --label smp-2 --require-irq
+bash scripts/test-network.sh --cpus 4 --label smp-4 --require-irq
+```
+
+脚本固定 qemu64、128 MiB，2/4 CPU 使用多线程 TCG。`metrics.json` 中的 `mixed_compute_network` 保存两组的原始用户输出、宿主经过时间、计算量、逐 CPU 执行计数与接收 CPU。单核组也运行同样程序，所以可以检查增加 CPU 后是否仍保持字节完整性和进程资源回收。关闭时等待者醒来、用户映射在等待中变化等刻意时序由宿主模型控制；当前 QEMU 用户程序不提供同进程用户线程 API，不能把模型测试冒充这类场景的真实用户线程实验。
 
 产物在 `build/network-test/`：
 
@@ -335,7 +409,7 @@ bash scripts/test-network.sh
 
 “128 次往返用了多久”与“CPU 每秒处理多少个包”是不同测量。这个脚本记录宿主墙上时间，包含 QEMU、网络 worker、调度和宿主 socket，所以它反映当前整条通信路径，不是纯协议函数的跑分。
 
-`qemu_process_cpu` 另外记录 QEMU 进程从启动到关机的 user+system CPU 秒数，与整次实验墙上时间相除得到单核百分比。此项包含启动、ping、回显、用户 socket 与资源回收测试；不是单独 burst 的 CPU，也没有把宿主 Python echo 服务算入 QEMU。数据中保留每次 RTT、每批收件数和经过时间，避免只留一个平均数。
+`qemu_process_cpu` 另外记录 QEMU 进程从启动到关机的 user+system CPU 秒数，与整次实验墙上时间相除得到单核百分比。此项包含启动、ping、回显、用户 socket、混合计算与资源回收测试（历史单核表采样时尚未加入混合组）；不是单独 burst 的 CPU，也没有把宿主 Python echo 服务算入 QEMU。数据中保留每次 RTT、每批收件数和经过时间，避免只留一个平均数。
 
 顺序实验给出：
 
@@ -388,4 +462,25 @@ done
 
 采样时先完成编译，再运行测试，避免编译占用宿主 CPU。检查 `driver_setup` 中两组都是 RX/TX 64 槽，只有 `network_irq_enabled` 分别为 0/1；中断组应看到有效 IRQ line 和增长的 `network_irq_count`。构建清单的 `network_irq_requested` 记录请求的开关，实际 `net` 输出记录设备是否成功接入；两者不能混用。
 
-下一步适合增加接收预算的调度公平性、统一 FD socket、阻塞接收与 socket 等待队列，再考虑 TCP。每一步都先保留这章的可重复实验，才能判断新功能是否破坏了原先的字节完整性、进程隔离和资源回收。
+下一步适合增加接收预算的调度公平性、统一 FD socket，再考虑 TCP 的连接状态、可靠重传与拥塞控制。每一步都先保留这章的可重复实验，才能判断新功能是否破坏了原先的字节完整性、进程隔离和资源回收。
+
+
+## 12. 本轮多核等待实验的证据
+
+保存的单轮 JSON 在后续持锁等待与时钟域审计之前生成，不含后来加入的 `arp_timeout` 项，也没有验证有限 timeout 的上界。旧测试仅检查“至少等了 3 tick”，不能证明 25 毫秒的时限正确。最新回归脚本会额外验证这个场景；不会把旧记录改写成测试过新场景。
+
+[阻塞 UDP 与多核混合实验原始数据](measurements/network-smp/README.md) 保留同一镜像在 1、2、4 vCPU 下的完整结果、逐 CPU 计数、构建清单和用户输出。三组都收到 256/256 个突发包，两种混合负载都完成 64/64 次回显，计算校验和均正确，设备错误与 UDP 丢包均为 0。2/4 核组实际在 AP1 执行接收调用；4 核的计算组 user_ticks 增量为 `[21, 2, 17, 16]`，与单核的 `[52, 0, 0, 0]` 一起证明计算和网络等待接到了不同 CPU 的调度路径。
+
+后续在最终冻结镜像上重新跑了 1、2、4 核网络回归：25 毫秒有限接收都在 3 个 PIT tick 内超时，2/4 核的等待者实际在 CPU1。它修复并验证了前述时钟零点转换；这种空闲条件的上界验证仍不是满载调度延迟保证。最终构建的内核 SHA256 为 `24046ac50ff0829b2b7d99ffbf5465081298d579e41d60154a7ba43b10a16ba3`，[最终网络记录](measurements/network-smp/final/README.md) 与早期 JSON 分开保存；完整集成范围见 [最终功能验证](measurements/validation/README.md)。
+
+上述旧数据是每配置一次的功能回归，早期采样时宿主还可能有其它系统测试运行。最终三组虽顺序执行，也没有进行重复统计采样。这些记录支持“多核运行仍然正确、有真实跨核唤醒和计算进展”，不能支持“网络随核心数线性变快”。BKL 仍会串行处理内核工作，网卡仍是单队列。真正评价速度需要在稳定镜像上重复采样、隔离宿主竞争，并同时保留计算结果与网络损失。
+
+## 13. TCP 还需要哪些基础
+
+TCP 提供可靠、有顺序的字节流。它不保留一次 send 对应一次 receive 的报文边界，因此不能给 UDP 包加一个序号就当作 TCP。连接建立、序号/ACK、接收窗口、重传队列、FIN/RST 与 TIME-WAIT 都需要各自的状态和边界测试。[RFC 9293](https://www.rfc-editor.org/rfc/rfc9293)
+
+现有 Ethernet/ARP/IPv4、校验和、BSP 时钟、等待队列与 owner 清理可以复用。新增部分至少要有有界连接表、发送/接收字节缓冲、乱序或重复段处理、MSS 与窗口规则、关闭时等待者通知；不能继续使用 UDP 的“收件箱一格就是完整应用报文”。这是基于当前代码接口的实现可行性判断，尚未实现 TCP。
+
+超时重传还需记录 RTT、维护 RTO，并在重传后按规则退避；当前 100Hz 的时钟足够做基础教学计时，仍会限制精细时延测量。[RFC 6298](https://www.rfc-editor.org/rfc/rfc6298.html) 发送速率必须受拥塞窗口与接收窗口约束，慢启动、拥塞避免和丢包后的恢复是可靠互操作的一部分，不能靠无限重传或无限缓冲绕过。[RFC 5681](https://www.rfc-editor.org/rfc/rfc5681)
+
+后续教程应先实现可控连接/断开和字节流模型，再在真实 QEMU 与宿主 TCP 服务间注入丢包、重排、重复包、窗口满与关闭竞态。通过这些实验后再增加 HTTP 等应用协议；本轮仍只支持表中列出的 ARP、IPv4、ICMP 和 UDP。

@@ -4,10 +4,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <iostream>
 #include <random>
 #include <vector>
 #include "net/network.hpp"
+#include "task/scheduler.hpp"
 
 using Packet=std::vector<uint8_t>;
 static const uint8_t guest_mac[6]={0x52,0x54,0,0x12,0x34,0x56};
@@ -17,7 +19,14 @@ static VirtioNetStatus driver{};
 static std::deque<Packet> incoming;
 static std::vector<Packet> outgoing;
 static uint64_t ticks=0;
-static bool automatic_answers=true;
+static bool automatic_answers=true, sleep_supported=true;
+static bool interrupt_enabled=true, smp_enabled=false, valid_user_output=true;
+static uint32_t current_cpu=0;
+static ThreadControlBlock* active_thread=nullptr;
+static std::function<void()> block_action;
+static std::vector<uint64_t> blocked_deadlines;
+static unsigned waiter_wakes=0;
+static void deliver(Packet packet);
 static void require(bool value,const char* message) { if(!value) {std::cerr<<"FAIL: "<<message<<'\n';std::exit(1);} }
 static uint16_t read16(const uint8_t* p) {return static_cast<uint16_t>((p[0]<<8)|p[1]);}
 static void put16(uint8_t* p,uint16_t n) {p[0]=n>>8;p[1]=static_cast<uint8_t>(n);}
@@ -56,9 +65,43 @@ static Packet udp(uint16_t port,const Packet& payload,bool checksum=true) {
 uint64_t timer_tick_count(){return ticks;}
 uint32_t timer_frequency_hz(){return 100;}
 bool timer_is_ready(){return true;}
-bool interrupts_are_enabled(){return true;}
-void wait_for_interrupt(){++ticks;}
-bool timer_sleep_ms(uint64_t){++ticks;return true;}
+bool interrupts_are_enabled(){return interrupt_enabled;}
+void disable_interrupts(){interrupt_enabled=false;}
+void enable_interrupts(){interrupt_enabled=true;}
+bool smp_is_enabled(){return smp_enabled;}
+uint32_t smp_current_cpu_index(){return current_cpu;}
+void wait_for_interrupt(){
+  require(!(smp_enabled && current_cpu!=0 && active_thread),"AP with kernel lock must not fall back to HLT");
+  ++ticks;
+}
+bool timer_sleep_ms(uint64_t){
+  if(!sleep_supported)return false;
+  ++ticks;
+  const uint32_t previous=current_cpu;current_cpu=0;network_poll();current_cpu=previous;
+  return true;
+}
+ThreadControlBlock* scheduler_active_thread(){return active_thread;}
+bool scheduler_user_range_valid(uint64_t,size_t,bool writable){return valid_user_output && writable;}
+bool scheduler_wake_thread(ThreadControlBlock* thread){
+  if(!thread || !thread->in_use || thread->state!=kThreadStateBlocked)return false;
+  ++waiter_wakes;thread->state=kThreadStateReady;return true;
+}
+bool scheduler_block_current_thread_until(uint64_t deadline){
+  require(!interrupt_enabled && active_thread,"waiter registration and block share cli");
+  blocked_deadlines.push_back(deadline);
+  active_thread->state=kThreadStateBlocked;
+  auto action=std::move(block_action);block_action={};
+  if(action) {
+    const uint32_t previous=current_cpu;current_cpu=0;
+    interrupt_enabled=true;action();current_cpu=previous;
+    require(active_thread->state==kThreadStateReady,"event wakes the registered waiter");
+  } else {
+    require(deadline!=UINT64_MAX,"infinite model wait needs an external event");
+    ticks=deadline;active_thread->state=kThreadStateReady;
+  }
+  active_thread->state=kThreadStateRunning;
+  return true;
+}
 bool virtio_net_initialize(PageAllocator*) {driver.ready=true;std::memcpy(driver.mac,guest_mac,6);return true;}
 const VirtioNetStatus& virtio_net_status(){return driver;}
 uint32_t virtio_net_poll(uint32_t budget,EthernetReceiveHandler handler,void* context) {
@@ -124,8 +167,10 @@ int main() {
   const uint64_t dropped=network_status().udp_dropped;
   require(network_udp_receive(socket,&metadata,buffer,2,100)==-2,"small receive keeps datagram");
   for(unsigned i=0;i<4;++i) {
+    std::memset(&metadata,0xa5,sizeof(metadata));
     require(network_udp_receive(socket,&metadata,buffer,sizeof(buffer),100)==3 && buffer[0]==i &&
-            metadata.source_port==51000 && metadata.payload_bytes==3,"bounded FIFO preserves order and metadata");
+            metadata.source_port==51000 && metadata.payload_bytes==3 && metadata.reserved==0,
+            "bounded FIFO preserves metadata and explicitly zeros reserved bytes");
   }
   require(network_udp_receive(socket,&metadata,buffer,sizeof(buffer),100)==-1,"empty socket reports would block");
   deliver(udp(9100,Packet{}));require(network_udp_receive(socket,&metadata,nullptr,0,100)==0,"zero-length datagram distinct from would block");
@@ -147,5 +192,78 @@ int main() {
     deliver(std::move(frame));
   }
   require(network_status().invalid_packets>1000,"fuzz packets classified without crashing");
-  std::cout<<"Network host tests passed: checksums, malformed lengths, ARP/ICMP, binary UDP, PID ownership, generation, bounded FIFO, 10000 frames\n";
+
+  // 实际等待逻辑与真实 parser/FIFO；仅 block 的时间顺序和全局 BSP 时钟是模型。
+  ProcessControlBlock owner{};owner.pid=400;
+  ThreadControlBlock receiver{};receiver.in_use=true;receiver.tid=71;receiver.owner=&owner;
+  receiver.execution_mode=kThreadExecutionModeUser;receiver.state=kThreadStateRunning;
+  active_thread=&receiver;smp_enabled=true;current_cpu=1;
+  int32_t waiting=network_udp_open(9400,400);require(waiting>0,"open blocking socket");
+  require(network_udp_receive_wait(waiting,&metadata,buffer,sizeof(buffer),0,400)==-1 &&
+          blocked_deadlines.empty(),"timeout zero probes without blocking");
+  require(network_udp_receive_wait(waiting,&metadata,buffer,sizeof(buffer),10,401)==-2,"wait rejects foreign owner");
+  require(network_udp_receive_wait(waiting,&metadata,buffer,sizeof(buffer),60001,400)==-2,"wait timeout upper bound");
+  require(network_udp_receive_wait(waiting,&metadata,buffer,1201,10,400)==-2,"wait capacity upper bound");
+  const uint64_t before=ticks;
+  require(network_udp_receive_wait(waiting,&metadata,buffer,sizeof(buffer),25,400)==-1 &&
+          ticks==before+3 && blocked_deadlines.back()==before+3,"finite timeout rounds up on unified 100Hz ticks");
+  incoming.push_back(udp(9400,Packet{9,8,7}));
+  require(network_poll()==0 && !incoming.empty(),"AP cannot consume BSP RX queue");
+  require(network_udp_receive(waiting,&metadata,buffer,sizeof(buffer),400)==-1,"AP receive remains inbox-only");
+  current_cpu=0;require(network_poll()==1,"BSP worker consumes RX");current_cpu=1;
+  require(network_udp_receive_wait(waiting,&metadata,buffer,2,0,400)==-2,"small wait output preserves packet");
+  require(network_udp_receive_wait(waiting,&metadata,buffer,sizeof(buffer),0,400)==3 && buffer[0]==9,"probe consumes queued packet");
+  std::memset(&metadata,0xa5,sizeof(metadata));
+  block_action=[&]{deliver(udp(9400,Packet{}));};
+  require(network_udp_receive_wait(waiting,&metadata,nullptr,0,UINT32_MAX,400)==0 &&
+          blocked_deadlines.back()==UINT64_MAX && metadata.reserved==0,
+          "infinite zero-byte receive explicitly zeros reserved metadata");
+  // 虚假唤醒不能重设 deadline，否则重复唤醒会无限延长一个有限 timeout。
+  const uint64_t fixed_deadline=ticks+5;
+  block_action=[&]{
+    ++ticks;require(scheduler_wake_thread(&receiver),"spurious event wakes receiver");
+    block_action=[&]{deliver(udp(9400,Packet{42}));};
+  };
+  require(network_udp_receive_wait(waiting,&metadata,buffer,sizeof(buffer),50,400)==1 && buffer[0]==42 &&
+          blocked_deadlines[blocked_deadlines.size()-1]==fixed_deadline &&
+          blocked_deadlines[blocked_deadlines.size()-2]==fixed_deadline,"spurious wake rechecks condition and preserves deadline");
+  block_action=[&]{valid_user_output=false;deliver(udp(9400,Packet{17}));};
+  require(network_udp_receive_wait(waiting,&metadata,buffer,sizeof(buffer),100,400)==-2,"output mapping rechecked after wait");
+  valid_user_output=true;
+  require(network_udp_receive_wait(waiting,&metadata,buffer,sizeof(buffer),0,400)==1 && buffer[0]==17,
+          "invalidated output does not consume packet");
+  int32_t reopened=0;
+  block_action=[&]{
+    require(network_udp_close(waiting,400),"close waiting handle");
+    reopened=network_udp_open(9400,400);require(reopened>0 && reopened!=waiting,"close/reopen changes generation");
+    deliver(udp(9400,Packet{23}));
+  };
+  require(network_udp_receive_wait(waiting,&metadata,buffer,sizeof(buffer),UINT32_MAX,400)==-4,
+          "close wakes infinite receiver and never attaches it to new generation");
+  require(network_udp_receive_wait(reopened,&metadata,buffer,sizeof(buffer),0,400)==1 && buffer[0]==23,
+          "new socket packet not consumed by old waiter");
+  block_action=[&]{network_udp_close_owner(400);};
+  require(network_udp_receive_wait(reopened,&metadata,buffer,sizeof(buffer),UINT32_MAX,400)==-4,
+          "process exit closes socket and wakes receiver");
+  waiting=network_udp_open(9401,400);require(waiting>0,"open after exit cleanup");
+  // AP 的 ARP/ICMP 等待不能在调度失败时保留 BKL 并 HLT。失败注入让时间
+  // 不推进，旧代码会触发 wait_for_interrupt 中的断言，而不是掩盖成超时。
+  const uint64_t stopped_clock=ticks;sleep_supported=false;
+  require(network_udp_send(waiting,network_ipv4(10,0,2,77),51000,nullptr,0,1000,400)==-1 &&
+          ticks==stopped_clock,"AP uncached ARP returns when scheduler sleep fails");
+  require(!network_ping(peer_ip,100,&ping) && ping.sent && ticks==stopped_clock,
+          "AP ICMP wait returns when scheduler sleep fails");
+  sleep_supported=true;incoming.clear();
+  // 正常 AP 冷 ARP 等待经调度 sleep，由模型中的 BSP worker 收回包。
+  ticks+=6001;automatic_answers=true;
+  require(network_udp_send(waiting,peer_ip,51000,nullptr,0,1000,400)==0,
+          "AP cold ARP yields to BSP and resumes send");
+  automatic_answers=false;
+  block_action=[&]{driver.ready=false;network_status();};
+  require(network_udp_receive_wait(waiting,&metadata,buffer,sizeof(buffer),UINT32_MAX,400)==-3,
+          "device failure wakes infinite receiver");
+  network_udp_close_owner(400);
+  require(waiter_wakes>=6 && network_status().udp_wait_timeouts==1 && network_status().udp_wait_closed==2,
+          "wait wake/timeout/close accounting");
+  std::cout<<"Network host tests passed: protocol boundaries, PID/FIFO, 10000 frames, AP RX restriction, blocking timeout/close/exit/ABA/user-pointer/device-failure/AP-sleep-failure/cold-ARP\n";
 }

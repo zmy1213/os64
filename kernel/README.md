@@ -32,7 +32,7 @@ boot/stage2.asm 传 BootInfo
 | shell | 命令解析、cwd、文件修改、run/wait/reap、观察和电源命令 | handle_run_command、shell_run_once |
 | console | VGA 输出和内核交互行编辑 | console.hpp |
 | runtime | 无宿主 libc 时的基础内存工具 | runtime.hpp |
-| cpu | CPUID、启用 x87/SSE、初始 FXSAVE 现场 | cpu.hpp |
+| cpu | CPUID/x87/SSE、ACPI/MP 拓扑、xAPIC AP 启动、内核锁与每核快照 | cpu.hpp、smp.hpp、topology.hpp |
 | log / perf | 有界结构化日志、CPU/内存/调度快照 | log.hpp、perf.hpp |
 | device / net | PCI 配置空间、virtio DMA ring、ARP/IPv4/ICMP/UDP | pci.hpp、network.hpp |
 
@@ -54,7 +54,9 @@ boot/stage2.asm 传 BootInfo
 
 用户程序可以被 PIT timer 抢占；内核仍在明确调度点切换。IRQ0 在可能切换之前发 PIC EOI，避免暂停的 IRQ 处理器阻塞后续时钟。TSS.rsp0 随当前线程指向专用进入栈。用户线程还有独立的 bootstrap/resume 栈，避免反复 int80 覆盖最初返回现场。
 
-最后一条线程退出立即关闭文件/管道/UDP，唤醒等待者；`scheduler_reap_process` 清理 fd、页/页表、内核栈、PCB/TCB。孤儿自动回收在另一线程栈上进行。切换汇编在关闭中断的临界区保存/恢复各线程 x87/SSE 的 512 字节 FXSAVE 现场；AVX/XSAVE、SMP、用户线程 API 尚未实现。
+最后一条线程退出立即关闭文件/管道/UDP，唤醒等待者；`scheduler_reap_process` 清理 fd、页/页表、内核栈、PCB/TCB。孤儿自动回收在另一线程栈上进行。切换汇编在关闭中断的临界区保存/恢复各线程 x87/SSE 的 512 字节 FXSAVE 现场；当前最多四核：用户线程首次选较轻核心后固定，内核线程只在 BSP，大内核锁串行保护共享状态。每核 TSS/GDT/IST、current/idle/时间片/FX 独立；全局 tick 仅 BSP 增加。AVX/XSAVE、用户线程 API、迁移/跨核共享地址空间/TLB shootdown 尚未实现。
+
+正式等待使用 Sleeping/Blocked 后切栈，user/idle 才放锁；不能持锁 HLT 等别核的事件。启动历史 CPU 记账自测有独立 Running helper，仅在 AP 启动前运行。见 [AP 启动](../docs/SMP_BOOT_TUTORIAL.md) 与 [多核调度](../docs/SMP_SCHEDULER_TUTORIAL.md)。
 
 ## 系统调用：服务存在不等于任何指针都可用
 

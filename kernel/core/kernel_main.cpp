@@ -29,8 +29,20 @@
 #include "task/scheduler.hpp"
 #include "log/log.hpp"
 #include "net/network.hpp"
+#include "cpu/smp.hpp"
 
 namespace {
+
+// 旧启动自测刻意让线程保持 Running，验证时钟记账/优先级抢占；
+// 它不是应用 sleep。正式 timer_wait_ticks/timer_sleep_ms 已改为线程阻塞。
+// 此 helper 只在启动 AP 以前的 BSP 自测调用，不能用于多核 runtime。
+void timer_wait_running_smoke_ticks(uint64_t ticks) {
+  const uint64_t started = timer_tick_count();
+  while (timer_tick_count() - started < ticks) {
+    wait_for_interrupt();
+    (void)scheduler_yield_if_requested();
+  }
+}
 
 constexpr uint16_t kVgaColumns = 80;          // VGA 文本模式一行 80 列。
 constexpr uintptr_t kVgaBase = 0xB8000;       // VGA 文本缓冲区从这个物理地址开始。
@@ -3479,7 +3491,7 @@ bool run_timer_smoke_test() {
 
   // 第一段：直接按 tick 等待，证明“系统已经能靠中断睡到未来某个 tick 再醒”。
   const uint64_t wait_start_tick = timer_tick_count();
-  timer_wait_ticks(kTimerWaitTestTicks);
+  timer_wait_running_smoke_ticks(kTimerWaitTestTicks);
   const uint64_t wait_end_tick = timer_tick_count();
   const uint64_t wait_elapsed_ticks = wait_end_tick - wait_start_tick;
 
@@ -3560,7 +3572,7 @@ void scheduler_priority_thread_entry(void* raw_context) {
                            context->trace_mark);
 
     if (context->wait_ticks != 0) {
-      timer_wait_ticks(context->wait_ticks);
+      timer_wait_running_smoke_ticks(context->wait_ticks);
     }
   }
 }
@@ -3614,7 +3626,7 @@ void scheduler_wake_thread_entry(void* raw_context) {
   }
 
   observe_scheduler_thread_tid(&context->observed_tid);
-  timer_wait_ticks(context->wait_ticks);
+  timer_wait_running_smoke_ticks(context->wait_ticks);
   append_scheduler_trace(context->shared->block_trace,
                          sizeof(context->shared->block_trace),
                          &context->shared->block_trace_length,
@@ -3664,7 +3676,7 @@ void scheduler_user_yield_helper_thread_entry(void* raw_context) {
       }
 
       ++context->stdin_block_observed_count;
-      timer_wait_ticks(1);
+      timer_wait_running_smoke_ticks(1);
       (void)keyboard_inject_test_scancode(context->scancode);
       context->shared_page[3] = 1;
       ++context->stdin_signal_count;
@@ -4412,7 +4424,7 @@ void stdin_blocking_injector_thread_entry(void* raw_context) {
   }
 
   observe_scheduler_thread_tid(&context->observed_tid);
-  timer_wait_ticks(1);
+  timer_wait_running_smoke_ticks(1);
   (void)keyboard_inject_test_scancode(context->scancode);
 }
 
@@ -5524,6 +5536,15 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
     write_status_line(kShellStatusRow, "shell thread bad");
     return;
   }
+
+  if (!smp_initialize(&g_scheduler, &g_page_allocator)) {
+    disable_interrupts();
+    serial_write_string("smp startup failed; runtime stopped"); serial_write_crlf();
+    write_status_line(kShellStatusRow, "smp startup bad");
+    return;
+  }
+  serial_write_string("smp_online_cpus="); serial_write_u64(smp_online_cpu_count());
+  serial_write_crlf();
 
   write_status_line(kShellStatusRow, "shell thread ok");
 

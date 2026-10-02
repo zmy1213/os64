@@ -10,6 +10,7 @@
 #include "task/elf_loader.hpp"
 #include "task/user_mode.hpp"
 #include "cpu/cpu.hpp"
+#include "cpu/smp.hpp"
 
 // 第一版 tasking 先故意保守一点：
 // 只支持很少量的进程和线程，避免一上来把重点淹没在“可变长容器”里。
@@ -18,6 +19,7 @@ constexpr size_t kSchedulerMaxThreadCount = 32;
 constexpr size_t kSchedulerNameCapacity = 24;
 constexpr size_t kSchedulerDefaultKernelThreadStackBytes = 8192;
 constexpr size_t kSchedulerPriorityCount = 4;
+constexpr uint32_t kSchedulerUnassignedCpu = UINT32_MAX;
 
 // 这一轮的进程状态先只保留最关键的几档：
 // - free: 槽位还没被用过
@@ -101,6 +103,8 @@ struct ThreadControlBlock {
   uint64_t consumed_ticks;                         // 这个线程在运行态下累计消耗了多少 timer tick。
   uint64_t wake_tick;                              // 如果线程在 sleep，这里记录“第几个 tick 应该被唤醒”。
   uint32_t waiting_for_pid;
+  uint32_t assigned_cpu;                           // 首次dispatch固定CPU；kernel线程只在BSP。
+  bool queued;                                    // ready队列中至多一个引用，BKL内更新。
   bool is_idle_thread;                             // idle thread 是特殊线程：永远存在，但不计入普通 live thread。
   UserModeLaunchContext user_mode;                 // 如果这是 user thread，这里就是那份真正会交给 `iretq` 路径的用户态启动现场。
   void* user_kernel_entry_stack_allocation;        // user thread 需要第二根专用内核进入栈：专门给 TSS.rsp0 接 ring3 -> ring0 的 syscall/interrupt 帧。
@@ -113,6 +117,18 @@ struct ThreadControlBlock {
   uint64_t user_yield_count;                       // 第一版先单独记“用户线程通过 syscall 主动让出 CPU”多少次，方便 smoke test 观察。
   char name[kSchedulerNameCapacity];               // 线程名字先也做成固定数组，避免早期依赖动态字符串。
   CpuFloatingState floating_state;                 // FXSAVE: x87、MXCSR、XMM0–15，每线程独立。
+};
+
+struct SchedulerCpuContext {
+  uint32_t remaining_slice_ticks;
+  bool preempt_requested;
+  uint64_t bootstrap_stack_pointer;
+  CpuFloatingState bootstrap_floating_state;
+  ThreadControlBlock* current_thread;
+  ThreadControlBlock* idle_thread;
+};
+struct SchedulerCpuStatistics {
+  uint64_t timer_ticks, switches, yields, preempt_requests, user_dispatches, user_ticks;
 };
 
 struct SchedulerState {
@@ -141,6 +157,9 @@ struct SchedulerState {
                                   [kSchedulerMaxThreadCount];
   ProcessControlBlock processes[kSchedulerMaxProcessCount];
   ThreadControlBlock threads[kSchedulerMaxThreadCount];
+  uint32_t smp_cpu_count;                           // BSP旧字段保留；AP有独立现场。
+  SchedulerCpuContext secondary_cpus[kSmpMaxCpuCount - 1];
+  SchedulerCpuStatistics cpu_statistics[kSmpMaxCpuCount];
 };
 
 // 这是把“ELF loader”和“scheduler/process/thread”真正接起来的第一版返回结构。
@@ -161,6 +180,9 @@ bool initialize_scheduler(SchedulerState* scheduler,
                           uint32_t time_slice_ticks);
 bool scheduler_is_ready(const SchedulerState* scheduler);
 bool scheduler_set_active(SchedulerState* scheduler);
+bool scheduler_prepare_smp(SchedulerState* scheduler, uint32_t cpu_count);
+[[noreturn]] void scheduler_run_secondary_cpu(SchedulerState* scheduler, uint32_t index);
+ThreadControlBlock* scheduler_cpu_current_thread(const SchedulerState* scheduler, uint32_t index);
 SchedulerState* scheduler_active_state();
 ProcessControlBlock* scheduler_find_process(SchedulerState* scheduler, uint32_t pid);
 bool scheduler_prepare_user_arguments(ProcessControlBlock* process,
@@ -245,8 +267,12 @@ bool scheduler_yield_if_requested();
 bool scheduler_sleep_current_thread(uint64_t ticks);
 bool scheduler_block_current_thread();
 // 这个入口专门给“先关中断登记等待者，再真正 block 自己”的等待队列用。
-// 它会在切到下一个线程前重新开中断，避免系统因为当前线程睡下去而收不到唤醒它的外部 IRQ。
+// 切换全程关本地中断；目标恢复自己的 IF，旧线程被唤醒返回后才重新开中断。
 bool scheduler_block_current_thread_and_enable_interrupts();
+// Caller owns BKL; waiter registration and transition occur with local IRQ off.
+// deadline is absolute timer_tick_count() (PIT), not scheduler-relative ticks.
+// 0 or UINT64_MAX means no deadline; expired deadlines return false immediately.
+bool scheduler_block_current_thread_until(uint64_t deadline_tick);
 bool scheduler_wake_thread(ThreadControlBlock* thread);
 
 // 由 timer IRQ 路径调用。
@@ -254,6 +280,8 @@ bool scheduler_wake_thread(ThreadControlBlock* thread);
 // 1. 给当前线程记账
 // 2. 在时间片用完时发出“该尽快切换”的请求
 void scheduler_handle_timer_tick();
+// AP LAPIC tick: local accounting/quantum only; BSP owns global wall ticks.
+void scheduler_handle_local_timer_tick();
 
 ThreadControlBlock* scheduler_current_thread(
     const SchedulerState* scheduler);

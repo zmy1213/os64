@@ -47,7 +47,9 @@ def main():
                            'badptr replace size rejected',
                            'badptr IPC boundaries rejected',
                            'badptr performance boundaries rejected',
-                           'badptr UDP boundaries rejected')
+                           'badptr UDP boundaries rejected',
+                           'badptr SMP boundaries rejected',
+                           'badptr sleep boundaries rejected')
                 for _ in range(3):
                     vm.shell('run /bin/badptr', markers,
                              ('user_fault_vector=', 'badptr: unexpected result'), serial=True)
@@ -59,7 +61,7 @@ def main():
                 vm.shutdown()
                 vm = None
                 print('Syscall boundary regression passed: pipe/dup, performance/log, '
-                      'UDP pointers and integer bounds; resources and disk unchanged. '
+                      'UDP wait and SMP pointers and integer bounds; resources and disk unchanged. '
                       f'Logs: {logs}')
             except Exception:
                 if vm:

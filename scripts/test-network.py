@@ -103,6 +103,7 @@ def main():
     parser.add_argument('--build-dir', type=Path, required=True)
     parser.add_argument('--label', default='', help='Separate log directory for reproducible before/after rounds')
     parser.add_argument('--require-irq', action='store_true', help='Require the real guest to report IRQ enabled')
+    parser.add_argument('--cpus', type=int, choices=(1, 2, 4), default=1)
     args = parser.parse_args()
     build = args.build_dir.resolve()
     if not re.fullmatch(r'[A-Za-z0-9_-]*', args.label):
@@ -113,7 +114,7 @@ def main():
     vm = None
     peer = EchoPeer()
     metrics = {'host': platform.platform(), 'backend': 'virtio-net legacy / QEMU user NAT',
-               'label': args.label, 'vm_memory_mib': 128, 'receive_budget': 32,
+               'label': args.label, 'vm_memory_mib': 128, 'vm_cpus': args.cpus, 'receive_budget': 32,
                'disk_image_sha256': digest(build / 'disk.img'),
                'payload_limit': 1200,
                'qemu': subprocess.check_output([args.qemu, '--version'], text=True).splitlines()[0]}
@@ -130,14 +131,15 @@ def main():
             port = free_udp_port()
             capture = logs / 'packets.pcap'
             wrapper = temp / 'qemu-network'
-            additional = ['-netdev', f'user,id=n0,hostfwd=udp:127.0.0.1:{port}-10.0.2.15:9000',
+            additional = ['-accel', 'tcg,thread=multi' if args.cpus > 1 else 'tcg', '-cpu', 'qemu64',
+                          '-netdev', f'user,id=n0,hostfwd=udp:127.0.0.1:{port}-10.0.2.15:9000',
                           '-device', 'virtio-net-pci,netdev=n0,disable-modern=on,mac=52:54:00:12:34:56',
                           '-object', f'filter-dump,id=netcap,netdev=n0,file={capture}']
             wrapper.write_text('#!/bin/sh\nexec ' + shlex.join([args.qemu, *additional]) + ' "$@"\n')
             wrapper.chmod(0o700)
             cpu_before = resource.getrusage(resource.RUSAGE_CHILDREN)
             experiment_started = time.perf_counter()
-            vm = VM(str(wrapper), build, data, logs, temp, 1)
+            vm = VM(str(wrapper), build, data, logs, temp, 1, cpus=args.cpus)
             metrics['driver_setup'] = vm.shell('net', ('network_ready=1', 'network_driver=virtio-net',
                             'network_ip=10.0.2.15', 'network_echo_port=9000'), serial=True)
             if args.require_irq and 'network_irq_enabled=1' not in metrics['driver_setup']:
@@ -204,6 +206,41 @@ def main():
                      ('udp_test invalid_pointer_and_range_rejected',
                       'udp_test foreign_handle_rejected', 'udp_test sent=32 received=32',
                       'udp_test binary_zero_max_payload_ok'), serial=True, timeout=30)
+            bounded_wait = vm.shell('run /bin/udp_test timeout',
+                                    ('udp_test blocking_timeout_ok', 'run_exit_code=0'), serial=True)
+            timeout_ticks = int(re.search(r'udp_test timeout_ticks=(\d+)', bounded_wait).group(1))
+            timeout_cpu = int(re.search(r'udp_test timeout_wait_cpu=(\d+)', bounded_wait).group(1))
+            if not 3 <= timeout_ticks <= 6 or (args.cpus > 1 and timeout_cpu == 0):
+                raise AssertionError(f'Finite UDP timeout exceeded its idle bound or missed AP: {bounded_wait}')
+            metrics['bounded_udp_timeout'] = {'requested_ms': 25, 'elapsed_ticks': timeout_ticks,
+                                              'minimum_ticks': 3, 'maximum_ticks': 6,
+                                              'cpu': timeout_cpu, 'raw_output': bounded_wait}
+            arp_wait = vm.shell('run /bin/udp_test arp_timeout',
+                                ('udp_test uncached_arp_timeout_ok', 'run_exit_code=0'), serial=True, timeout=15)
+            arp_cpu = int(re.search(r'udp_test arp_wait_cpu=(\d+)', arp_wait).group(1))
+            if args.cpus > 1 and arp_cpu == 0:
+                raise AssertionError(f'Uncached ARP did not wait on an AP: {arp_wait}')
+            metrics['uncached_arp_timeout'] = {'cpu': arp_cpu, 'raw_output': arp_wait}
+            mixed = []
+            for workers in (0, 3):
+                started = time.perf_counter()
+                output = vm.shell(f'run /bin/udp_mixed 10.0.2.2 {peer.port} {workers} 64 100000000',
+                                  ('udp_mixed receiver=ok', 'udp_mixed correctness=ok', 'run_exit_code=0'),
+                                  serial=True, timeout=90)
+                fields = {name: int(value) for name, value in re.findall(
+                    r'(?m)^udp_mixed ([a-z0-9_]+)=(\d+)\r?$', output)}
+                if fields.get('sent') != 64 or fields.get('received') != 64 or fields.get('online_cpus') != args.cpus:
+                    raise AssertionError(f'Blocking mixed load lost packets or CPUs: {output}')
+                cpu_progress = [{'cpu': int(cpu), 'user_dispatches': int(dispatches), 'user_ticks': int(ticks)}
+                                for cpu, dispatches, ticks in re.findall(
+                                    r'udp_mixed cpu=(\d+) user_dispatches=(\d+) user_ticks=(\d+)', output)]
+                if args.cpus > 1 and fields.get('receiving_cpu', 0) == 0:
+                    raise AssertionError(f'UDP blocking receive was not exercised on an AP: {output}')
+                if workers and args.cpus > 1 and sum(item['user_ticks'] > 0 for item in cpu_progress) < 2:
+                    raise AssertionError(f'Compute did not run on multiple CPUs: {output}')
+                mixed.append({'compute_workers': workers, 'host_wall_seconds': time.perf_counter() - started,
+                              'guest_fields': fields, 'cpu_progress': cpu_progress, 'raw_output': output})
+            metrics['mixed_compute_network'] = mixed
             for _ in range(8):
                 vm.shell('run /bin/udp_test leak', ('udp_test exit_cleanup_requested',), serial=True)
             free_after = int(re.search(r'mem_free_pages=(\d+)', vm.shell('mem', serial=True)).group(1))
@@ -226,7 +263,7 @@ def main():
                                          'scope': 'whole regression, QEMU process only; not isolated burst CPU'}
             metrics['captured_packets'] = pcap_counts(capture)
             (logs / 'metrics.json').write_text(json.dumps(metrics, indent=2) + '\n')
-            print('Network regression passed: real ARP/ICMP/UDP, user socket ownership and exit cleanup.')
+            print('Network regression passed: real ARP/ICMP/UDP, blocking UDP, compute coexistence, ownership and exit cleanup.')
             print(f"Sequential echo: {metrics['sequential']['roundtrips_per_second']:.1f} roundtrips/s; "
                   f"median {metrics['sequential']['rtt_median_ms']:.2f} ms; burst {len(received)}/256 received.")
             print(f'Logs, capture and measured metrics: {logs}')

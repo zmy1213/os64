@@ -1,6 +1,6 @@
 # 用户进程运行时
 
-os64 的当前进程运行时面向 BIOS 启动、单 CPU 的 x86_64 教学系统。它能从
+os64 的当前进程运行时面向 BIOS 启动、最多四 CPU 的 x86_64 教学系统。它能从
 OS64FS 装载自己的 ELF64 程序，在 ring 3 运行，通过 `int 0x80` 调用内核，
 等待退出并回收资源。下面描述当前代码的行为和限制；较早教程中的一次性
 用户态烟测仍保留，用于检查最底层切换链路。
@@ -43,7 +43,7 @@ shell 等待该 PID 退出，打印退出码，然后显式回收它，因此反
 ## 创建、等待和退出
 
 `user/os64.hpp` 提供 `spawn(path, argv, argc)`、`waitpid(pid, &status)`、
-`getpid()`、`sleep(milliseconds)`、`yield()` 和 `exit(status)` 的包装。
+`sleep(milliseconds)` 和 `yield()` 的包装。PID 查询可用 `syscall(13)`；`main` 返回后由 `user/start.asm` 调用 syscall 10 退出，需要提前退出时可直接调用 `syscall(10, status)`。
 
 | 系统调用编号 | 行为 |
 | --- | --- |
@@ -55,11 +55,16 @@ shell 等待该 PID 退出，打印退出码，然后显式回收它，因此反
 | 16 waitpid | 只允许等待自己的子进程，获取退出码并回收其资源 |
 | 20 brk | 查询/改变当前进程用户堆末尾，立即分配或释放页 |
 | 21 replace_file | 在一次文件事务中创建或替换整个文件，供编辑器保存 |
+| 22 pipe / 23 dup2 / 24 dup | 创建有界字节管道、替换连接和复制共享打开对象 |
+| 40 udp_receive_wait | 按超时等待归属当前 PID 的 UDP 数据；详见网络教程 |
+| 41 smp_snapshot | 输出 128B 多核信息，含在线 mask、当前 CPU 与每 CPU 用户调度/tick |
 
 spawn 设置 `parent_pid` 为当前线程所属进程的 PID。新进程获得独立 fd 表，
 表内引用继承父进程打开的文件或管道，普通文件的偏移也由这些引用共享。
 子进程关闭自己的 fd 不会删除父进程的引用；管道最后一个写端引用关闭后，
 读者读完缓存才看到 EOF。cwd 及输出回调由系统调用层复制。
+创建、参数写入和继承在大内核锁内完成；新线程在其他 CPU 上执行前，这些
+准备工作必须完成。Shell 也在同一锁内接好标准流并清掉子进程多余连接。
 
 内核的 `scheduler_wait_process` 只等待，不回收。调用者阻塞在
 `waiting_for_pid` 上；目标进程最后一条线程退出时唤醒等待者。这比循环
@@ -165,6 +170,11 @@ break 按字节记录，物理页按 4 KiB 分配。扩张立即分配并清零�
 修改当前 CR3 的映射后用 invlpg 使对应缓存失效。没有 mmap、共享内存、COW、
 demand paging 或交换区。
 
+多核版本仍让一个进程的唯一用户线程固定在首次选定的 CPU，所以这份用户
+地址空间只在该 CPU 上执行。当前 `invlpg` 只失效本 CPU 的缓存；没有让远端
+CPU 同步撤销旧映射的 TLB shootdown。BKL 保护页表和分配器账本，不能自动
+清除另一 CPU 的 TLB，因此不能直接增加跨 CPU 用户线程、迁移或共享地址空间。
+
 用户库 [memory.hpp](../user/memory.hpp) 的 `memory::allocate/release/resize`
 在 brk 之上提供小块分配、16 字节对齐、分割合并和尾部归还。应用不能在库
 仍拥有活块时绕过它手动移动 break；这是单线程教学库，不是完整 libc。
@@ -176,10 +186,33 @@ demand paging 或交换区。
 关闭中断，恢复目标上下文后恢复其 IF 状态。否则，用户 int80 进入内核时
 清掉的 IF 可能被 shell 继承，导致等待键盘时再也收不到中断。
 
+SMP 增加每 CPU 的当前线程、idle、TSS 和本地调度状态，防止两颗 CPU 使用
+同一个“当前线程”指针或内核进入栈。用户线程首次调度时分配较轻的 CPU，
+随后固定归属；不是每次唤醒都重新分配，也没有工作窃取。内核线程只在 BSP
+执行，包括 Shell 和网络 worker；用户计算可以在 BSP/AP 上并行执行。
+
+大内核锁 BKL 保证同一时刻只有一个 CPU 修改共享内核状态。来自用户态的
+syscall/IRQ/异常进入受保护路径，回到用户态时释放；已经持锁的内核 IRQ
+不重复取得同一把锁。等待时在锁内检查、登记和标记 blocked，再保持锁到
+旧 RSP 保存与切栈完成。目标上下文回用户态或 idle 等待中断前才释放，
+阻塞线程恢复时先重新持锁。不能在旧栈尚未保存时提前解锁，让远端 CPU
+把旧线程同时运行起来。BKL 也使管道引用计数、共享 offset、关闭与退出回收
+不被其他 CPU 穿插修改；它不意味着用户线程或网络处理已经拥有细粒度锁。
+
 PIT IRQ0 完成 tick 记账后、在可能切换线程之前发送 PIC EOI。中断处理函数
 可能被挂起很久；先 EOI 才能让其他线程继续接收 timer tick，保证 sleep
 唤醒和用户态抢占正常工作。CPU 在用户态运行时可以被 timer 抢占；内核态
 工作仍依赖明确的 yield、sleep、block 等调度点。
+
+BSP PIT 保持全局时间前进，用于 sleep/UDP 超时；AP 的本地 APIC 定时器
+负责自己的用户抢占，不把全局墙上时间重复加一。远端唤醒通过 IPI 通知
+目标 CPU。长时间内核事务仍会占有 BKL，推迟其他 CPU 进入内核和等待者
+响应，因此 CPU 数增多不保证 I/O 或短任务延迟按比例改善。
+
+正式线程调用 sleep 时会登记 `sleeping` 和截止 tick，切到其他线程或 idle，
+而不是占着 BKL 执行 HLT 等时间。否则 AP 等 BSP 的时钟、BSP 等 AP 的锁，
+会互相卡住。只有启动时尚无正式线程的计时路径保留 HLT 等待；sleep(0)
+直接成功，用户 sleep 超过一天或传入高位溢出的时长会返回参数错误。
 
 ## 用户错误的边界
 
@@ -194,9 +227,10 @@ PIT IRQ0 完成 tick 记账后、在可能切换线程之前发送 PIC EOI。中
 
 ## 当前边界与验证
 
-PCB 固定 16 个，TCB 固定 32 个，idle 和 shell 也占用槽位。实现面向单 CPU、
-单个用户主线程的自有程序，没有 fork、exec 替换、signals、用户 mmap、
-动态链接器、POSIX/Linux ABI、AVX/XSAVE、SMP、权限用户模型或 demand paging。
+PCB 固定 16 个，TCB 固定 32 个，每 CPU idle 和 shell 也占用槽位。实现面向
+最多四 CPU、每用户进程一个主线程的自有程序，没有 fork、exec 替换、signals、
+用户线程创建/join、CPU 迁移、共享内存、TLB shootdown、用户 mmap、动态链接器、
+POSIX/Linux ABI、AVX/XSAVE、CPU 热插拔、权限用户模型或 demand paging。
 已实现的 x87/SSE 现场由每个 TCB 的 16 字节对齐 512 字节缓冲保存，切换汇编
 在关中断后执行 FXSAVE64/FXRSTOR64，避免 IRQ 观察到只切了一半的线程状态。
 进程退出立即关闭文件、管道及归属的 UDP 句柄；页面和内核栈在 wait/reap 时释放。
@@ -215,4 +249,11 @@ PCB 固定 16 个，TCB 固定 32 个，idle 和 shell 也占用槽位。实现�
 `make test-performance` 在 QEMU 中检查 x87/SSE 初始化与隔离、8/12 工作者
 结果/页回收、八工作者定时器进度、32 MiB 管道和性能/日志 ABI 的指针边界。
 `make test-log-host` 用 sanitizer 检查日志环与独立计算验证器。测时、p50/p99、
-单核限制及可选 Linux 客体对照见 [性能教程](./PERFORMANCE_TUTORIAL.md)。
+测量限制及可选 Linux 客体对照见 [性能教程](./PERFORMANCE_TUTORIAL.md)。旧的
+1 vCPU、31 样本报告仍只说明当时的单核结果，不能当成四 CPU 的新证据。
+
+[SMP 教程](./SMP_SCHEDULER_TUTORIAL.md) 介绍 AP 启动、每 CPU 现场及多核验证。
+`bash scripts/test-cooperation.sh` 在 1/2/4 CPU 配置使用临时数据盘，验证约
+17 MiB 的多写者完整记录、独立计算结果、实际 CPU 分布、满管道写者关闭唤醒、
+重复资源回收及 syscall 40/41 边界。测试日志必须来自对应版本与 CPU 配置；
+程序打印“在线四 CPU”本身不证明并行执行或加速。

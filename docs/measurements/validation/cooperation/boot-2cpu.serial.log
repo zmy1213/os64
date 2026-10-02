@@ -1,0 +1,1183 @@
+stage1 ok
+stage2 ok
+a20 ok
+e820 ok
+kernel loaded ok
+boot volume loaded ok
+protected mode ok
+paging ok
+long mode ok
+hello from os64 kernel
+tss_rsp0=0x00000000001213D0
+tss_ist1=0x00000000001233D0
+tss_task_register=0x0000000000000028
+tss_io_map_base=104
+tss ok
+idt ok
+boot info ok
+e820[0] base=0x0000000000000000 length=0x000000000009FC00 raw_type=0x0000000000000001 kind=usable
+e820[1] base=0x000000000009FC00 length=0x0000000000000400 raw_type=0x0000000000000002 kind=reserved
+e820[2] base=0x00000000000F0000 length=0x0000000000010000 raw_type=0x0000000000000002 kind=reserved
+e820[3] base=0x0000000000100000 length=0x0000000007EE0000 raw_type=0x0000000000000001 kind=usable
+e820[4] base=0x0000000007FE0000 length=0x0000000000020000 raw_type=0x0000000000000002 kind=reserved
+e820[5] base=0x00000000FFFC0000 length=0x0000000000040000 raw_type=0x0000000000000002 kind=reserved
+e820[6] base=0x000000FD00000000 length=0x0000000300000000 raw_type=0x0000000000000002 kind=reserved
+e820 parse ok
+direct_map_physical_limit=268435456
+direct map ok
+nx_enabled=1
+direct_map_high_page_phys=0x0000000002000000
+direct map high page ok
+allocator_range[0] start=0x0000000000160000 end=0x0000000000170000
+allocator_range[1] start=0x0000000000180000 end=0x0000000007FE0000
+alloc_page_0=0x0000000000162000
+alloc_page_1=0x0000000000163000
+alloc_page_2=0x0000000000164000
+free_pages_remaining=32363
+page allocator ok
+mapped_test_page=0x0000000000165000
+mapped_virtual=0x0000000000200000
+read_back_value=0x1122334455667788
+map_page ok
+address_space_kernel_root=0x0000000000001000
+address_space_user_root=0x0000000000167000
+address_space_user_base=0x0000000000400000
+address_space_user_stack_top=0x0000000000800000
+address_space_user_page_phys=0x000000000016D000
+address_space_user_page_virt=0x0000000000400000
+address_space_user_lookup=0x000000000016D000
+address_space_mapped_user_pages=1
+address_space ok
+addr space ok
+heap init ok
+heap_small=0x0000000001000020
+heap_large=0x0000000001001000
+heap_large_page_aligned=1
+heap_cross_page_value=0xFEDCBA9876543210
+heap_reuse=0x0000000001000020
+heap_coalesced=0x0000000001000060
+heap_used_bytes=7056
+heap_mapped_bytes=16384
+heap_free_bytes=9232
+heap alloc ok
+kernel_memory_page_allocator=0x0000000000100018
+kernel_memory_heap=0x0000000000104128
+kmalloc_block=0x0000000001000480
+kcalloc_block=0x00000000010004D0
+kcalloc_zero_words=4
+kobject_ptr=0x0000000001000510
+kobject_sum=0x2222222222222222
+kobject_aligned_ptr=0x0000000001000580
+kobject_alignment=64
+kobject_ctor_count=2
+kobject_dtor_count=2
+kernel_memory_active_before=3
+kernel_memory_active_after=3
+kernel memory ok
+boot_volume_ptr=0x0000000000080000
+boot_volume_start_lba=568
+boot_volume_sector_count=128
+boot_volume_sector_size=512
+block_device_total_bytes=65536
+block_device_sector0_prefix=0x335653463436534F
+boot volume ok
+os64fs_mount ok
+os64fs_lookup ok
+os64fs_text ok
+os64fs_big_read ok
+os64fs_signature=OS64FSV3
+os64fs_volume_name=os64-root
+os64fs_inode_count=32
+os64fs_data_block_size=512
+os64fs_inode_bitmap_sectors=1
+os64fs_data_bitmap_sectors=1
+os64fs_inode_used=8
+os64fs_inode_free=23
+os64fs_data_blocks=121
+os64fs_data_used=19
+os64fs_data_free=102
+os64fs_root_entries=3
+os64fs_docs_entries=4
+os64fs_parent_lookup_inode=3
+os64fs_hello_inode=6
+os64fs_hello_elf_inode=7
+os64fs_big_inode=8
+os64fs_readme=os64fs readme: the 64-bit kernel now mounts a real read-only filesystem.
+os64fs_guide=os64fs guide: stage2 only preloads raw sectors. the block device layer turns that memory into sector reads, and the filesystem layer resolves paths like docs/guide.txt inside the 64-bit kernel.
+os64fs_big_markers=AHIJ
+file_open ok
+file_read_total=72
+file_eof_read=0
+file_stat_inode=5
+file_layer ok
+directory_open ok
+directory_root_entries=3
+directory_read_count=3
+directory_rewind_index=0
+directory_docs_first_inode=5
+directory_docs_second_inode=6
+directory_docs_third_inode=7
+directory_docs_fourth_inode=8
+directory_layer ok
+vfs_mount ok
+vfs_stat_inode=5
+vfs_file_read_total=72
+vfs_directory_entries=3
+vfs_directory_first_inode=2
+vfs_layer ok
+fd_table ok
+fd_open=0
+fd_read_total=72
+fd_eof_read=0
+fd_open_count=0
+fd_layer ok
+syscall_context ok
+sys_cwd=/
+sys_root_entries=3
+sys_cwd_after_cd=/docs
+sys_listdir_count=4
+sys_path_stat_inode=5
+sys_write_stdout_payload=hello sys_write
+sys_write_stderr_payload=error sys_write
+sys_open=3
+sys_stat_inode=5
+sys_write_stdout_bytes=16
+sys_write_stderr_bytes=16
+sys_write_file_status=-6
+sys_write_bad_fd=-4
+sys_read_total=193
+sys_eof_read=0
+sys_open_count=0
+syscall_layer ok
+int80_cwd=/
+int80_cwd_after_cd=/docs
+int80_listdir_count=4
+int80_path_stat_inode=5
+int80_write_stdout_payload=hello int80_write
+int80_write_stderr_payload=error int80_write
+int80_open=3
+int80_fd_stat_inode=5
+int80_write_stdout_bytes=18
+int80_write_stderr_bytes=18
+int80_write_file_status=-6
+int80_write_bad_fd=-4
+int80_read_total=193
+int80_eof_read=0
+int80_open_count=0
+int80_bad_result=0xFFFFFFFFFFFFFFFF
+int80_syscall ok
+user_mode_root=0x0000000000168000
+user_mode_code_phys=0x000000000016F000
+user_mode_stack_phys=0x0000000000181000
+user_mode_entry=0x0000000000400000
+user_mode_stack_top=0x0000000000800000
+user_mode_program_size=445
+user_mode_message=hello from ring3 via int80
+user_mode_cwd=/
+user_mode_readme_prefix=os64fs readme
+user_mode_return_cs=0x0000000000000043
+user_mode_return_cpl=3
+user_mode_return_flags=0x0000000000000003
+user mode ok
+user_file_program_path=/docs/hello.bin
+user_file_program_inode=6
+user_file_program_root=0x0000000000168000
+user_file_program_code_phys=0x000000000016F000
+user_file_program_stack_phys=0x0000000000181000
+user_file_program_entry=0x0000000000400000
+user_file_program_stack_top=0x0000000000800000
+user_file_program_size=87
+user_file_program=hello from fs
+user_file_program_return_cs=0x0000000000000043
+user_file_program_return_cpl=3
+user_file_program_return_flags=0x0000000000000020
+user_file_program ok
+user_elf_program_path=/docs/hello.elf
+user_elf_program_inode=7
+user_elf_program_root=0x0000000000168000
+user_elf_program_first_page_phys=0x000000000016F000
+user_elf_program_stack_phys=0x0000000000182000
+user_elf_program_entry=0x00000000004000B0
+user_elf_program_stack_top=0x0000000000800000
+user_elf_program_file_size=656
+user_elf_program_segment_count=2
+user_elf_program_segment_vaddr=0x0000000000400000
+user_elf_program_segment_offset=0x0000000000000000
+user_elf_program_segment_filesz=267
+user_elf_program_segment_memsz=267
+user_elf_program_segment_flags=0x0000000000000005
+user_elf_program_page_count=2
+user_elf_program=hello from elf
+user_elf_program_return_cs=0x0000000000000043
+user_elf_program_return_cpl=3
+user_elf_program_return_flags=0x0000000000000040
+user_elf_program ok
+filesystem ok
+pic ok
+pit ok
+pit_frequency_hz=100
+timer_tick=10
+timer_tick=20
+timer_wait_elapsed_ticks=3
+timer_sleep_ms=50
+timer_sleep_elapsed_ticks=5
+timer ok
+scheduler_elf_pid=1
+scheduler_elf_tid=1
+scheduler_elf_path=/docs/hello.elf
+scheduler_elf_inode=7
+scheduler_elf_root=0x0000000000169000
+scheduler_elf_first_page_phys=0x0000000000181000
+scheduler_elf_stack_phys=0x0000000000194000
+scheduler_elf_entry=0x00000000004000B0
+scheduler_elf_stack_top=0x0000000000800000
+scheduler_elf_file_size=656
+scheduler_elf_segment_count=2
+scheduler_elf_segment_vaddr=0x0000000000400000
+scheduler_elf_page_count=2
+user_elf_program=hello from elf
+scheduler_elf_return_cs=0x0000000000000043
+scheduler_elf_return_cpl=3
+scheduler_elf_return_flags=0x0000000000000040
+scheduler_elf_process_cwd=/
+scheduler_elf_open_count=0
+scheduler_elf_tss_rsp0=0x00000000010147D0
+scheduler_elf_process_state=exited
+scheduler_elf_thread_state=finished
+scheduler_elf_thread ok
+sched_priority_pid=1
+sched_priority_high_tid=1
+sched_priority_normal_a_tid=2
+sched_priority_normal_b_tid=3
+sched_priority_background_tid=4
+sched_sleep_pid=2
+sched_sleep_thread_a_tid=5
+sched_sleep_thread_b_tid=6
+sched_block_pid=3
+sched_block_waiter_tid=7
+sched_block_waker_tid=8
+sched_priority_trace=HABABC
+sched_sleep_trace=ABAB
+sched_block_trace=BWb
+sched_priority_process_state=exited
+sched_sleep_process_state=exited
+sched_block_process_state=exited
+sched_idle_priority=idle
+sched_idle_dispatches=2
+sched_total_ticks=8
+sched_total_switches=20
+sched_total_yields=5
+sched_preempt_requests=6
+sched_sleeping_after=0
+sched_blocked_after=0
+sched_ready_after=0
+sched_live_after=0
+scheduler ok
+scheduler ok
+keyboard init ok
+keyboard irq1 enabled
+keyboard_inject[0]=0x000000000000001E
+keyboard_inject[1]=0x000000000000009E
+keyboard_inject[2]=0x0000000000000030
+keyboard_inject[3]=0x0000000000000002
+keyboard_inject[4]=0x0000000000000039
+keyboard_inject[5]=0x000000000000001C
+keyboard_inject[6]=0x000000000000000E
+keyboard_irq_count=7
+keyboard_last_scancode=0x000000000000000E
+keyboard_char_count=6
+keyboard_char_0=0x0000000000000061
+keyboard_char_1=0x0000000000000062
+keyboard_char_2=0x0000000000000031
+keyboard_char_3=0x0000000000000020
+keyboard_char_4=0x000000000000000A
+keyboard_char_5=0x0000000000000008
+keyboard_buffer_remaining=0
+keyboard_dropped_chars=0
+stdin_block_pid=4
+stdin_block_reader_tid=9
+stdin_block_injector_tid=10
+stdin_block_read=1
+stdin_block_char=0x0000000000000061
+stdin_block_buffer_remaining=0
+stdin_inject[0]=0x00000000000000E0
+stdin_inject[1]=0x0000000000000048
+stdin_inject[2]=0x0000000000000018
+stdin_inject[3]=0x0000000000000025
+stdin_inject[4]=0x000000000000001C
+stdin_sys_read=3
+stdin_sys_empty=0
+stdin_int80_inject[0]=0x00000000000000E0
+stdin_int80_inject[1]=0x000000000000004B
+stdin_int80_inject[2]=0x0000000000000017
+stdin_int80_inject[3]=0x0000000000000013
+stdin_int80_inject[4]=0x000000000000001C
+stdin_int80_read=3
+stdin_int80_empty=0
+stdin_buffer_remaining=0
+stdin_dropped_chars=0
+stdin_syscall ok
+keyboard ok
+console_inject[0]=0x0000000000000018
+console_inject[1]=0x000000000000001F
+console_inject[2]=0x0000000000000039
+console_inject[3]=0x0000000000000007
+console_inject[4]=0x0000000000000006
+console_inject[5]=0x000000000000000E
+console_inject[6]=0x0000000000000005
+console_inject[7]=0x000000000000001C
+console_line_length=5
+console_line=os 64
+console_buffer_remaining=0
+console input ok
+shell_inject[0]=0x0000000000000023
+shell_inject[1]=0x0000000000000012
+shell_inject[2]=0x0000000000000026
+shell_inject[3]=0x0000000000000019
+shell_inject[4]=0x000000000000001C
+os64 % commands:
+help  - list commands
+mem   - show free physical pages
+ticks - show timer tick count
+heap  - show kernel heap stats
+disk  - show raw boot block device info
+pwd   - show current directory
+cd    - change current directory
+ls    - list directory entries
+cat   - print file contents
+stat  - show inode metadata
+touch - create an empty file
+mkdir - create a directory
+write - replace a file with text
+append - append text to a file
+rm    - remove a file or empty dir
+sync  - flush filesystem metadata
+run <path> [args] - run a user ELF and wait for exit
+ps    - show processes and threads
+reboot / shutdown - sync disk and restart / stop
+irq   - show timer/keyboard irq stats
+bootinfo - show boot handoff info
+e820  - show boot memory map
+smp   - show online CPUs and per-CPU user work
+cpu   - show cpuid summary
+uptime - show tick-based uptime
+echo  - print text back
+history - show recent commands
+clear - clear console area
+commands: /bin PATH lookup; quotes; | < > >> 2> ; && || &
+jobs / wait - list / join background pipelines
+dmesg / logsave PATH - inspect / save the bounded kernel log
+perf - CPU, memory and scheduler counters
+net / ping IPv4 - network counters / ICMP echo
+shell_line=help
+shell_line_length=4
+shell_result=executed
+shell_inject[0]=0x0000000000000032
+shell_inject[1]=0x0000000000000012
+shell_inject[2]=0x0000000000000032
+shell_inject[3]=0x000000000000001C
+os64 % mem_free_pages=31335
+mem_free_bytes=128348160
+shell_line=mem
+shell_line_length=3
+shell_result=executed
+shell_inject[0]=0x0000000000000014
+shell_inject[1]=0x0000000000000017
+shell_inject[2]=0x000000000000002E
+shell_inject[3]=0x0000000000000025
+shell_inject[4]=0x000000000000001F
+shell_inject[5]=0x000000000000001C
+os64 % ticks_current=41
+shell_line=ticks
+shell_line_length=5
+shell_result=executed
+shell_inject[0]=0x0000000000000023
+shell_inject[1]=0x0000000000000012
+shell_inject[2]=0x000000000000001E
+shell_inject[3]=0x0000000000000019
+shell_inject[4]=0x000000000000001C
+os64 % heap_used_bytes=160160
+heap_mapped_bytes=4194304
+heap_free_bytes=4033600
+heap_active_allocations=17
+heap_total_allocations=36
+heap_failed_allocations=0
+shell_line=heap
+shell_line_length=4
+shell_result=executed
+shell_inject[0]=0x0000000000000020
+shell_inject[1]=0x0000000000000017
+shell_inject[2]=0x000000000000001F
+shell_inject[3]=0x0000000000000025
+shell_inject[4]=0x000000000000001C
+os64 % disk_start_lba=568
+disk_sector_count=128
+disk_sector_size=512
+disk_total_bytes=65536
+disk_fs_version=3
+disk_inode_bitmap_sectors=1
+disk_data_bitmap_sectors=1
+disk_inode_total=31
+disk_inode_used=8
+disk_inode_free=23
+disk_data_blocks=121
+disk_data_used=19
+disk_data_free=102
+shell_line=disk
+shell_line_length=4
+shell_result=executed
+shell_inject[0]=0x0000000000000026
+shell_inject[1]=0x000000000000001F
+shell_inject[2]=0x000000000000001C
+os64 % ls_path=/
+ls_resolved_path=/
+ls_entry_count=3
+ls[0]=file readme.txt size=72
+ls[1]=file notes.txt size=73
+ls[2]=dir docs size=256
+shell_line=ls
+shell_line_length=2
+shell_result=executed
+shell_inject[0]=0x0000000000000026
+shell_inject[1]=0x000000000000001F
+shell_inject[2]=0x0000000000000039
+shell_inject[3]=0x0000000000000020
+shell_inject[4]=0x0000000000000018
+shell_inject[5]=0x000000000000002E
+shell_inject[6]=0x000000000000001F
+shell_inject[7]=0x000000000000001C
+os64 % ls_path=docs
+ls_resolved_path=/docs
+ls_entry_count=4
+ls[0]=file guide.txt size=193
+ls[1]=file hello.bin size=87
+ls[2]=file hello.elf size=656
+ls[3]=file big.txt size=5120
+shell_line=ls docs
+shell_line_length=7
+shell_result=executed
+shell_inject[0]=0x000000000000002E
+shell_inject[1]=0x000000000000001E
+shell_inject[2]=0x0000000000000014
+shell_inject[3]=0x0000000000000039
+shell_inject[4]=0x0000000000000013
+shell_inject[5]=0x0000000000000012
+shell_inject[6]=0x000000000000001E
+shell_inject[7]=0x0000000000000020
+shell_inject[8]=0x0000000000000032
+shell_inject[9]=0x0000000000000012
+shell_inject[10]=0x0000000000000034
+shell_inject[11]=0x0000000000000014
+shell_inject[12]=0x000000000000002D
+shell_inject[13]=0x0000000000000014
+shell_inject[14]=0x000000000000001C
+os64 % cat_path=readme.txt
+cat_resolved_path=/readme.txt
+cat_size=72
+os64fs readme: the 64-bit kernel now mounts a real read-only filesystem.
+shell_line=cat readme.txt
+shell_line_length=14
+shell_result=executed
+shell_inject[0]=0x000000000000002E
+shell_inject[1]=0x000000000000001E
+shell_inject[2]=0x0000000000000014
+shell_inject[3]=0x0000000000000039
+shell_inject[4]=0x0000000000000035
+shell_inject[5]=0x0000000000000020
+shell_inject[6]=0x0000000000000018
+shell_inject[7]=0x000000000000002E
+shell_inject[8]=0x000000000000001F
+shell_inject[9]=0x0000000000000035
+shell_inject[10]=0x0000000000000022
+shell_inject[11]=0x0000000000000016
+shell_inject[12]=0x0000000000000017
+shell_inject[13]=0x0000000000000020
+shell_inject[14]=0x0000000000000012
+shell_inject[15]=0x0000000000000034
+shell_inject[16]=0x0000000000000014
+shell_inject[17]=0x000000000000002D
+shell_inject[18]=0x0000000000000014
+shell_inject[19]=0x000000000000001C
+os64 % cat_path=/docs/guide.txt
+cat_resolved_path=/docs/guide.txt
+cat_size=193
+os64fs guide: stage2 only preloads raw sectors. the block device layer turns that memory into sector reads, and the filesystem layer resolves paths like docs/guide.txt inside the 64-bit kernel.
+shell_line=cat /docs/guide.txt
+shell_line_length=19
+shell_result=executed
+shell_inject[0]=0x000000000000001F
+shell_inject[1]=0x0000000000000014
+shell_inject[2]=0x000000000000001E
+shell_inject[3]=0x0000000000000014
+shell_inject[4]=0x0000000000000039
+shell_inject[5]=0x0000000000000020
+shell_inject[6]=0x0000000000000018
+shell_inject[7]=0x000000000000002E
+shell_inject[8]=0x000000000000001F
+shell_inject[9]=0x0000000000000035
+shell_inject[10]=0x0000000000000022
+shell_inject[11]=0x0000000000000016
+shell_inject[12]=0x0000000000000017
+shell_inject[13]=0x0000000000000020
+shell_inject[14]=0x0000000000000012
+shell_inject[15]=0x0000000000000034
+shell_inject[16]=0x0000000000000014
+shell_inject[17]=0x000000000000002D
+shell_inject[18]=0x0000000000000014
+shell_inject[19]=0x000000000000001C
+os64 % stat_path=docs/guide.txt
+stat_resolved_path=/docs/guide.txt
+stat_inode=5
+stat_type=file
+stat_size=193
+stat_links=1
+stat_blocks=1
+stat_mode=420
+stat_block_0=4
+shell_line=stat docs/guide.txt
+shell_line_length=19
+shell_result=executed
+shell_inject[0]=0x000000000000001F
+shell_inject[1]=0x0000000000000014
+shell_inject[2]=0x000000000000001E
+shell_inject[3]=0x0000000000000014
+shell_inject[4]=0x0000000000000039
+shell_inject[5]=0x0000000000000020
+shell_inject[6]=0x0000000000000018
+shell_inject[7]=0x000000000000002E
+shell_inject[8]=0x000000000000001F
+shell_inject[9]=0x0000000000000035
+shell_inject[10]=0x0000000000000034
+shell_inject[11]=0x0000000000000034
+shell_inject[12]=0x0000000000000035
+shell_inject[13]=0x0000000000000031
+shell_inject[14]=0x0000000000000018
+shell_inject[15]=0x0000000000000014
+shell_inject[16]=0x0000000000000012
+shell_inject[17]=0x000000000000001F
+shell_inject[18]=0x0000000000000034
+shell_inject[19]=0x0000000000000014
+shell_inject[20]=0x000000000000002D
+shell_inject[21]=0x0000000000000014
+shell_inject[22]=0x000000000000001C
+os64 % stat_path=docs/../notes.txt
+stat_resolved_path=/notes.txt
+stat_inode=3
+stat_type=file
+stat_size=73
+stat_links=1
+stat_blocks=1
+stat_mode=420
+stat_block_0=2
+shell_line=stat docs/../notes.txt
+shell_line_length=22
+shell_result=executed
+shell_inject[0]=0x0000000000000019
+shell_inject[1]=0x0000000000000011
+shell_inject[2]=0x0000000000000020
+shell_inject[3]=0x000000000000001C
+os64 % pwd_path=/
+shell_line=pwd
+shell_line_length=3
+shell_result=executed
+shell_inject[0]=0x000000000000002E
+shell_inject[1]=0x0000000000000020
+shell_inject[2]=0x0000000000000039
+shell_inject[3]=0x0000000000000020
+shell_inject[4]=0x0000000000000018
+shell_inject[5]=0x000000000000002E
+shell_inject[6]=0x000000000000001F
+shell_inject[7]=0x000000000000001C
+os64 % cwd_path=/docs
+shell_line=cd docs
+shell_line_length=7
+shell_result=executed
+shell_inject[0]=0x0000000000000019
+shell_inject[1]=0x0000000000000011
+shell_inject[2]=0x0000000000000020
+shell_inject[3]=0x000000000000001C
+os64 % pwd_path=/docs
+shell_line=pwd
+shell_line_length=3
+shell_result=executed
+shell_inject[0]=0x0000000000000026
+shell_inject[1]=0x000000000000001F
+shell_inject[2]=0x000000000000001C
+os64 % ls_path=/docs
+ls_resolved_path=/docs
+ls_entry_count=4
+ls[0]=file guide.txt size=193
+ls[1]=file hello.bin size=87
+ls[2]=file hello.elf size=656
+ls[3]=file big.txt size=5120
+shell_line=ls
+shell_line_length=2
+shell_result=executed
+shell_inject[0]=0x000000000000002E
+shell_inject[1]=0x000000000000001E
+shell_inject[2]=0x0000000000000014
+shell_inject[3]=0x0000000000000039
+shell_inject[4]=0x0000000000000022
+shell_inject[5]=0x0000000000000016
+shell_inject[6]=0x0000000000000017
+shell_inject[7]=0x0000000000000020
+shell_inject[8]=0x0000000000000012
+shell_inject[9]=0x0000000000000034
+shell_inject[10]=0x0000000000000014
+shell_inject[11]=0x000000000000002D
+shell_inject[12]=0x0000000000000014
+shell_inject[13]=0x000000000000001C
+os64 % cat_path=guide.txt
+cat_resolved_path=/docs/guide.txt
+cat_size=193
+os64fs guide: stage2 only preloads raw sectors. the block device layer turns that memory into sector reads, and the filesystem layer resolves paths like docs/guide.txt inside the 64-bit kernel.
+shell_line=cat guide.txt
+shell_line_length=13
+shell_result=executed
+shell_inject[0]=0x0000000000000013
+shell_inject[1]=0x0000000000000016
+shell_inject[2]=0x0000000000000031
+shell_inject[3]=0x0000000000000039
+shell_inject[4]=0x0000000000000023
+shell_inject[5]=0x0000000000000012
+shell_inject[6]=0x0000000000000026
+shell_inject[7]=0x0000000000000026
+shell_inject[8]=0x0000000000000018
+shell_inject[9]=0x0000000000000034
+shell_inject[10]=0x0000000000000012
+shell_inject[11]=0x0000000000000026
+shell_inject[12]=0x0000000000000021
+shell_inject[13]=0x000000000000001C
+os64 % run_path=hello.elf
+run_resolved_path=/docs/hello.elf
+run_inode=7
+run_pid=1
+run_tid=1
+run_entry=0x00000000004000B0
+run_stack_top=0x0000000000800000
+run_segment_count=2
+run_page_count=2
+run_return_flags=0x0000000000000040
+run_process_state=exited
+run_thread_state=finished
+run_exit_code=4194371
+shell_line=run hello.elf
+shell_line_length=13
+shell_result=executed
+shell_inject[0]=0x0000000000000017
+shell_inject[1]=0x0000000000000013
+shell_inject[2]=0x0000000000000010
+shell_inject[3]=0x000000000000001C
+os64 % irq_timer_ticks=52
+irq_timer_frequency_hz=100
+irq_keyboard_count=191
+irq_keyboard_buffered_chars=0
+irq_keyboard_dropped_chars=0
+shell_line=irq
+shell_line_length=3
+shell_result=executed
+shell_inject[0]=0x0000000000000030
+shell_inject[1]=0x0000000000000018
+shell_inject[2]=0x0000000000000018
+shell_inject[3]=0x0000000000000014
+shell_inject[4]=0x0000000000000017
+shell_inject[5]=0x0000000000000031
+shell_inject[6]=0x0000000000000021
+shell_inject[7]=0x0000000000000018
+shell_inject[8]=0x000000000000001C
+os64 % bootinfo_magic=0x000000003436534F
+bootinfo_memory_map_count=7
+bootinfo_memory_map_entry_size=24
+bootinfo_memory_map_ptr=0x00000000000080BA
+bootinfo_boot_volume_ptr=0x0000000000080000
+bootinfo_boot_volume_start_lba=568
+bootinfo_boot_volume_sector_count=128
+bootinfo_boot_volume_sector_size=512
+shell_line=bootinfo
+shell_line_length=8
+shell_result=executed
+shell_inject[0]=0x0000000000000012
+shell_inject[1]=0x0000000000000009
+shell_inject[2]=0x0000000000000003
+shell_inject[3]=0x000000000000000B
+shell_inject[4]=0x000000000000001C
+os64 % e820_count=7
+e820_shell[0] base=0x0000000000000000 length=0x000000000009FC00 raw_type=0x0000000000000001 kind=usable
+e820_shell[1] base=0x000000000009FC00 length=0x0000000000000400 raw_type=0x0000000000000002 kind=reserved
+e820_shell[2] base=0x00000000000F0000 length=0x0000000000010000 raw_type=0x0000000000000002 kind=reserved
+e820_shell[3] base=0x0000000000100000 length=0x0000000007EE0000 raw_type=0x0000000000000001 kind=usable
+e820_shell[4] base=0x0000000007FE0000 length=0x0000000000020000 raw_type=0x0000000000000002 kind=reserved
+e820_shell[5] base=0x00000000FFFC0000 length=0x0000000000040000 raw_type=0x0000000000000002 kind=reserved
+e820_shell[6] base=0x000000FD00000000 length=0x0000000300000000 raw_type=0x0000000000000002 kind=reserved
+shell_line=e820
+shell_line_length=4
+shell_result=executed
+shell_inject[0]=0x000000000000002E
+shell_inject[1]=0x0000000000000019
+shell_inject[2]=0x0000000000000016
+shell_inject[3]=0x000000000000001C
+os64 % cpu_vendor=AuthenticAMD
+cpu_max_basic_leaf=0x000000000000000D
+cpu_max_extended_leaf=0x000000008000000A
+cpu_long_mode=1
+shell_line=cpu
+shell_line_length=3
+shell_result=executed
+shell_inject[0]=0x000000000000002D
+shell_inject[1]=0x0000000000000012
+shell_inject[2]=0x000000000000002E
+shell_inject[3]=0x0000000000000023
+shell_inject[4]=0x0000000000000018
+shell_inject[5]=0x0000000000000039
+shell_inject[6]=0x0000000000000023
+shell_inject[7]=0x0000000000000017
+shell_inject[8]=0x0000000000000005
+shell_inject[9]=0x0000000000000003
+shell_inject[10]=0x000000000000002C
+shell_inject[11]=0x00000000000000E0
+shell_inject[12]=0x0000000000000047
+shell_inject[13]=0x00000000000000E0
+shell_inject[14]=0x000000000000004D
+shell_inject[15]=0x00000000000000E0
+shell_inject[16]=0x000000000000004B
+shell_inject[17]=0x00000000000000E0
+shell_inject[18]=0x0000000000000053
+shell_inject[19]=0x00000000000000E0
+shell_inject[20]=0x000000000000004F
+shell_inject[21]=0x00000000000000E0
+shell_inject[22]=0x000000000000004B
+shell_inject[23]=0x00000000000000E0
+shell_inject[24]=0x000000000000004D
+shell_inject[25]=0x000000000000000E
+shell_inject[26]=0x000000000000001C
+os64 % hi42
+shell_line=echo hi42
+shell_line_length=9
+shell_result=executed
+shell_inject[0]=0x0000000000000016
+shell_inject[1]=0x0000000000000019
+shell_inject[2]=0x0000000000000014
+shell_inject[3]=0x0000000000000017
+shell_inject[4]=0x0000000000000032
+shell_inject[5]=0x0000000000000012
+shell_inject[6]=0x000000000000001C
+os64 % uptime_ticks=57
+uptime_frequency_hz=100
+uptime_ms=570
+shell_line=uptime
+shell_line_length=6
+shell_result=executed
+shell_inject[0]=0x0000000000000023
+shell_inject[1]=0x0000000000000017
+shell_inject[2]=0x000000000000001F
+shell_inject[3]=0x0000000000000014
+shell_inject[4]=0x0000000000000018
+shell_inject[5]=0x0000000000000013
+shell_inject[6]=0x0000000000000015
+shell_inject[7]=0x000000000000001C
+os64 % history_buffered=24
+history_total=24
+history[1]=help
+history[2]=mem
+history[3]=ticks
+history[4]=heap
+history[5]=disk
+history[6]=ls
+history[7]=ls docs
+history[8]=cat readme.txt
+history[9]=cat /docs/guide.txt
+history[10]=stat docs/guide.txt
+history[11]=stat docs/../notes.txt
+history[12]=pwd
+history[13]=cd docs
+history[14]=pwd
+history[15]=ls
+history[16]=cat guide.txt
+history[17]=run hello.elf
+history[18]=irq
+history[19]=bootinfo
+history[20]=e820
+history[21]=cpu
+history[22]=echo hi42
+history[23]=uptime
+history[24]=history
+shell_line=history
+shell_line_length=7
+shell_result=executed
+shell_inject[0]=0x00000000000000E0
+shell_inject[1]=0x0000000000000048
+shell_inject[2]=0x00000000000000E0
+shell_inject[3]=0x0000000000000048
+shell_inject[4]=0x00000000000000E0
+shell_inject[5]=0x0000000000000050
+shell_inject[6]=0x000000000000001C
+os64 % history_buffered=24
+history_total=25
+history[2]=mem
+history[3]=ticks
+history[4]=heap
+history[5]=disk
+history[6]=ls
+history[7]=ls docs
+history[8]=cat readme.txt
+history[9]=cat /docs/guide.txt
+history[10]=stat docs/guide.txt
+history[11]=stat docs/../notes.txt
+history[12]=pwd
+history[13]=cd docs
+history[14]=pwd
+history[15]=ls
+history[16]=cat guide.txt
+history[17]=run hello.elf
+history[18]=irq
+history[19]=bootinfo
+history[20]=e820
+history[21]=cpu
+history[22]=echo hi42
+history[23]=uptime
+history[24]=history
+history[25]=history
+shell_line=history
+shell_line_length=7
+shell_result=executed
+shell_inject[0]=0x000000000000002E
+shell_inject[1]=0x0000000000000026
+shell_inject[2]=0x0000000000000012
+shell_inject[3]=0x000000000000001E
+shell_inject[4]=0x0000000000000013
+shell_inject[5]=0x000000000000001C
+os64 % shell_line=clear
+shell_line_length=5
+shell_result=executed
+shell_inject[0]=0x0000000000000030
+shell_inject[1]=0x000000000000001E
+shell_inject[2]=0x0000000000000020
+shell_inject[3]=0x000000000000001C
+os64 % unknown command: bad
+shell_line=bad
+shell_line_length=3
+shell_result=unknown
+user_thread_pid=5
+user_thread_tid=11
+user_thread_helper_tid=12
+user_thread_kernel_cwd_before=/docs
+user_thread_process_cwd_before=/
+user_thread_root=0x0000000000169000
+user_thread_code_phys=0x0000000000181000
+user_thread_stack_phys=0x0000000000183000
+user_thread_preempt_shared_phys=0x0000000000182000
+user_thread_entry=0x0000000000400000
+user_thread_preempt_shared_virt=0x0000000000401000
+user_thread_stack_top=0x0000000000800000
+user_thread_kernel_entry_stack_top=0x0000000001028910
+user_thread_program_size=920
+user_mode_message=hello from ring3 via int80
+user_mode_cwd=/
+user_mode_readme_prefix=os64fs readme
+user_mode_yield_before=1
+user_mode_yield_after=1
+user_mode_preempt_before=1
+user_mode_preempt_after=1
+user_mode_stdin_before=1
+user_mode_stdin_after=1
+user_thread_return_cs=0x0000000000000043
+user_thread_return_cpl=3
+user_thread_return_flags=0x000000000000001F
+user_thread_kernel_cwd_after=/docs
+user_thread_process_cwd_after=/
+user_thread_open_count=0
+user_thread_tss_rsp0=0x0000000001028910
+user_thread_kernel_root=0x0000000000001000
+user_thread_helper_runs=3
+user_thread_helper_stack_base=0x0000000001028930
+user_thread_helper_resume_root=0x0000000000001000
+user_thread_helper_preempt_signals=1
+user_thread_yield_count=1
+user_thread_total_yield_count=2
+user_thread_preempt_count=1
+user_thread_preempt_arm_flag=1
+user_thread_preempt_done_flag=1
+user_thread_stdin_arm_flag=1
+user_thread_stdin_done_flag=1
+user_thread_helper_stdin_signals=1
+user_thread_helper_block_observed=1
+user_thread_trap_cs=0x0000000000000043
+user_thread_trap_ss=0x000000000000003B
+user_thread_trap_rip=0x0000000000400293
+user_thread_trap_rsp=0x0000000000800000
+user_thread_preempt_trap_vector=0x0000000000000020
+user_thread_preempt_trap_cs=0x0000000000000043
+user_thread_preempt_trap_ss=0x000000000000003B
+user_thread_preempt_trap_rip=0x00000000004001DB
+user_thread_preempt_trap_rsp=0x00000000007FFFC0
+user_thread_process_state=exited
+user_thread_state=finished
+user thread ok
+os64fs_write_enter=1
+os64fs_write_mount_ok=1
+os64fs_write_create_dir=1
+os64fs_write_create_file=1
+os64fs_write_write=1
+os64fs_write_append=1
+os64fs_write_create_subdir=1
+os64fs_write_unlink_subdir=1
+os64fs_write_unlink_file=1
+os64fs_write_stat_ok=1
+os64fs_write_remount=1
+os64fs_write_file_open=1
+os64fs_write_dir_open=1
+os64fs_write_sync=1
+os64fs_write_lab_entries=1
+os64fs_write_note_size=10
+os64fs_write_note_text=alpha+beta
+os64fs_write_inode_used=10
+os64fs_write_inode_free=21
+os64fs_write_data_used=21
+os64fs_write_data_free=100
+os64fs_write ok
+fs write ok
+shell ok
+storage_backend=ata-pio
+network_ready=0
+shell_process_pid=1
+shell_thread_tid=1
+smp_online_cpus=2
+shell thread ok
+shell_thread_started_pid=1
+shell_thread_started_tid=1
+os64 % e[K[1Dec[K[2Dech[K[3Decho[K[4Decho [K[5Decho c[K[6Decho co[K[7Decho coo[K[8Decho coop[K[9Decho coope[K[10Decho cooper[K[11Decho coopera[K[12Decho cooperat[K[13Decho cooperati[K[14Decho cooperatio[K[15Decho cooperation[K[16Decho cooperation_[K[17Decho cooperation_w[K[18Decho cooperation_wa[K[19Decho cooperation_war[K[20Decho cooperation_warm[K[21Decho cooperation_warmu[K[22Decho cooperation_warmup[K
+cooperation_warmup
+os64 % m[K[1Dme[K[2Dmem[K
+mem_free_pages=31332
+mem_free_bytes=128335872
+os64 % h[K[1Dhe[K[2Dhea[K[3Dheap[K
+heap_used_bytes=95472
+heap_mapped_bytes=4194304
+heap_free_bytes=4098480
+heap_active_allocations=11
+heap_total_allocations=92
+heap_failed_allocations=0
+os64 % r[K[1Dru[K[2Drun[K[3Drun [K[4Drun /[K[5Drun /b[K[6Drun /bi[K[7Drun /bin[K[8Drun /bin/[K[9Drun /bin/c[K[10Drun /bin/co[K[11Drun /bin/coo[K[12Drun /bin/coop[K[13Drun /bin/coop_[K[14Drun /bin/coop_t[K[15Drun /bin/coop_te[K[16Drun /bin/coop_tes[K[17Drun /bin/coop_test[K[18Drun /bin/coop_test [K[19Drun /bin/coop_test 4[K[20Drun /bin/coop_test 4 [K[21Drun /bin/coop_test 4 2[K[22Drun /bin/coop_test 4 20[K[23Drun /bin/coop_test 4 204[K[24Drun /bin/coop_test 4 2048[K
+run_path=/bin/coop_test
+run_resolved_path=/bin/coop_test
+run_inode=14
+run_pid=3
+run_tid=4
+run_entry=0x00000000004000B0
+run_stack_top=0x0000000000800000
+run_segment_count=2
+run_page_count=3
+coop_test blocked_writer_close_epipe_ok
+coop_test online_cpus=2
+coop_test online_mask=3
+coop_test cpu_mask=3
+coop_test dispatch_cpu_mask=3
+coop_test bytes=17829888
+coop_test records=8192
+coop_test elapsed_ticks=73
+coop_test records_atomic_compute_ok
+run_return_flags=0x0000000000000000
+run_process_state=exited
+run_thread_state=finished
+run_exit_code=0
+os64 % m[K[1Dme[K[2Dmem[K
+mem_free_pages=31332
+mem_free_bytes=128335872
+os64 % h[K[1Dhe[K[2Dhea[K[3Dheap[K
+heap_used_bytes=95472
+heap_mapped_bytes=4194304
+heap_free_bytes=4098480
+heap_active_allocations=11
+heap_total_allocations=125
+heap_failed_allocations=0
+os64 % r[K[1Dru[K[2Drun[K[3Drun [K[4Drun /[K[5Drun /b[K[6Drun /bi[K[7Drun /bin[K[8Drun /bin/[K[9Drun /bin/c[K[10Drun /bin/co[K[11Drun /bin/coo[K[12Drun /bin/coop[K[13Drun /bin/coop_[K[14Drun /bin/coop_t[K[15Drun /bin/coop_te[K[16Drun /bin/coop_tes[K[17Drun /bin/coop_test[K[18Drun /bin/coop_test [K[19Drun /bin/coop_test 8[K[20Drun /bin/coop_test 8 [K[21Drun /bin/coop_test 8 1[K[22Drun /bin/coop_test 8 12[K[23Drun /bin/coop_test 8 128[K
+run_path=/bin/coop_test
+run_resolved_path=/bin/coop_test
+run_inode=14
+run_pid=9
+run_tid=10
+run_entry=0x00000000004000B0
+run_stack_top=0x0000000000800000
+run_segment_count=2
+run_page_count=3
+coop_test blocked_writer_close_epipe_ok
+coop_test online_cpus=2
+coop_test online_mask=3
+coop_test cpu_mask=3
+coop_test dispatch_cpu_mask=3
+coop_test bytes=2228736
+coop_test records=1024
+coop_test elapsed_ticks=15
+coop_test records_atomic_compute_ok
+run_return_flags=0x0000000000000000
+run_process_state=exited
+run_thread_state=finished
+run_exit_code=0
+os64 % m[K[1Dme[K[2Dmem[K
+mem_free_pages=31332
+mem_free_bytes=128335872
+os64 % h[K[1Dhe[K[2Dhea[K[3Dheap[K
+heap_used_bytes=95472
+heap_mapped_bytes=4194304
+heap_free_bytes=4098480
+heap_active_allocations=11
+heap_total_allocations=170
+heap_failed_allocations=0
+os64 % r[K[1Dru[K[2Drun[K[3Drun [K[4Drun /[K[5Drun /b[K[6Drun /bi[K[7Drun /bin[K[8Drun /bin/[K[9Drun /bin/c[K[10Drun /bin/co[K[11Drun /bin/coo[K[12Drun /bin/coop[K[13Drun /bin/coop_[K[14Drun /bin/coop_t[K[15Drun /bin/coop_te[K[16Drun /bin/coop_tes[K[17Drun /bin/coop_test[K[18Drun /bin/coop_test [K[19Drun /bin/coop_test 8[K[20Drun /bin/coop_test 8 [K[21Drun /bin/coop_test 8 1[K[22Drun /bin/coop_test 8 12[K[23Drun /bin/coop_test 8 128[K
+run_path=/bin/coop_test
+run_resolved_path=/bin/coop_test
+run_inode=14
+run_pid=19
+run_tid=20
+run_entry=0x00000000004000B0
+run_stack_top=0x0000000000800000
+run_segment_count=2
+run_page_count=3
+coop_test blocked_writer_close_epipe_ok
+coop_test online_cpus=2
+coop_test online_mask=3
+coop_test cpu_mask=3
+coop_test dispatch_cpu_mask=3
+coop_test bytes=2228736
+coop_test records=1024
+coop_test elapsed_ticks=15
+coop_test records_atomic_compute_ok
+run_return_flags=0x0000000000000000
+run_process_state=exited
+run_thread_state=finished
+run_exit_code=0
+os64 % m[K[1Dme[K[2Dmem[K
+mem_free_pages=31332
+mem_free_bytes=128335872
+os64 % h[K[1Dhe[K[2Dhea[K[3Dheap[K
+heap_used_bytes=95472
+heap_mapped_bytes=4194304
+heap_free_bytes=4098480
+heap_active_allocations=11
+heap_total_allocations=215
+heap_failed_allocations=0
+os64 % r[K[1Dru[K[2Drun[K[3Drun [K[4Drun /[K[5Drun /b[K[6Drun /bi[K[7Drun /bin[K[8Drun /bin/[K[9Drun /bin/c[K[10Drun /bin/co[K[11Drun /bin/coo[K[12Drun /bin/coop[K[13Drun /bin/coop_[K[14Drun /bin/coop_t[K[15Drun /bin/coop_te[K[16Drun /bin/coop_tes[K[17Drun /bin/coop_test[K[18Drun /bin/coop_test [K[19Drun /bin/coop_test 8[K[20Drun /bin/coop_test 8 [K[21Drun /bin/coop_test 8 1[K[22Drun /bin/coop_test 8 12[K[23Drun /bin/coop_test 8 128[K
+run_path=/bin/coop_test
+run_resolved_path=/bin/coop_test
+run_inode=14
+run_pid=29
+run_tid=30
+run_entry=0x00000000004000B0
+run_stack_top=0x0000000000800000
+run_segment_count=2
+run_page_count=3
+coop_test blocked_writer_close_epipe_ok
+coop_test online_cpus=2
+coop_test online_mask=3
+coop_test cpu_mask=3
+coop_test dispatch_cpu_mask=3
+coop_test bytes=2228736
+coop_test records=1024
+coop_test elapsed_ticks=13
+coop_test records_atomic_compute_ok
+run_return_flags=0x0000000000000000
+run_process_state=exited
+run_thread_state=finished
+run_exit_code=0
+os64 % m[K[1Dme[K[2Dmem[K
+mem_free_pages=31332
+mem_free_bytes=128335872
+os64 % h[K[1Dhe[K[2Dhea[K[3Dheap[K
+heap_used_bytes=95472
+heap_mapped_bytes=4194304
+heap_free_bytes=4098480
+heap_active_allocations=11
+heap_total_allocations=260
+heap_failed_allocations=0
+os64 % r[K[1Dru[K[2Drun[K[3Drun [K[4Drun /[K[5Drun /b[K[6Drun /bi[K[7Drun /bin[K[8Drun /bin/[K[9Drun /bin/c[K[10Drun /bin/co[K[11Drun /bin/coo[K[12Drun /bin/coop[K[13Drun /bin/coop_[K[14Drun /bin/coop_t[K[15Drun /bin/coop_te[K[16Drun /bin/coop_tes[K[17Drun /bin/coop_test[K[18Drun /bin/coop_test [K[19Drun /bin/coop_test 8[K[20Drun /bin/coop_test 8 [K[21Drun /bin/coop_test 8 1[K[22Drun /bin/coop_test 8 12[K[23Drun /bin/coop_test 8 128[K
+run_path=/bin/coop_test
+run_resolved_path=/bin/coop_test
+run_inode=14
+run_pid=39
+run_tid=40
+run_entry=0x00000000004000B0
+run_stack_top=0x0000000000800000
+run_segment_count=2
+run_page_count=3
+coop_test blocked_writer_close_epipe_ok
+coop_test online_cpus=2
+coop_test online_mask=3
+coop_test cpu_mask=3
+coop_test dispatch_cpu_mask=3
+coop_test bytes=2228736
+coop_test records=1024
+coop_test elapsed_ticks=15
+coop_test records_atomic_compute_ok
+run_return_flags=0x0000000000000000
+run_process_state=exited
+run_thread_state=finished
+run_exit_code=0
+os64 % m[K[1Dme[K[2Dmem[K
+mem_free_pages=31332
+mem_free_bytes=128335872
+os64 % h[K[1Dhe[K[2Dhea[K[3Dheap[K
+heap_used_bytes=95472
+heap_mapped_bytes=4194304
+heap_free_bytes=4098480
+heap_active_allocations=11
+heap_total_allocations=305
+heap_failed_allocations=0
+os64 % r[K[1Dru[K[2Drun[K[3Drun [K[4Drun /[K[5Drun /b[K[6Drun /bi[K[7Drun /bin[K[8Drun /bin/[K[9Drun /bin/p[K[10Drun /bin/pi[K[11Drun /bin/pip[K[12Drun /bin/pipe[K[13Drun /bin/pipe_[K[14Drun /bin/pipe_t[K[15Drun /bin/pipe_te[K[16Drun /bin/pipe_tes[K[17Drun /bin/pipe_test[K
+run_path=/bin/pipe_test
+run_resolved_path=/bin/pipe_test
+run_inode=27
+run_pid=49
+run_tid=50
+run_entry=0x00000000004000B0
+run_stack_top=0x0000000000800000
+run_segment_count=2
+run_page_count=3
+pipe_test eof_epipe_ok
+pipe_test blocking_32k_ok
+pipe_test exit_wakes_eof_ok
+pipe_test inherited_offset_ok
+pipe_test multiwriter_atomic_ok
+pipe_test dup_validation_ok
+run_return_flags=0x0000000000000000
+run_process_state=exited
+run_thread_state=finished
+run_exit_code=0
+os64 % r[K[1Dru[K[2Drun[K[3Drun [K[4Drun /[K[5Drun /b[K[6Drun /bi[K[7Drun /bin[K[8Drun /bin/[K[9Drun /bin/b[K[10Drun /bin/ba[K[11Drun /bin/bad[K[12Drun /bin/badp[K[13Drun /bin/badpt[K[14Drun /bin/badptr[K
+run_path=/bin/badptr
+run_resolved_path=/bin/badptr
+run_inode=10
+run_pid=55
+run_tid=56
+run_entry=0x00000000004000B0
+run_stack_top=0x0000000000800000
+run_segment_count=2
+run_page_count=3
+badptr rejected
+badptr path rejected
+badptr flags rejected
+badptr replace path rejected
+badptr replace buffer rejected
+badptr replace size rejected
+badptr IPC boundaries rejected
+badptr performance boundaries rejected
+badptr UDP boundaries rejected
+badptr SMP boundaries rejected
+badptr sleep boundaries rejected
+run_return_flags=0x0000000000000000
+run_process_state=exited
+run_thread_state=finished
+run_exit_code=0
+os64 % e[K[1Dec[K[2Dech[K[3Decho[K[4Decho [K[5Decho c[K[6Decho co[K[7Decho coo[K[8Decho coop[K[9Decho coope[K[10Decho cooper[K[11Decho coopera[K[12Decho cooperat[K[13Decho cooperati[K[14Decho cooperatio[K[15Decho cooperation[K[16Decho cooperation_[K[17Decho cooperation_s[K[18Decho cooperation_su[K[19Decho cooperation_sur[K[20Decho cooperation_surv[K[21Decho cooperation_survi[K[22Decho cooperation_surviv[K[23Decho cooperation_survive[K[24Decho cooperation_survived[K
+cooperation_survived
+os64 % m[K[1Dme[K[2Dmem[K
+mem_free_pages=31332
+mem_free_bytes=128335872
+os64 % h[K[1Dhe[K[2Dhea[K[3Dheap[K
+heap_used_bytes=95472
+heap_mapped_bytes=4194304
+heap_free_bytes=4098480
+heap_active_allocations=11
+heap_total_allocations=447
+heap_failed_allocations=0
+os64 % s[K[1Dsh[K[2Dshu[K[3Dshut[K[4Dshutd[K[5Dshutdo[K[6Dshutdow[K[7Dshutdown[K
+shutdown ok

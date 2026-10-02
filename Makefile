@@ -1,5 +1,5 @@
 .NOTPARALLEL:
-.PHONY: all build stage1 users check-env run run-gui run-stage1 run-stage1-gui test test-stage1 test-system test-storage-host test-memory-host test-memory-user test-shell-host test-ipc test-syscall-boundaries test-network-host test-network test-log-host test-performance benchmark test-page-fault test-invalid-opcode update-tools reset-data clean distclean
+.PHONY: all build stage1 users check-env run run-gui run-stage1 run-stage1-gui test test-stage1 test-system test-topology-host test-scheduler-host test-smp test-cooperation test-storage-host test-memory-host test-memory-user test-shell-host test-ipc test-syscall-boundaries test-network-host test-network test-log-host test-performance benchmark test-page-fault test-invalid-opcode update-tools reset-data clean distclean
 
 all: build
 build stage1:
@@ -19,7 +19,7 @@ run-gui run-stage1-gui: build
 
 # Old milestones use the immutable RAM fixture; the system suite uses its own
 # temporary IDE data disk and never writes build/data.img.
-test: test-stage1 test-system test-storage-host test-memory-host test-memory-user test-shell-host test-ipc test-syscall-boundaries test-network-host test-network test-log-host test-performance test-page-fault test-invalid-opcode
+test: test-stage1 test-system test-topology-host test-scheduler-host test-smp test-cooperation test-storage-host test-memory-host test-memory-user test-shell-host test-ipc test-syscall-boundaries test-network-host test-network test-log-host test-performance test-page-fault test-invalid-opcode
 	@$(MAKE) --no-print-directory build
 
 test-stage1: build
@@ -27,6 +27,18 @@ test-stage1: build
 
 test-system: build
 	@bash scripts/test-system.sh
+
+test-topology-host:
+	@bash scripts/test-topology-host.sh
+
+test-scheduler-host:
+	@bash scripts/test-scheduler-host.sh
+
+test-smp: build
+	@bash scripts/test-smp.sh
+
+test-cooperation: build
+	@bash scripts/test-cooperation.sh
 
 test-storage-host: build
 	@bash scripts/test-storage-host.sh

@@ -37,6 +37,10 @@ bool map_page(PageAllocator* allocator, uint64_t virtual_address,
 bool map_page_in_root(PageAllocator* allocator, uint64_t root_physical_address,
                       uint64_t virtual_address, uint64_t physical_address,
                       uint64_t flags);
+// Map one device register page below 4 GiB, supervisor-only and uncached.
+// Install before AP startup/user roots; this never treats device memory as RAM.
+bool map_device_page(PageAllocator* allocator, uint64_t virtual_address,
+                     uint64_t physical_address);
 
 // 批量做恒等映射：虚拟地址 == 物理地址。
 // 用于保留启动阶段的低地址映射；一般物理内存访问改用上面的 direct map。

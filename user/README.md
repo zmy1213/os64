@@ -150,7 +150,22 @@ extern "C" int main(int, char**) {
 | 22–24 | pipe、dup2、dup；阻塞管道与共享打开对象 |
 | 30–32 | ticks、read_log、perf_snapshot；有界日志与 ABI v1 快照 |
 | 36–39 | udp_open、udp_close、udp_send、udp_receive；按进程归属的 UDP |
+| 40 | udp_receive_wait：0 即时探测、1–60000ms 超时、UINT32_MAX 无限等待，第五参数 R8 |
+| 41 | smp_snapshot：128B ABI v1、online mask、本核编号、每核用户 dispatch/tick 与 APIC ID |
 
 fd 0/1/2 是标准输入/输出/错误，普通文件从 3 开始，公开容量为 19 个。spawn 继承 cwd 及全部描述符，增加共享打开对象的引用计数，父子读取同一文件会共享偏移；Shell 启动普通命令后另关闭子进程非标准描述符，避免管道悬挂。退出立即释放文件/管道/UDP，wait 回收其他资源。用户态 syscall 指针检查页映射、user 和写权限；它不是 POSIX/Linux ABI。
 
 构建的 `user.ld` 将 text/rodata 放 RX 段、data/BSS 放 RW 段。C++ 声明“没有 const”不保证优化后的对象一定落 RW：如果从未修改，编译器可能优化为只读常量。验证 NX 测试时要看最终 ELF program headers 和地址归属；`test-memory-user.py` 会检查实际布局，而不是只相信源码名称。x87/SSE/SSE2 上下文已由 FXSAVE/FXRSTOR 隔离，fp_test 使用明确的汇编验证寄存器与控制状态。内核与普通用户工具仍以 `-mgeneral-regs-only` 编译；AVX/XSAVE 尚未开放。
+
+
+## 多核计算与阻塞通信
+
+系统最多四个 CPU，每个用户进程仍只有一条主线程；第一次被调度后固定核心。`user/smp.hpp` 包装 syscall41，`user/udp.hpp` 包装 syscall36–40。父子进程通过继承 pipe/文件句柄协作，当前没有通用共享内存或线程 API。
+
+- `run /bin/smp_test`：十二个工作者，校验计算、私有堆、固定核心、定时等待与故障退出回收。
+- `run /bin/coop_test`：默认四个生产者交替写257/4096字节原子记录，父进程以777字节片段重组并检查，约17MiB；另检查读端关闭唤醒满管道写者。
+- `run /bin/udp_test timeout` 与 `run /bin/udp_test arp_timeout`：有限接收和未缓存 ARP 的等待测试。二进制回显与权限检查需先启动宿主服务，再运行 `run /bin/udp_test 10.0.2.2 5151 32`；`udp_mixed` 的宿主回显、AP 接收与计算者启动门由网络测试脚本自动驱动，完整步骤见 [网络教程](../docs/NETWORK_TUTORIAL.md)。
+
+`udp_receive_wait` 返回 ≥0 的负载字节数（0 也可能是成功的空包），空队列/到期为-1，参数/归属不合法为-2，设备不可用为-3，等待期间句柄关闭为-4。容量不足不会消费包。有限等待使用最初的绝对期限，虚假唤醒不会延长它；关闭/退出/设备失败会唤醒等待者，返回前重验完整用户输出范围。
+
+`smp_snapshot` 只能写入当前进程完整可写的128字节区域。累计计数用于证明本核执行过用户工作；user_ticks 按线程归属记账，包含该用户线程的内核服务时段，不能直接当CPU利用率、纯ring3周期或全局时间。`sleep` 使用线程Sleeping释放CPU，毫秒参数上限一天。详细代码路线见 [多核调度教程](../docs/SMP_SCHEDULER_TUTORIAL.md)。

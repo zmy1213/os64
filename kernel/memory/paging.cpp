@@ -198,9 +198,9 @@ bool map_page(PageAllocator* allocator, uint64_t virtual_address,
                           virtual_address, physical_address, flags);
 }
 
-bool map_page_in_root(PageAllocator* allocator, uint64_t root_physical_address,
+static bool map_page_internal(PageAllocator* allocator, uint64_t root_physical_address,
                       uint64_t virtual_address, uint64_t physical_address,
-                      uint64_t flags) {
+                      uint64_t flags, bool device) {
   if (allocator == nullptr || root_physical_address == 0) {
     return false;
   }
@@ -210,7 +210,7 @@ bool map_page_in_root(PageAllocator* allocator, uint64_t root_physical_address,
   }
 
   auto* pml4 = table_from_physical_address(root_physical_address);
-  if (pml4 == nullptr || physical_address >= paging_managed_physical_limit()) {
+  if (pml4 == nullptr || physical_address >= (device ? 0x100000000ULL : paging_managed_physical_limit())) {
     return false;
   }
   uint64_t* tables[4] = {pml4, nullptr, nullptr, nullptr};
@@ -253,6 +253,18 @@ bool map_page_in_root(PageAllocator* allocator, uint64_t root_physical_address,
   }
 
   return true;
+}
+
+bool map_page_in_root(PageAllocator* allocator, uint64_t root_physical_address,
+                      uint64_t virtual_address, uint64_t physical_address,
+                      uint64_t flags) {
+  return map_page_internal(allocator,root_physical_address,virtual_address,physical_address,flags,false);
+}
+bool map_device_page(PageAllocator* allocator, uint64_t virtual_address,
+                     uint64_t physical_address) {
+  if ((virtual_address >> 47)!=0x1ffff) return false; // canonical upper half (bit 47 sign-extended).
+  return map_page_internal(allocator,paging_current_root_physical(),virtual_address,
+                           physical_address,kPageWritable|kPageNoExecute|0x18,true); // PCD | PWT: uncached MMIO.
 }
 
 bool map_identity_range(PageAllocator* allocator, uint64_t start, uint64_t end,

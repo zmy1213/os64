@@ -21,6 +21,8 @@ struct alignas(16) CpuFloatingState { uint8_t bytes[512]; };
 static_assert(sizeof(CpuFloatingState) == 512, "FXSAVE layout");
 
 bool cpu_initialize();
+// CR0/CR4 and floating registers belong to each CPU, even after global CPUID init.
+bool cpu_initialize_local();
 const CpuInformation& cpu_information();
 void cpu_initialize_floating_state(CpuFloatingState* state);
 uint64_t cpu_read_tsc();

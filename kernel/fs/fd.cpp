@@ -13,6 +13,9 @@ struct PipeState {
   ThreadControlBlock* write_waiters[kSchedulerMaxThreadCount];
 };
 namespace {
+// 跨 CPU 的保护来自调用路径已经持有的大内核锁（BKL）。下面的 CLI
+// 只防止本 CPU 在登记等待/更新 ring 中途处理 IRQ，不能锁住其他 CPU。
+// 阻塞切栈时 BKL 一直持有到旧 RSP 保存完成；恢复时也先持锁再回到这里。
 uint64_t save_interrupt_flags_and_disable() {
   uint64_t flags;
   asm volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
@@ -43,7 +46,8 @@ bool wait_on(ThreadControlBlock** waiters) {
   while(slot<kSchedulerMaxThreadCount && waiters[slot] && waiters[slot]!=thread) ++slot;
   if(slot==kSchedulerMaxThreadCount) return false;
   waiters[slot]=thread;
-  // 调用者已经关中断；登记与睡眠之间不能让生产者插进来，否则可能错过唤醒。
+  // 调用者已持 BKL 且关本地中断。登记与睡眠之间不能放开 BKL，
+  // 否则另一 CPU 可能在这里睡下去之前写入并完成那次唯一的唤醒。
   bool result=scheduler_block_current_thread_and_enable_interrupts();
   if(waiters[slot]==thread) waiters[slot]=nullptr;
   return result;

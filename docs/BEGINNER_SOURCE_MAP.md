@@ -27,6 +27,8 @@
 | 用户堆能变大 | kernel/syscall/syscall.cpp 的 sys_brk | address_space_unmap_user_page |
 | 程序从 main 开始 | user/start.asm | 初始 argc/argv 栈布局 |
 | 用户 print 怎样到屏幕 | user/os64.hpp | syscall.cpp、SyscallContext 输出回调 |
+| 真正启动 AP 和观察每核用户工作 | kernel/cpu/smp.cpp、topology.cpp、ap_start.asm | 固件名单、启动邮箱、INIT/SIPI、局部 APIC 与锁 |
+| 每核中断入口栈 | kernel/interrupts/interrupts.cpp | 共享 IDT、独立 GDT/TSS/IST；入口取锁、ring3 返回放锁 |
 | sleep / waitpid 不忙等 | kernel/task/scheduler.cpp | sleeping/blocked/ready 与唤醒 |
 | 用户正在计算却被打断 | kernel/interrupts/interrupts.cpp 的 kernel_handle_irq | PIT、UserTrapFrame、切换汇编 |
 | 键盘和串口文字输入 | keyboard.cpp、serial.cpp、console.cpp | IRQ 缓冲、read_stdin_stream |
@@ -100,7 +102,7 @@
 5. `perf` / `dmesg` → 快照和固定日志，不在热路径打印。
 6. Linux adapter → 相同机器码校验 → 两个真实客体交替测量。
 
-先读 [性能教程](./PERFORMANCE_TUTORIAL.md) 第 1–4 节，再读 [进程协作教程](./IPC_SHELL_TUTORIAL.md)。当前只有一个 CPU，多进程共享其时间；增加进程表槽位与真正启动多个 CPU 是两件不同的工作。
+先读 [性能教程](./PERFORMANCE_TUTORIAL.md) 第 1–4 节，再读 [进程协作教程](./IPC_SHELL_TUTORIAL.md)。单 CPU 配置下，多进程共享该核心的时间；当前也可启动最多四个 CPU，用户线程首次分配后固定核心，计算可并行，内核工作由大内核锁串行保护。增加进程表槽位与真正启动多个 CPU 是两件不同的工作。AP 启动、每核状态与远端唤醒继续按 [AP 启动教程](./SMP_BOOT_TUTORIAL.md) 和 [多核调度教程](./SMP_SCHEDULER_TUTORIAL.md) 追读。
 
 ## 4. 如何使用旧教程
 

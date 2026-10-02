@@ -10,9 +10,13 @@
 6. [进程协作与 Shell](./IPC_SHELL_TUTORIAL.md)：从字节流理解 pipe、dup、继承、阻塞/唤醒，再实验现代命令语法。
 7. [网络从零教程](./NETWORK_TUTORIAL.md)：网卡、DMA、Ethernet/ARP/IPv4/ICMP/UDP、宿主和客体收发、校验与压力测试。
 8. [CPU、日志与性能](./PERFORMANCE_TUTORIAL.md)：浮点现场、可观察计数、计算与 IPC 压力、同 QEMU Linux 对照及实测限制。
-9. [与现代操作系统的差距](./MODERN_OS_COMPARISON.md)：区分已实现与未来能力，理解单核并发、用户线程和 SMP 基础，以及五个可验证的后续阶段。
+9. [从零启动第二颗 CPU](./SMP_BOOT_TUTORIAL.md)：ACPI/MP、xAPIC、INIT/SIPI、16→64 位跳板、每核 TSS 与全局/本核时钟。
+10. [多核调度与协作](./SMP_SCHEDULER_TUTORIAL.md)：每核 current/idle/FX、内核锁、固定核心、睡眠/唤醒/跨核回收和 1/2/4 核回归。
+11. [与现代操作系统的差距](./MODERN_OS_COMPARISON.md)：区分已实现与未来能力，理解单核并发、当前四核并行与用户线程/迁移等缺口，以及五个可验证的后续阶段。
 
 根目录 [README](../README.md) 是快速使用入口。第一次 `make build` 创建数据盘；已有数据盘更新 `/bin` 时先关闭 QEMU，再 `make update-tools`，不要把 `reset-data` 当普通更新。完整回归入口是 `make test`。
+
+本轮实测证据见 [最终集成功能验证](./measurements/validation/README.md) 和 [最终 1/2/4 核网络验证](./measurements/network-smp/final/README.md)。前者记录 18 项目标、所测普通内核和原始日志，后者记录同一镜像的 AP 接收、有限超时与计算/网络协作；功能通过不能替代重复性能采样。
 
 可分四次学习：先启动/保存，再理解启动/地址，再实验内存/用户错误，最后追编辑器保存到 ATA。主教程每章都有对应命令、期望结果与排错说明。
 

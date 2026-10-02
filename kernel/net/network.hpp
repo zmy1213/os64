@@ -26,6 +26,11 @@ struct NetworkStatus {
   uint64_t udp_sent;
   uint64_t udp_dropped;
   uint64_t udp_echoed;
+  uint64_t udp_wait_calls;
+  uint64_t udp_wait_blocks;
+  uint64_t udp_wait_timeouts;
+  uint64_t udp_wait_closed;
+  uint64_t udp_wait_wakes;
 };
 struct NetworkPingResult {
   bool sent;
@@ -38,8 +43,12 @@ struct NetworkDatagram {
   uint16_t source_port;
   uint16_t destination_port;
   uint16_t payload_bytes;
+  uint16_t reserved; // ABI 保留字段，内核收到数据报时显式写 0。
 };
 static_assert(sizeof(NetworkDatagram)==12,"UDP syscall metadata ABI");
+static_assert(offsetof(NetworkDatagram,source_address)==0 && offsetof(NetworkDatagram,source_port)==4 &&
+              offsetof(NetworkDatagram,destination_port)==6 && offsetof(NetworkDatagram,payload_bytes)==8 &&
+              offsetof(NetworkDatagram,reserved)==10,"UDP metadata field offsets must remain stable");
 
 // 没网卡时返回 false，内核和本地教学实验仍可正常运行。
 // 默认静态地址适配 QEMU user network，未实现 DHCP/DNS/TCP/IPv6。
@@ -69,4 +78,10 @@ int32_t network_udp_send(int32_t handle,uint32_t destination,uint16_t port,
                          uint32_t owner_pid = 0);
 int32_t network_udp_receive(int32_t handle,NetworkDatagram* metadata,
                             void* payload,size_t capacity,uint32_t owner_pid = 0);
+// timeout_ms=0 是立即探测；1..60000 为有限等待；UINT32_MAX 无限等待。
+// -1 超时/立即无包，-2 参数错误，-3 无网卡，-4 等待中被关闭。
+// 等待不占用 CPU；数据、关闭和全局 BSP 时钟的 deadline 会唤醒线程。
+int32_t network_udp_receive_wait(int32_t handle,NetworkDatagram* metadata,
+                                void* payload,size_t capacity,uint32_t timeout_ms,
+                                uint32_t owner_pid = 0);
 #endif

@@ -5,10 +5,13 @@ section .text
 global isr_stub_table
 global irq_stub_table
 global syscall_interrupt_stub
+global irq_stub_240, irq_stub_241, irq_stub_255
 
 extern kernel_handle_exception
 extern kernel_handle_irq
 extern kernel_handle_syscall
+extern kernel_gate_enter
+extern kernel_gate_leave_user
 
 %macro ISR_NO_ERROR 1
 isr_stub_%1:
@@ -115,9 +118,18 @@ irq_stub_%1:
     push r13
     push r14
     push r15
-    mov rdi, rsp                    ; 现在 IRQ 也把“完整寄存器帧起点”交给 C++，这样后面才能保存用户态被抢占时的全部现场。
+    mov r12, rsp                    ; r12 已在寄存器帧中保存，现用于保留未对齐的帧地址。
+    and rsp, -16                    ; 所有 C++ 调用都遵守 SysV 栈对齐约定。
+    cld
+    call kernel_gate_enter          ; 先取得 CPU 所有的内核锁，才能读取共享调度器。
+    mov rdi, r12                    ; 现在 IRQ 也把“完整寄存器帧起点”交给 C++，这样后面才能保存用户态被抢占时的全部现场。
     cld
     call kernel_handle_irq
+    test byte [r12 + 144], 3         ; 完整帧中的 CS：只有返回 ring3 时才释放内核锁。
+    jz %%kernel_return
+    call kernel_gate_leave_user
+%%kernel_return:
+    mov rsp, r12
     pop r15                         ; C++ 处理完后，把刚才保存的寄存器按相反顺序恢复。
     pop r14
     pop r13
@@ -153,6 +165,9 @@ IRQ_STUB 12, 44
 IRQ_STUB 13, 45
 IRQ_STUB 14, 46
 IRQ_STUB 15, 47
+IRQ_STUB 240, 240
+IRQ_STUB 241, 241
+IRQ_STUB 255, 255
 
 irq_stub_table:
     dq irq_stub_0
@@ -195,9 +210,18 @@ syscall_interrupt_stub:
     push r13
     push r14
     push r15
-    mov rdi, rsp                    ; 第 1 个参数：整个 syscall 寄存器帧的起始地址。
+    mov r12, rsp
+    and rsp, -16
+    cld
+    call kernel_gate_enter
+    mov rdi, r12                    ; 第 1 个参数：整个 syscall 寄存器帧的起始地址。
     cld
     call kernel_handle_syscall
+    test byte [r12 + 144], 3
+    jz .kernel_return
+    call kernel_gate_leave_user
+.kernel_return:
+    mov rsp, r12
     ; 注意这里不会像异常路径那样直接停机；
     ; syscall 处理完以后，目标就是恢复现场并继续回到触发 `int 0x80` 的下一条用户/内核指令。
     pop r15                         ; 处理完后按相反顺序恢复寄存器。
@@ -219,11 +243,13 @@ syscall_interrupt_stub:
     iretq                           ; 回到触发 `int 0x80` 的下一条指令继续执行。
 
 isr_common:
-    mov rdi, rsp                    ; 第 1 个参数：指向我们约定的 InterruptFrame。
-    mov rax, cr2                    ; CR2 只在 page fault 时最有价值，但这里统一都传过去。
-    mov rsi, rax                    ; 第 2 个参数：fault address / 最近一次页错误地址。
-    and rsp, -16                    ; 调 C++ 前先把栈对齐到 16 字节，满足 SysV ABI 要求。
-    cld                             ; 保守起见先清方向位，避免后面的字符串类代码受污染。
+    mov r12, rsp                    ; 异常处理不返回；先保存最小异常帧和 CR2。
+    mov r13, cr2
+    and rsp, -16
+    cld
+    call kernel_gate_enter
+    mov rdi, r12
+    mov rsi, r13
     call kernel_handle_exception
 
 .halt:

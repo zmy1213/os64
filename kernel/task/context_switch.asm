@@ -9,6 +9,8 @@ global user_mode_smoke_program_end
 global user_mode_yield_program_start
 global user_mode_yield_program_end
 
+extern kernel_gate_leave_user
+
 section .text
 
 ; 这一轮的上下文切换先只保存“函数调用约定要求被调用者保留”的寄存器。
@@ -162,6 +164,9 @@ user_mode_enter:
     push rax
     mov rax, [rdi + USER_MODE_USER_RIP]
     push rax
+    ; The full user frame and thread RSP are published while holding the gate.
+    ; Release with IF=0; only IRETQ enables user interrupts afterwards.
+    call kernel_gate_leave_user
     iretq
 
 ; 这是“用户态 exit 以后重新接回内核”的专用返回器。

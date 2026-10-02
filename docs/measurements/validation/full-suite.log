@@ -1,0 +1,51 @@
+Built /Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/build/disk.img (kernel 285776 bytes); user tools in /bin
+qemu-system-x86_64: terminating on signal 15 from pid 64814 (<unknown process>)
+Boot and kernel milestone regression passed (log: /Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/build/stage1-stage2.serial.log)
+System regression passed: userland, process isolation, file I/O, three boots. Logs: /Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/build/system-test
+topology host: ACPI/MP bounds, checksums, CPU cap, duplicate IDs and partial-publication checks passed
+scheduler real helpers: cross-CPU FIFO, no duplicate/IPI rotation, priority/pin, wrap/capacity, PIT deadline offset/expiry/overflow, wake and local-vs-wall ticks passed
+1 CPUs: 12-worker pin/compute/brk/timed-wake/fault/reap, FP/IPC/badptr and checksum benchmarks passed.
+2 CPUs: 12-worker pin/compute/brk/timed-wake/fault/reap, FP/IPC/badptr and checksum benchmarks passed.
+4 CPUs: 12-worker pin/compute/brk/timed-wake/fault/reap, FP/IPC/badptr and checksum benchmarks passed.
+Cooperation regression passed for vCPUs=[1, 2, 4]: exact records and computation, CPU dispatch evidence, EOF/EPIPE, boundaries and resource recovery. Logs: /Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/build/cooperation-test
+storage host regression passed: remount, ENOSPC, indirect reuse, stale handles, I/O rollback, flush, layout bounds
+page allocator host tests passed: E820, high pages, ownership, ENOSPC
+Memory/user regression passed: large ELF, 1 MiB heap, guards, editor, cold boot, invalid pointers and ENOSPC save rollback. Logs: /Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/build/memory-user-test
+shell parser host tests passed
+IPC regression passed: bounded pipe, EOF/EPIPE, exit wakeup, shared offsets, repeated release and Shell pipelines. Logs: /Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/build/ipc-test
+Syscall boundary regression passed: pipe/dup, performance/log, UDP wait and SMP pointers and integer bounds; resources and disk unchanged. Logs: /Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/build/syscall-boundary-test
+Network host tests passed: protocol boundaries, PID/FIFO, 10000 frames, AP RX restriction, blocking timeout/close/exit/ABA/user-pointer/device-failure/AP-sleep-failure/cold-ARP
+Network IRQ host tests passed: shared source, clear-before-wake, pending RX, atomic park race, fallback
+Network regression passed: real ARP/ICMP/UDP, blocking UDP, compute coexistence, ownership and exit cleanup.
+Sequential echo: 2811.6 roundtrips/s; median 0.26 ms; burst 256/256 received.
+Logs, capture and measured metrics: /Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/build/network-test
+log ring: order, overwrite, truncation, cursors; workload verifier: passed
+CPU/FPU isolation, 8/12-process stress, timer progress, 32 MiB pipe, ABI boundaries and cold-boot logsave passed.
+Performance evidence: /Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/build/performance-results/results.json
+/Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/kernel/core/kernel_main.cpp:339:14: warning: unused variable 'g_data_disk' [-Wunused-variable]
+  339 | AtaPioDevice g_data_disk;
+      |              ^~~~~~~~~~~
+/Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/kernel/core/kernel_main.cpp:340:13: warning: unused variable 'g_data_block_device' [-Wunused-variable]
+  340 | BlockDevice g_data_block_device;
+      |             ^~~~~~~~~~~~~~~~~~~
+/Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/kernel/core/kernel_main.cpp:341:8: warning: unused variable 'g_data_filesystem' [-Wunused-variable]
+  341 | Os64Fs g_data_filesystem;
+      |        ^~~~~~~~~~~~~~~~~
+3 warnings generated.
+Built /Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/build/disk.img (kernel 280976 bytes); user tools in /bin
+qemu-system-x86_64: terminating on signal 15 from pid 67348 (<unknown process>)
+page-fault smoke test passed
+/Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/kernel/core/kernel_main.cpp:339:14: warning: unused variable 'g_data_disk' [-Wunused-variable]
+  339 | AtaPioDevice g_data_disk;
+      |              ^~~~~~~~~~~
+/Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/kernel/core/kernel_main.cpp:340:13: warning: unused variable 'g_data_block_device' [-Wunused-variable]
+  340 | BlockDevice g_data_block_device;
+      |             ^~~~~~~~~~~~~~~~~~~
+/Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/kernel/core/kernel_main.cpp:341:8: warning: unused variable 'g_data_filesystem' [-Wunused-variable]
+  341 | Os64Fs g_data_filesystem;
+      |        ^~~~~~~~~~~~~~~~~
+3 warnings generated.
+Built /Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/build/disk.img (kernel 280976 bytes); user tools in /bin
+qemu-system-x86_64: terminating on signal 15 from pid 68079 (<unknown process>)
+invalid-opcode smoke test passed
+Built /Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/build/disk.img (kernel 285776 bytes); user tools in /bin

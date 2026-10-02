@@ -79,6 +79,15 @@ void timer_wait_ticks(uint64_t ticks) {
     return;
   }
 
+  // 正式线程必须登记 Sleeping 并切到其他线程/idle。尤其 AP 的全局时间
+  // 来自 BSP：若持有大内核锁 HLT，BSP 的 PIT IRQ 会等锁，时间永远不前进。
+  // 无线程的启动阶段仍沿用下面的单 CPU HLT 等待。
+  const ThreadControlBlock* current = scheduler_active_thread();
+  if (current != nullptr && !current->is_idle_thread) {
+    (void)scheduler_sleep_current_thread(ticks);
+    return;
+  }
+
   // 先记住“从第几个 tick 开始等”，
   // 后面只要差值还没到目标，就继续睡到下一次中断。
   const uint64_t start_tick = g_timer_ticks;
@@ -87,8 +96,7 @@ void timer_wait_ticks(uint64_t ticks) {
     // 所以这不是“空转忙等”，而是最朴素的省 CPU 等待法。
     wait_for_interrupt();
 
-    // 当前版本还不在 IRQ 里直接做抢占式切栈，
-    // 所以先在这种从 `hlt` 醒来的安全点响应“该换人了”的请求。
+    // 这里只有无线程的启动路径；若已有调度请求，仍在醒来后检查。
     (void)scheduler_yield_if_requested();
   }
 }
@@ -104,6 +112,8 @@ bool timer_sleep_ms(uint64_t milliseconds) {
 
   // 先把“毫秒”换成“至少多少个 tick”。
   // 用向上取整，是为了避免比如 1ms 在低频时被算成 0 tick，导致完全不等。
+  if (milliseconds > (UINT64_MAX - (kMillisecondsPerSecond - 1)) /
+                         g_timer_frequency_hz) return false;
   uint64_t ticks =
       (milliseconds * static_cast<uint64_t>(g_timer_frequency_hz) +
        (kMillisecondsPerSecond - 1)) /
@@ -112,6 +122,12 @@ bool timer_sleep_ms(uint64_t milliseconds) {
     ticks = 1;
   }
 
+  SchedulerState* scheduler = scheduler_active_state();
+  const ThreadControlBlock* current = scheduler_active_thread();
+  if (scheduler != nullptr && current != nullptr && !current->is_idle_thread) {
+    if (ticks > UINT64_MAX - scheduler->total_ticks) return false;
+    return scheduler_sleep_current_thread(ticks);
+  }
   timer_wait_ticks(ticks);
   return true;
 }

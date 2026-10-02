@@ -23,12 +23,13 @@ uint32_t timer_frequency_hz();
 // 判断 PIT 是否已经初始化完成。
 bool timer_is_ready();
 
-// 至少等待这么多个 tick。
-// 注意：调用它之前，中断必须已经打开，不然 `hlt` 之后就不会再醒。
+// 正式线程登记 Sleeping，到 BSP 全局 tick 期限后被唤醒，等待期间交还 CPU/锁。
+// 无线程的早期启动才用 HLT；这条启动路径要求中断已经打开。
 void timer_wait_ticks(uint64_t ticks);
 
 // 按“毫秒”这个更好理解的单位等待。
-// 内部会先把毫秒换算成 tick，再复用 `timer_wait_ticks()`。
+// 活动线程直接使用调度睡眠；启动路径使用 timer_wait_ticks。
+// 未初始化或换算/期限溢出返回 false。
 bool timer_sleep_ms(uint64_t milliseconds);
 
 #endif

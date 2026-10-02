@@ -10,4 +10,4 @@ BENCHMARK_ASSETS="${BENCHMARK_ASSETS:-$ROOT_DIR/build/benchmark-deps}"
 BUILD_DIR="$BUILD_DIR" BENCHMARK_ASSETS="$BENCHMARK_ASSETS" bash "$ROOT_DIR/scripts/build-linux-bench.sh"
 "$PYTHON_BIN" "$ROOT_DIR/scripts/test-performance.py" --qemu "$QEMU_BIN" \
   --build-dir "$BUILD_DIR" --assets "$BENCHMARK_ASSETS" --compare-linux \
-  --samples "${BENCHMARK_SAMPLES:-31}"
+  --samples "${BENCHMARK_SAMPLES:-31}" --cpus "${BENCHMARK_CPUS:-1}"

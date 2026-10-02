@@ -4,6 +4,7 @@
 
 #include "boot/segments.hpp"
 #include "interrupts/interrupts.hpp"
+#include "interrupts/pit.hpp"
 #include "memory/kmemory.hpp"
 #include "memory/paging.hpp"
 #include "runtime/runtime.hpp"
@@ -24,6 +25,104 @@ extern "C" void scheduler_switch_context_and_root(
     const CpuFloatingState* restore_floating_state);
 extern "C" void scheduler_thread_bootstrap();
 void reap_orphans(SchedulerState* scheduler);
+
+// The global gate serializes CPUs; CLI also excludes a reentrant IRQ on this CPU.
+// In particular, never publish current_thread before the old RSP is saved while
+// local interrupts remain enabled. The resumed continuation restores its own IF.
+class LocalIrqGuard {
+ public:
+  LocalIrqGuard() : restore_(interrupts_are_enabled()) { disable_interrupts(); }
+  ~LocalIrqGuard() { if (restore_) enable_interrupts(); }
+ private:
+  bool restore_;
+};
+uint32_t local_cpu(const SchedulerState* scheduler) {
+  const uint32_t index = smp_current_cpu_index();
+  return scheduler != nullptr && index < scheduler->smp_cpu_count ? index : 0;
+}
+ThreadControlBlock*& local_current(SchedulerState* scheduler) {
+  const uint32_t index = local_cpu(scheduler);
+  return index == 0 ? scheduler->current_thread : scheduler->secondary_cpus[index-1].current_thread;
+}
+ThreadControlBlock*& local_idle(SchedulerState* scheduler) {
+  const uint32_t index = local_cpu(scheduler);
+  return index == 0 ? scheduler->idle_thread : scheduler->secondary_cpus[index-1].idle_thread;
+}
+uint32_t& local_slice(SchedulerState* scheduler) {
+  const uint32_t index = local_cpu(scheduler);
+  return index == 0 ? scheduler->remaining_slice_ticks : scheduler->secondary_cpus[index-1].remaining_slice_ticks;
+}
+bool& local_preempt(SchedulerState* scheduler) {
+  const uint32_t index = local_cpu(scheduler);
+  return index == 0 ? scheduler->preempt_requested : scheduler->secondary_cpus[index-1].preempt_requested;
+}
+uint64_t& local_bootstrap_stack(SchedulerState* scheduler) {
+  const uint32_t index = local_cpu(scheduler);
+  return index == 0 ? scheduler->bootstrap_stack_pointer : scheduler->secondary_cpus[index-1].bootstrap_stack_pointer;
+}
+CpuFloatingState& local_bootstrap_fp(SchedulerState* scheduler) {
+  const uint32_t index = local_cpu(scheduler);
+  return index == 0 ? scheduler->bootstrap_floating_state : scheduler->secondary_cpus[index-1].bootstrap_floating_state;
+}
+// The public deadline ABI is absolute PIT time. Scheduler ticks start at each
+// fixture/runtime initialization, so they must not be compared to PIT directly.
+bool relative_block_deadline(const SchedulerState* scheduler, uint64_t deadline,
+                             uint64_t* wake_tick) {
+  if (deadline == 0 || deadline == UINT64_MAX) { *wake_tick=0; return true; }
+  const uint64_t now=timer_tick_count();
+  if (deadline <= now || deadline-now > UINT64_MAX-scheduler->total_ticks) return false;
+  *wake_tick=scheduler->total_ticks+(deadline-now);
+  return true;
+}
+bool process_is_current(const SchedulerState* scheduler, const ProcessControlBlock* process) {
+  for (uint32_t i=0; i<scheduler->smp_cpu_count; ++i) {
+    const auto* current = scheduler_cpu_current_thread(scheduler, i);
+    if (current != nullptr && (process == nullptr || current->owner == process)) return true;
+  }
+  return false;
+}
+uint32_t least_loaded_user_cpu(const SchedulerState* scheduler) {
+  uint32_t loads[kSmpMaxCpuCount] = {};
+  uint32_t count = smp_online_cpu_count();
+  if (count == 0 || count > scheduler->smp_cpu_count) count = scheduler->smp_cpu_count;
+  if (count == 0) count = 1;
+  for (const auto& thread : scheduler->threads) {
+    if (thread.in_use && !thread.is_idle_thread &&
+        thread.execution_mode == kThreadExecutionModeUser &&
+        thread.state != kThreadStateFinished && thread.assigned_cpu < count)
+      ++loads[thread.assigned_cpu];
+  }
+  uint32_t best = 0;
+  for (uint32_t i=1; i<count; ++i) if (loads[i] < loads[best]) best=i;
+  return best;
+}
+bool thread_eligible(const SchedulerState* scheduler, const ThreadControlBlock* thread) {
+  const uint32_t index = local_cpu(scheduler);
+  if (thread->execution_mode == kThreadExecutionModeKernel) return index == 0;
+  return thread->assigned_cpu == index ||
+      (thread->assigned_cpu == kSchedulerUnassignedCpu && least_loaded_user_cpu(scheduler) == index);
+}
+bool has_local_ready(const SchedulerState* scheduler) {
+  for (const auto& thread : scheduler->threads)
+    if (thread.in_use && thread.queued && thread.state == kThreadStateReady && thread_eligible(scheduler, &thread))
+      return true;
+  return false;
+}
+void notify_ready_cpu(SchedulerState* scheduler, const ThreadControlBlock* thread) {
+  if (!smp_is_enabled()) return;
+  const uint32_t target = thread->execution_mode == kThreadExecutionModeKernel ? 0 :
+      (thread->assigned_cpu == kSchedulerUnassignedCpu ? least_loaded_user_cpu(scheduler) : thread->assigned_cpu);
+  if (target != local_cpu(scheduler)) {
+    bool& requested = target == 0 ? scheduler->preempt_requested : scheduler->secondary_cpus[target-1].preempt_requested;
+    if (!requested) {
+      requested = true;
+      ++scheduler->preempt_request_count;
+      ++scheduler->cpu_statistics[target].preempt_requests;
+    }
+    smp_send_reschedule(target);
+  }
+}
+
 
 // 调度器里的这批 helper，大多都在服务“线程切换前后，栈和地址空间根要怎么保存/恢复”。
 uint64_t align_down(uint64_t value, uint64_t alignment) {
@@ -126,8 +225,11 @@ void initialize_thread_saved_root(SchedulerState* scheduler,
 }
 
 bool push_ready_thread(SchedulerState* scheduler,
-                       ThreadControlBlock* thread) {
-  if (scheduler == nullptr || thread == nullptr ||
+                       ThreadControlBlock* thread,
+                       bool notify = true) {
+  LocalIrqGuard irq;
+  if (scheduler == nullptr || thread == nullptr || !thread->in_use ||
+      thread->state != kThreadStateReady || thread->queued ||
       thread->is_idle_thread ||
       !is_runnable_priority(thread->priority) ||
       scheduler->ready_count >= (kSchedulerMaxThreadCount - 1)) {
@@ -148,47 +250,47 @@ bool push_ready_thread(SchedulerState* scheduler,
       (scheduler->ready_tail[priority] + 1) % kSchedulerMaxThreadCount;
   ++scheduler->ready_count_by_priority[priority];
   ++scheduler->ready_count;
+  thread->queued = true;
+  if (notify) notify_ready_cpu(scheduler, thread);
   return true;
 }
 
+// Raw pop is also used for removing every queue reference during discard.
+ThreadControlBlock* pop_raw_ready_thread(SchedulerState* scheduler, ThreadPriority priority) {
+  const uint8_t p = static_cast<uint8_t>(priority);
+  if (p >= kSchedulerPriorityCount || scheduler->ready_count_by_priority[p] == 0) return nullptr;
+  const uint8_t slot = scheduler->ready_queue_thread_slots[p][scheduler->ready_head[p]];
+  scheduler->ready_queue_thread_slots[p][scheduler->ready_head[p]] = kInvalidReadySlot;
+  scheduler->ready_head[p] = (scheduler->ready_head[p] + 1) % kSchedulerMaxThreadCount;
+  --scheduler->ready_count_by_priority[p];
+  --scheduler->ready_count;
+  if (slot >= kSchedulerMaxThreadCount) return nullptr;
+  auto* thread = &scheduler->threads[slot];
+  thread->queued = false;
+  return thread;
+}
+
 ThreadControlBlock* pop_ready_thread_from_priority(
-    SchedulerState* scheduler,
-    ThreadPriority priority) {
-  if (scheduler == nullptr || !is_runnable_priority(priority)) {
-    return nullptr;
-  }
-
-  const uint8_t priority_index = static_cast<uint8_t>(priority);
-  // 这里即使队列里有历史残留槽位，也会在真正取出时再做一轮状态过滤，
-  // 只有“槽位有效 + 线程仍是 ready + 优先级匹配”的线程才会被选中。
-  while (scheduler->ready_count_by_priority[priority_index] > 0) {
-    const uint8_t slot =
-        scheduler->ready_queue_thread_slots[priority_index]
-                                         [scheduler->ready_head[priority_index]];
-    scheduler->ready_queue_thread_slots[priority_index]
-                                       [scheduler->ready_head[priority_index]] =
-        kInvalidReadySlot;
-    scheduler->ready_head[priority_index] =
-        (scheduler->ready_head[priority_index] + 1) % kSchedulerMaxThreadCount;
-    --scheduler->ready_count_by_priority[priority_index];
-    --scheduler->ready_count;
-
-    if (slot >= kSchedulerMaxThreadCount) {
-      continue;
+    SchedulerState* scheduler, ThreadPriority priority) {
+  LocalIrqGuard irq;
+  if (scheduler == nullptr || !is_runnable_priority(priority)) return nullptr;
+  const uint32_t count = scheduler->ready_count_by_priority[static_cast<uint8_t>(priority)];
+  // Complete one bounded pass even after finding a match. Returning early
+  // after rotating other CPUs' entries would reorder their FIFO: [A1,B0,C1]
+  // picked by CPU0 must leave [A1,C1], not [C1,A1]. No IPI for mere reordering.
+  ThreadControlBlock* selected = nullptr;
+  for (uint32_t i=0; i<count; ++i) {
+    auto* thread = pop_raw_ready_thread(scheduler, priority);
+    if (thread == nullptr || !thread->in_use || thread->is_idle_thread ||
+        thread->state != kThreadStateReady || thread->priority != priority) continue;
+    if (selected == nullptr && thread_eligible(scheduler, thread)) {
+      selected = thread;
+      if (thread->assigned_cpu == kSchedulerUnassignedCpu) thread->assigned_cpu = local_cpu(scheduler);
+    } else {
+      (void)push_ready_thread(scheduler, thread, false);
     }
-
-    ThreadControlBlock* const thread = &scheduler->threads[slot];
-    if (!thread->in_use ||
-        thread->is_idle_thread ||
-        thread->state != kThreadStateReady ||
-        thread->priority != priority) {
-      continue;
-    }
-
-    return thread;
   }
-
-  return nullptr;
+  return selected;
 }
 
 ThreadControlBlock* pop_highest_ready_thread(SchedulerState* scheduler) {
@@ -256,7 +358,7 @@ void prepare_initial_thread_stack(ThreadControlBlock* thread) {
 
   *--stack_cursor =
       reinterpret_cast<uint64_t>(&scheduler_thread_bootstrap);  // `ret` 之后第一次落到这里。
-  *--stack_cursor = 0x202;                                      // RFLAGS: new kernel contexts accept IRQs.
+  *--stack_cursor = 0x2;                                      // RFLAGS: bootstrap starts with IRQ off; owner/RSP are already coherent.
   *--stack_cursor = 0;                                          // rbp
   *--stack_cursor = 0;                                          // rbx
   *--stack_cursor = 0;                                          // r12
@@ -295,11 +397,13 @@ void mark_thread_running(SchedulerState* scheduler,
     (void)tss_set_kernel_rsp0(tss_default_kernel_rsp0());
   }
 
-  scheduler->current_thread = thread;
-  scheduler->remaining_slice_ticks = scheduler->time_slice_ticks;
-  scheduler->preempt_requested = false;
+  local_current(scheduler) = thread;
+  local_slice(scheduler) = scheduler->time_slice_ticks;
+  local_preempt(scheduler) = false;
   thread->state = kThreadStateRunning;
   ++thread->dispatch_count;
+  if (thread->execution_mode == kThreadExecutionModeUser)
+    ++scheduler->cpu_statistics[local_cpu(scheduler)].user_dispatches;
 
   if (thread->owner != nullptr) {
     thread->owner->state = kProcessStateRunning;
@@ -310,6 +414,7 @@ void mark_thread_running(SchedulerState* scheduler,
 void switch_thread_context(SchedulerState* scheduler,
                            ThreadControlBlock* current_thread,
                            ThreadControlBlock* next_thread) {
+  LocalIrqGuard irq;
   if (scheduler == nullptr ||
       current_thread == nullptr ||
       next_thread == nullptr) {
@@ -326,6 +431,7 @@ void switch_thread_context(SchedulerState* scheduler,
       thread_resume_root_physical(scheduler, next_thread);
   mark_thread_running(scheduler, next_thread);
   ++scheduler->total_switches;
+  ++scheduler->cpu_statistics[local_cpu(scheduler)].switches;
   scheduler_switch_context_and_root(&current_thread->saved_stack_pointer,
                                     next_thread->saved_stack_pointer,
                                     next_root,
@@ -336,6 +442,7 @@ void switch_thread_context(SchedulerState* scheduler,
 
 void switch_from_bootstrap_to_thread(SchedulerState* scheduler,
                                      ThreadControlBlock* next_thread) {
+  LocalIrqGuard irq;
   if (scheduler == nullptr || next_thread == nullptr) {
     return;
   }
@@ -344,15 +451,17 @@ void switch_from_bootstrap_to_thread(SchedulerState* scheduler,
       thread_resume_root_physical(scheduler, next_thread);
   mark_thread_running(scheduler, next_thread);
   ++scheduler->total_switches;
-  scheduler_switch_context_and_root(&scheduler->bootstrap_stack_pointer,
+  ++scheduler->cpu_statistics[local_cpu(scheduler)].switches;
+  scheduler_switch_context_and_root(&local_bootstrap_stack(scheduler),
                                     next_thread->saved_stack_pointer,
                                     next_root,
-                                    &scheduler->bootstrap_floating_state,
+                                    &local_bootstrap_fp(scheduler),
                                     &next_thread->floating_state);
 }
 
 void switch_from_thread_to_bootstrap(SchedulerState* scheduler,
                                      ThreadControlBlock* current_thread) {
+  LocalIrqGuard irq;
   if (scheduler == nullptr || current_thread == nullptr) {
     return;
   }
@@ -360,10 +469,10 @@ void switch_from_thread_to_bootstrap(SchedulerState* scheduler,
   current_thread->saved_address_space_root_physical =
       paging_current_root_physical();
   scheduler_switch_context_and_root(&current_thread->saved_stack_pointer,
-                                    scheduler->bootstrap_stack_pointer,
+                                    local_bootstrap_stack(scheduler),
                                     scheduler_kernel_root_physical(scheduler),
                                     &current_thread->floating_state,
-                                    &scheduler->bootstrap_floating_state);
+                                    &local_bootstrap_fp(scheduler));
 }
 
 void update_owner_ready_state(ProcessControlBlock* owner) {
@@ -390,8 +499,9 @@ ThreadControlBlock* select_next_runnable_thread(SchedulerState* scheduler) {
     return next_thread;
   }
 
-  if (scheduler->idle_thread != nullptr && scheduler->live_thread_count > 0) {
-    return scheduler->idle_thread;
+  if (local_idle(scheduler) != nullptr &&
+      (scheduler->live_thread_count > 0 || local_cpu(scheduler) != 0)) {
+    return local_idle(scheduler);
   }
 
   return nullptr;
@@ -431,9 +541,9 @@ bool wake_thread_internal(SchedulerState* scheduler,
   }
 
   if (request_reschedule_if_idle &&
-      scheduler->current_thread == scheduler->idle_thread &&
-      !scheduler->preempt_requested) {
-    scheduler->preempt_requested = true;
+      local_current(scheduler) == local_idle(scheduler) &&
+      has_local_ready(scheduler) && !local_preempt(scheduler)) {
+    local_preempt(scheduler) = true;
     ++scheduler->preempt_request_count;
   }
 
@@ -441,13 +551,13 @@ bool wake_thread_internal(SchedulerState* scheduler,
 }
 
 void wake_sleeping_threads(SchedulerState* scheduler) {
-  if (scheduler == nullptr || scheduler->sleeping_thread_count == 0) {
+  if (scheduler == nullptr || (scheduler->sleeping_thread_count == 0 && scheduler->blocked_thread_count == 0)) {
     return;
   }
 
   for (size_t i = 1; i < kSchedulerMaxThreadCount; ++i) {
     ThreadControlBlock* const thread = &scheduler->threads[i];
-    if (!thread->in_use || thread->state != kThreadStateSleeping) {
+    if (!thread->in_use || (thread->state != kThreadStateSleeping && thread->state != kThreadStateBlocked)) {
       continue;
     }
 
@@ -458,12 +568,16 @@ void wake_sleeping_threads(SchedulerState* scheduler) {
 }
 
 void idle_thread_entry(void*) {
-  // idle thread 不做业务逻辑，它的意义只是：
-  // 当没有普通线程能跑时，让 CPU 进入“等中断 + 看看是否该切换”的保底循环。
   for (;;) {
-    wait_for_interrupt();
+    disable_interrupts();
+    kernel_gate_enter();
     reap_orphans(g_active_scheduler);
-    (void)scheduler_yield_if_requested();
+    (void)scheduler_yield_current_thread();
+    // Release only after this CPU's idle RSP/current pointer are coherent.
+    // STI's interrupt shadow covers HLT, so a ready IPI cannot be lost in between.
+    kernel_gate_release_idle();
+    asm volatile("sti; hlt; cli" ::: "memory");
+    kernel_gate_enter();
   }
 }
 
@@ -496,8 +610,7 @@ void reap_orphans(SchedulerState* scheduler) {
   }
   for (auto& process : scheduler->processes) {
     if (process.in_use && process.auto_reap && process.state == kProcessStateExited &&
-        (scheduler->current_thread == nullptr ||
-         scheduler->current_thread->owner != &process)) {
+        !process_is_current(scheduler, &process)) {
       (void)scheduler_reap_process(scheduler, process.pid, nullptr);
     }
   }
@@ -522,9 +635,10 @@ ProcessControlBlock* scheduler_find_process(SchedulerState* scheduler, uint32_t 
 }
 
 bool scheduler_discard_process(SchedulerState* scheduler, uint32_t pid) {
+  LocalIrqGuard irq;
   ProcessControlBlock* const process = scheduler_find_process(scheduler, pid);
   if (process == nullptr || pid == 0 ||
-      (scheduler->current_thread != nullptr && scheduler->current_thread->owner == process)) {
+      process_is_current(scheduler, process)) {
     return false;
   }
   for (const auto& thread : scheduler->threads) {
@@ -537,10 +651,10 @@ bool scheduler_discard_process(SchedulerState* scheduler, uint32_t pid) {
   for (size_t priority = 0; priority < kSchedulerPriorityCount; ++priority) {
     const uint32_t count = scheduler->ready_count_by_priority[priority];
     for (uint32_t i = 0; i < count; ++i) {
-      ThreadControlBlock* const thread = pop_ready_thread_from_priority(
+      ThreadControlBlock* const thread = pop_raw_ready_thread(
           scheduler, static_cast<ThreadPriority>(priority));
       if (thread != nullptr && thread->owner != process) {
-        (void)push_ready_thread(scheduler, thread);
+        (void)push_ready_thread(scheduler, thread, false);
       }
     }
   }
@@ -574,7 +688,7 @@ bool scheduler_reap_process(SchedulerState* scheduler, uint32_t pid,
 }
 
 bool scheduler_destroy(SchedulerState* scheduler) {
-  if (!scheduler_is_ready(scheduler) || scheduler->current_thread != nullptr ||
+  if (!scheduler_is_ready(scheduler) || process_is_current(scheduler, nullptr) ||
       scheduler->live_thread_count != 0 || scheduler->sleeping_thread_count != 0 ||
       scheduler->blocked_thread_count != 0) {
     return false;
@@ -736,17 +850,18 @@ bool scheduler_handle_user_exception(const InterruptFrame* frame,
 
 bool initialize_scheduler(SchedulerState* scheduler,
                           uint32_t time_slice_ticks) {
-  if (scheduler == nullptr || time_slice_ticks == 0 || !cpu_initialize()) {
+  if (scheduler == nullptr || time_slice_ticks == 0 || smp_is_enabled() || !cpu_initialize()) {
     return false;
   }
 
   memory_set(scheduler, 0, sizeof(*scheduler));
-  cpu_initialize_floating_state(&scheduler->bootstrap_floating_state);
+  cpu_initialize_floating_state(&local_bootstrap_fp(scheduler));
   scheduler->ready = true;
+  scheduler->smp_cpu_count = 1;
   scheduler->next_pid = 1;
   scheduler->next_tid = 1;
   scheduler->time_slice_ticks = time_slice_ticks;
-  scheduler->remaining_slice_ticks = time_slice_ticks;
+  local_slice(scheduler) = time_slice_ticks;
 
   for (size_t priority = 0; priority < kSchedulerPriorityCount; ++priority) {
     for (size_t slot = 0; slot < kSchedulerMaxThreadCount; ++slot) {
@@ -788,7 +903,7 @@ bool initialize_scheduler(SchedulerState* scheduler,
   copy_name(idle_thread->name, "idle");
   prepare_initial_thread_stack(idle_thread);
   initialize_thread_saved_root(scheduler, idle_thread);
-  scheduler->idle_thread = idle_thread;
+  local_idle(scheduler) = idle_thread;
 
   g_active_scheduler = scheduler;
   return true;
@@ -799,6 +914,7 @@ bool scheduler_is_ready(const SchedulerState* scheduler) {
 }
 
 bool scheduler_set_active(SchedulerState* scheduler) {
+  if (smp_is_enabled() && scheduler != g_active_scheduler) return false;
   if (scheduler != nullptr && !scheduler_is_ready(scheduler)) {
     return false;
   }
@@ -807,6 +923,65 @@ bool scheduler_set_active(SchedulerState* scheduler) {
   // 所以这里本质上是在切换全局单例指针。
   g_active_scheduler = scheduler;
   return true;
+}
+
+ThreadControlBlock* scheduler_cpu_current_thread(const SchedulerState* scheduler, uint32_t index) {
+  if (!scheduler_is_ready(scheduler) || index >= scheduler->smp_cpu_count) return nullptr;
+  return index == 0 ? scheduler->current_thread : scheduler->secondary_cpus[index-1].current_thread;
+}
+
+bool scheduler_prepare_smp(SchedulerState* scheduler, uint32_t cpu_count) {
+  LocalIrqGuard irq;
+  if (!scheduler_is_ready(scheduler) || cpu_count == 0 || cpu_count > kSmpMaxCpuCount ||
+      scheduler->smp_cpu_count != 1 || process_is_current(scheduler, nullptr)) return false;
+  for (uint32_t index=1; index<cpu_count; ++index) {
+    auto* thread = first_free_thread_slot(scheduler);
+    void* stack = thread == nullptr ? nullptr : kmalloc_aligned(kSchedulerDefaultKernelThreadStackBytes, 16);
+    if (stack == nullptr) {
+      for (uint32_t undo=1; undo<index; ++undo) {
+        release_thread(scheduler->secondary_cpus[undo-1].idle_thread);
+        memory_set(&scheduler->secondary_cpus[undo-1], 0, sizeof(SchedulerCpuContext));
+      }
+      return false;
+    }
+    memory_set(thread, 0, sizeof(*thread));
+    thread->in_use = true;
+    thread->tid = scheduler->next_tid++;
+    thread->assigned_cpu = index;
+    thread->state = kThreadStateReady;
+    thread->priority = kThreadPriorityIdle;
+    thread->owner = &scheduler->processes[0];
+    thread->execution_mode = kThreadExecutionModeKernel;
+    thread->entry = idle_thread_entry;
+    thread->stack_allocation = stack;
+    thread->stack_allocation_bytes = kSchedulerDefaultKernelThreadStackBytes;
+    thread->is_idle_thread = true;
+    copy_name(thread->name, "idle-ap");
+    cpu_initialize_floating_state(&thread->floating_state);
+    prepare_initial_thread_stack(thread);
+    initialize_thread_saved_root(scheduler, thread);
+    auto& context = scheduler->secondary_cpus[index-1];
+    context.idle_thread = thread;
+    context.remaining_slice_ticks = scheduler->time_slice_ticks;
+    cpu_initialize_floating_state(&context.bootstrap_floating_state);
+  }
+  scheduler->smp_cpu_count = cpu_count;
+  return true;
+}
+
+[[noreturn]] void scheduler_run_secondary_cpu(SchedulerState* scheduler, uint32_t index) {
+  // AP enters with a private TSS/root/FX image, IF=0 and the global gate held.
+  // It must never return to the BSP bootstrap, even when all users have exited.
+  if (scheduler_is_ready(scheduler) && index != 0 && index < scheduler->smp_cpu_count &&
+      index == local_cpu(scheduler) && scheduler == g_active_scheduler) {
+    auto* next = select_next_runnable_thread(scheduler);
+    if (next != nullptr) switch_from_bootstrap_to_thread(scheduler, next);
+  }
+  for (;;) {
+    kernel_gate_release_idle();
+    asm volatile("sti; hlt; cli" ::: "memory");
+    kernel_gate_enter();
+  }
 }
 
 ProcessControlBlock* scheduler_create_kernel_process(
@@ -865,7 +1040,7 @@ ProcessControlBlock* scheduler_create_user_process(
   // user process 和 kernel process 最大区别就在这里：
   // 它要 clone 一份独立页表根，以后才能真的拥有“自己的用户地址空间”。
   process->page_allocator = allocator;
-  const ThreadControlBlock* const parent = scheduler->current_thread;
+  const ThreadControlBlock* const parent = local_current(scheduler);
   process->parent_pid = parent != nullptr && parent->owner != nullptr
                             ? parent->owner->pid : 0;
   if (!clone_address_space_from_root(&process->address_space, allocator,
@@ -1051,6 +1226,7 @@ ThreadControlBlock* scheduler_create_kernel_thread(
   thread->priority = priority;
   thread->owner = owner;
   thread->execution_mode = kThreadExecutionModeKernel;
+  thread->assigned_cpu = 0;
   thread->entry = entry;
   thread->entry_context = entry_context;
   thread->stack_allocation = stack_allocation;
@@ -1121,6 +1297,7 @@ ThreadControlBlock* scheduler_create_user_thread(
   thread->priority = priority;
   thread->owner = owner;
   thread->execution_mode = kThreadExecutionModeUser;
+  thread->assigned_cpu = kSchedulerUnassignedCpu;
   thread->entry = nullptr;
   thread->entry_context = nullptr;
   thread->stack_allocation = scheduler_stack;
@@ -1156,7 +1333,8 @@ ThreadControlBlock* scheduler_create_user_thread(
 }
 
 bool scheduler_run_until_idle(SchedulerState* scheduler) {
-  if (!scheduler_is_ready(scheduler) || scheduler->current_thread != nullptr) {
+  LocalIrqGuard irq;
+  if (!scheduler_is_ready(scheduler) || local_cpu(scheduler) != 0 || local_current(scheduler) != nullptr) {
     return false;
   }
 
@@ -1175,14 +1353,15 @@ bool scheduler_run_until_idle(SchedulerState* scheduler) {
 }
 
 bool scheduler_yield_current_thread() {
+  LocalIrqGuard irq;
   SchedulerState* const scheduler = active_scheduler();
-  if (!scheduler_is_ready(scheduler) || scheduler->current_thread == nullptr) {
+  if (!scheduler_is_ready(scheduler) || local_current(scheduler) == nullptr) {
     return false;
   }
 
   // `yield` 的核心语义是：
   // 当前线程自己把 CPU 还回去，如果 ready queue 里还有别人，就让别人先跑。
-  ThreadControlBlock* const current_thread = scheduler->current_thread;
+  ThreadControlBlock* const current_thread = local_current(scheduler);
   if (current_thread->state != kThreadStateRunning) {
     return false;
   }
@@ -1191,8 +1370,8 @@ bool scheduler_yield_current_thread() {
     // idle thread 的 yield 语义是“看看有没有普通线程已经准备好了”。
     ThreadControlBlock* const next_thread = pop_highest_ready_thread(scheduler);
     if (next_thread == nullptr) {
-      scheduler->preempt_requested = false;
-      scheduler->remaining_slice_ticks = scheduler->time_slice_ticks;
+      local_preempt(scheduler) = false;
+      local_slice(scheduler) = scheduler->time_slice_ticks;
       return false;
     }
 
@@ -1200,15 +1379,16 @@ bool scheduler_yield_current_thread() {
     return true;
   }
 
-  if (scheduler->ready_count == 0) {
-    scheduler->preempt_requested = false;
-    scheduler->remaining_slice_ticks = scheduler->time_slice_ticks;
+  if (!has_local_ready(scheduler)) {
+    local_preempt(scheduler) = false;
+    local_slice(scheduler) = scheduler->time_slice_ticks;
     return false;
   }
 
   current_thread->state = kThreadStateReady;
   ++current_thread->yield_count;
   ++scheduler->total_yields;
+  ++scheduler->cpu_statistics[local_cpu(scheduler)].yields;
   update_owner_ready_state(current_thread->owner);
 
   // 把自己重新塞回 ready queue 末尾，才能形成同优先级 round-robin。
@@ -1220,7 +1400,7 @@ bool scheduler_yield_current_thread() {
   ThreadControlBlock* const next_thread = select_next_runnable_thread(scheduler);
   if (next_thread == nullptr) {
     current_thread->state = kThreadStateRunning;
-    scheduler->current_thread = current_thread;
+    local_current(scheduler) = current_thread;
     return false;
   }
 
@@ -1229,9 +1409,10 @@ bool scheduler_yield_current_thread() {
 }
 
 bool scheduler_yield_if_requested() {
+  LocalIrqGuard irq;
   SchedulerState* const scheduler = active_scheduler();
-  if (!scheduler_is_ready(scheduler) || !scheduler->preempt_requested ||
-      scheduler->current_thread == nullptr) {
+  if (!scheduler_is_ready(scheduler) || !local_preempt(scheduler) ||
+      local_current(scheduler) == nullptr) {
     return false;
   }
 
@@ -1241,9 +1422,10 @@ bool scheduler_yield_if_requested() {
 }
 
 bool scheduler_sleep_current_thread(uint64_t ticks) {
+  LocalIrqGuard irq;
   SchedulerState* const scheduler = active_scheduler();
-  if (!scheduler_is_ready(scheduler) || scheduler->current_thread == nullptr ||
-      scheduler->current_thread->is_idle_thread) {
+  if (!scheduler_is_ready(scheduler) || local_current(scheduler) == nullptr ||
+      local_current(scheduler)->is_idle_thread) {
     return false;
   }
 
@@ -1254,7 +1436,7 @@ bool scheduler_sleep_current_thread(uint64_t ticks) {
     return scheduler_yield_current_thread();
   }
 
-  ThreadControlBlock* const current_thread = scheduler->current_thread;
+  ThreadControlBlock* const current_thread = local_current(scheduler);
   current_thread->state = kThreadStateSleeping;
   current_thread->wake_tick = scheduler->total_ticks + ticks;
   if (current_thread->wake_tick <= scheduler->total_ticks) {
@@ -1277,56 +1459,46 @@ bool scheduler_sleep_current_thread(uint64_t ticks) {
   return true;
 }
 
-bool block_current_thread_internal(bool enable_interrupts_before_switch) {
+bool block_current_thread_internal(bool enable_interrupts_after_resume, uint64_t deadline) {
+  LocalIrqGuard irq;
   SchedulerState* const scheduler = active_scheduler();
-  if (!scheduler_is_ready(scheduler) || scheduler->current_thread == nullptr ||
-      scheduler->current_thread->is_idle_thread) {
+  if (!scheduler_is_ready(scheduler) || local_current(scheduler) == nullptr ||
+      local_current(scheduler)->is_idle_thread) {
+    if (enable_interrupts_after_resume) enable_interrupts();
     return false;
   }
-
-  // `blocked` 和 `sleeping` 的区别是：
-  // sleeping 等时间，
-  // blocked 等事件，比如键盘输入到来。
-  ThreadControlBlock* const current_thread = scheduler->current_thread;
+  uint64_t wake_tick=0;
+  if (!relative_block_deadline(scheduler, deadline, &wake_tick)) return false;
+  ThreadControlBlock* const current_thread = local_current(scheduler);
   current_thread->state = kThreadStateBlocked;
-  current_thread->wake_tick = 0;
+  current_thread->wake_tick = wake_tick;
   ++scheduler->blocked_thread_count;
   update_owner_ready_state(current_thread->owner);
-
   ThreadControlBlock* const next_thread = select_next_runnable_thread(scheduler);
   if (next_thread == nullptr) {
     current_thread->state = kThreadStateRunning;
-    if (scheduler->blocked_thread_count > 0) {
-      --scheduler->blocked_thread_count;
-    }
-
-    if (enable_interrupts_before_switch) {
-      enable_interrupts();
-    }
+    current_thread->wake_tick = 0;
+    --scheduler->blocked_thread_count;
+    if (enable_interrupts_after_resume) enable_interrupts();
     return false;
   }
-
-  mark_thread_running(scheduler, next_thread);
-  ++scheduler->total_switches;
-
-  if (enable_interrupts_before_switch) {
-    // 这个分支专门服务“先登记等待，再让 IRQ 真能把我唤醒”的场景。
-    enable_interrupts();
-  }
-
   switch_thread_context(scheduler, current_thread, next_thread);
+  // Never STI before saving old RSP: an IRQ could wake/reap the old owner.
+  if (enable_interrupts_after_resume) enable_interrupts();
   return true;
 }
-
 bool scheduler_block_current_thread() {
-  return block_current_thread_internal(false);
+  return block_current_thread_internal(false, 0);
 }
-
 bool scheduler_block_current_thread_and_enable_interrupts() {
-  return block_current_thread_internal(true);
+  return block_current_thread_internal(true, 0);
+}
+bool scheduler_block_current_thread_until(uint64_t deadline_tick) {
+  return block_current_thread_internal(false, deadline_tick);
 }
 
 bool scheduler_wake_thread(ThreadControlBlock* thread) {
+  LocalIrqGuard irq;
   SchedulerState* const scheduler = active_scheduler();
   if (!scheduler_is_ready(scheduler)) {
     return false;
@@ -1339,7 +1511,7 @@ bool scheduler_wake_thread(ThreadControlBlock* thread) {
 [[noreturn]] void scheduler_exit_current_thread() {
   disable_interrupts();
   SchedulerState* const scheduler = active_scheduler();
-  if (!scheduler_is_ready(scheduler) || scheduler->current_thread == nullptr) {
+  if (!scheduler_is_ready(scheduler) || local_current(scheduler) == nullptr) {
     for (;;) {
       wait_for_interrupt();
     }
@@ -1347,7 +1519,7 @@ bool scheduler_wake_thread(ThreadControlBlock* thread) {
 
   // 线程结束时，不是直接把整个进程立刻抹掉，
   // 而是先减 live_thread_count；只有最后一条线程退出时，进程才标成 exited。
-  ThreadControlBlock* const current_thread = scheduler->current_thread;
+  ThreadControlBlock* const current_thread = local_current(scheduler);
   current_thread->state = kThreadStateFinished;
   current_thread->wake_tick = 0;
 
@@ -1394,9 +1566,9 @@ bool scheduler_wake_thread(ThreadControlBlock* thread) {
     switch_thread_context(scheduler, current_thread, next_thread);
   }
 
-  scheduler->current_thread = nullptr;
-  scheduler->preempt_requested = false;
-  scheduler->remaining_slice_ticks = scheduler->time_slice_ticks;
+  local_current(scheduler) = nullptr;
+  local_preempt(scheduler) = false;
+  local_slice(scheduler) = scheduler->time_slice_ticks;
   switch_from_thread_to_bootstrap(scheduler, current_thread);
 
   for (;;) {
@@ -1406,58 +1578,30 @@ bool scheduler_wake_thread(ThreadControlBlock* thread) {
 
 void scheduler_handle_timer_tick() {
   SchedulerState* const scheduler = active_scheduler();
-  if (!scheduler_is_ready(scheduler)) {
-    return;
-  }
-
-  // timer tick 这层先只做两类事：
-  // 1. 记账和唤醒 sleep 线程
-  // 2. 时间片耗尽时，发出一个“应该尽快切换”的请求
-  ++scheduler->total_ticks;
+  if (!scheduler_is_ready(scheduler)) return;
+  ++scheduler->total_ticks; // BSP PIT owns wall time, independent of CPU count.
   wake_sleeping_threads(scheduler);
-
-  ThreadControlBlock* const current_thread = scheduler->current_thread;
-  if (current_thread == nullptr ||
-      current_thread->state != kThreadStateRunning) {
-    return;
+  scheduler_handle_local_timer_tick();
+}
+void scheduler_handle_local_timer_tick() {
+  SchedulerState* const scheduler = active_scheduler();
+  if (!scheduler_is_ready(scheduler)) return;
+  auto& stats = scheduler->cpu_statistics[local_cpu(scheduler)];
+  ++stats.timer_ticks;
+  ThreadControlBlock* const current_thread = local_current(scheduler);
+  if (current_thread == nullptr || current_thread->state != kThreadStateRunning) return;
+  if (!current_thread->is_idle_thread) {
+    ++current_thread->consumed_ticks;
+    if (current_thread->execution_mode == kThreadExecutionModeUser) ++stats.user_ticks;
+    if (current_thread->owner != nullptr) ++current_thread->owner->total_thread_ticks;
+    if (local_slice(scheduler) == 0) local_slice(scheduler) = scheduler->time_slice_ticks;
+    if (--local_slice(scheduler) != 0) return;
+    local_slice(scheduler) = scheduler->time_slice_ticks;
   }
-
-  if (current_thread == scheduler->idle_thread) {
-    if (scheduler->ready_count > 0 && !scheduler->preempt_requested) {
-      scheduler->preempt_requested = true;
-      ++scheduler->preempt_request_count;
-    }
-    return;
-  }
-
-  ++current_thread->consumed_ticks;
-  if (current_thread->owner != nullptr) {
-    ++current_thread->owner->total_thread_ticks;
-  }
-
-  if (scheduler->time_slice_ticks == 0) {
-    return;
-  }
-
-  if (scheduler->remaining_slice_ticks == 0) {
-    scheduler->remaining_slice_ticks = scheduler->time_slice_ticks;
-  }
-
-  --scheduler->remaining_slice_ticks;
-  if (scheduler->remaining_slice_ticks != 0) {
-    return;
-  }
-
-  // 真正切换不在 IRQ 里直接做，而是只打一个请求位，
-  // 后面在更安全的线程上下文里通过 `scheduler_yield_if_requested()` 完成。
-  scheduler->remaining_slice_ticks = scheduler->time_slice_ticks;
-  if (scheduler->ready_count == 0) {
-    return;
-  }
-
-  if (!scheduler->preempt_requested) {
-    scheduler->preempt_requested = true;
+  if (has_local_ready(scheduler) && !local_preempt(scheduler)) {
+    local_preempt(scheduler) = true;
     ++scheduler->preempt_request_count;
+    ++stats.preempt_requests;
   }
 }
 
@@ -1467,7 +1611,7 @@ ThreadControlBlock* scheduler_current_thread(
     return nullptr;
   }
 
-  return scheduler->current_thread;
+  return scheduler_cpu_current_thread(scheduler, local_cpu(scheduler));
 }
 
 ThreadControlBlock* scheduler_active_thread() {
@@ -1585,7 +1729,7 @@ extern "C" void scheduler_thread_bootstrap() {
   // 每条线程第一次被调度进来时，都会先落到这个统一 bootstrap：
   // - user thread：走 `run_current_user_thread()`
   // - kernel thread：调它自己的 entry(context)
-  ThreadControlBlock* const current_thread = scheduler->current_thread;
+  ThreadControlBlock* const current_thread = local_current(scheduler);
   if (current_thread == nullptr) {
     scheduler_exit_current_thread();
   }
@@ -1601,6 +1745,7 @@ extern "C" void scheduler_thread_bootstrap() {
     scheduler_exit_current_thread();
   }
 
+  if (!current_thread->is_idle_thread) enable_interrupts();
   current_thread->entry(current_thread->entry_context);
   scheduler_exit_current_thread();
 }

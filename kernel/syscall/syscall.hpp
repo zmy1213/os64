@@ -36,7 +36,7 @@ enum SyscallStatus : int32_t {
 // - RSI = 第 2 个参数
 // - RDX = 第 3 个参数
 // - RCX = 第 4 个参数
-// - R8 = 第 5 个参数（UDP send 的长度；旧调用默认使用 0）
+// - R8 = 第 5 个参数（例如 UDP send 长度或 receive_wait 超时；旧调用默认使用 0）
 enum SyscallNumber : uint64_t {
   kSyscallNumberGetCwd = 0,
   kSyscallNumberChdir = 1,
@@ -70,6 +70,8 @@ enum SyscallNumber : uint64_t {
   kSyscallNumberUdpClose = 37,
   kSyscallNumberUdpSend = 38,
   kSyscallNumberUdpReceive = 39,
+  kSyscallNumberUdpReceiveWait = 40,
+  kSyscallNumberSmpSnapshot = 41,
 };
 
 // 这是第一版“写输出”回调。

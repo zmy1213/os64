@@ -23,10 +23,11 @@ bool worker(uint64_t seed) {
   uint64_t count=0;
   for(size_t round=0;round<48;++round) {
     // Long uninterrupted runs exercise timer preemption as well as explicit yield.
-    for(size_t i=0;i<65536;++i)
+    const size_t iterations=round==0?4194304:65536;
+    for(size_t i=0;i<iterations;++i)
       asm volatile("paddq %0,%%xmm0; paddq %0,%%xmm15; fld1; faddp"
                    : : "m"(increments) : "memory");
-    count+=65536;
+    count+=iterations;
     yield();
     if(round%8==0) sleep(1);
     alignas(16) uint64_t observed[2],observed_high[2];
@@ -49,9 +50,9 @@ extern "C" int main(int argc,char** argv) {
   if(perf_snapshot(&before)!=0 || (before.cpu_features&15)!=15) {
     error("fp_test: x87/FXSAVE/SSE2 unavailable\n"); return 2;
   }
-  const char* seeds[]={"101","202","303","404"};
-  int64_t pids[4]={-1,-1,-1,-1}; bool ok=true;
-  for(size_t i=0;i<4;++i) {
+  const char* seeds[]={"101","202","303","404","505","606","707","808","909","1010","1111","1212"};
+  int64_t pids[12]; for(auto& pid:pids) pid=-1; bool ok=true;
+  for(size_t i=0;i<12;++i) {
     const char* args[]={argv[0],"worker",seeds[i]};
     pids[i]=spawn(argv[0],args,3);
     if(pids[i]<0) {ok=false;break;}

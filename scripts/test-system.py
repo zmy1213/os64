@@ -18,7 +18,7 @@ KEYS = {' ': 'spc', '/': 'slash', '.': 'dot', '-': 'minus', '_': 'shift-minus',
         ':': 'shift-semicolon', '&': 'shift-7', '?': 'shift-slash'}
 
 class VM:
-    def __init__(self, qemu, build, data, logs, temp, boot):
+    def __init__(self, qemu, build, data, logs, temp, boot, cpus=1):
         self.log = logs / f'boot-{boot}.serial.log'
         self.err = logs / f'boot-{boot}.qemu.log'
         self.qmp_path = temp / 'qmp.sock'
@@ -29,7 +29,8 @@ class VM:
         self.serial_stopped = threading.Event()
         self.err_handle = self.err.open('wb')
         self.process = subprocess.Popen([
-            qemu, '-m', '128M', '-boot', 'a', '-display', 'none', '-no-reboot',
+            qemu, *(['-accel', 'tcg,thread=multi'] if cpus > 1 else []),
+            '-smp', str(cpus), '-m', '128M', '-boot', 'a', '-display', 'none', '-no-reboot',
             '-drive', f'format=raw,file={build / "disk.img"},if=floppy,index=0',
             '-drive', f'format=raw,file={data},if=ide,index=0',
             '-chardev', f'socket,id=com1,path={self.serial_path},server=on,wait=off,logfile={self.log}',

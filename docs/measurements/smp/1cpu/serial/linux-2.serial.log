@@ -1,0 +1,1018 @@
+linux_kernel=6.18.52-0-virt
+linux_online_cpus=0
+linux_bench_ready
+linux-bench % /bin/busybox cat /proc/stat
+cpu  3 0 115 16 0 19 5 0 0 0
+cpu0 3 0 115 16 0 19 5 0 0 0
+intr 1885 449 9 0 0 89 0 0 0 1 0 0 0 5 0 0 16 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+ctxt 2896
+btime 1790962072
+processes 437
+procs_running 1
+procs_blocked 0
+softirq 1064 0 248 0 0 0 0 1 0 0 815
+linux_exit_code=0
+linux-bench % /bin/bench 1 480000000 0
+bench workers=1
+bench iterations_per_worker=480000000
+bench yield_every=0
+bench elapsed_ticks=90
+bench timer_hz=100
+bench context_switches=18
+bench preempt_requests=0
+bench checksum8_sum=82
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 1 480000000 0
+bench workers=1
+bench iterations_per_worker=480000000
+bench yield_every=0
+bench elapsed_ticks=68
+bench timer_hz=100
+bench context_switches=18
+bench preempt_requests=0
+bench checksum8_sum=82
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 1 480000000 0
+bench workers=1
+bench iterations_per_worker=480000000
+bench yield_every=0
+bench elapsed_ticks=70
+bench timer_hz=100
+bench context_switches=18
+bench preempt_requests=0
+bench checksum8_sum=82
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 1 480000000 0
+bench workers=1
+bench iterations_per_worker=480000000
+bench yield_every=0
+bench elapsed_ticks=69
+bench timer_hz=100
+bench context_switches=15
+bench preempt_requests=0
+bench checksum8_sum=82
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 1 480000000 0
+bench workers=1
+bench iterations_per_worker=480000000
+bench yield_every=0
+bench elapsed_ticks=67
+bench timer_hz=100
+bench context_switches=16
+bench preempt_requests=0
+bench checksum8_sum=82
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 1 480000000 0
+bench workers=1
+bench iterations_per_worker=480000000
+bench yield_every=0
+bench elapsed_ticks=71
+bench timer_hz=100
+bench context_switches=15
+bench preempt_requests=0
+bench checksum8_sum=82
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 1 480000000 0
+bench workers=1
+bench iterations_per_worker=480000000
+bench yield_every=0
+bench elapsed_ticks=70
+bench timer_hz=100
+bench context_switches=17
+bench preempt_requests=0
+bench checksum8_sum=82
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 1 480000000 0
+bench workers=1
+bench iterations_per_worker=480000000
+bench yield_every=0
+bench elapsed_ticks=72
+bench timer_hz=100
+bench context_switches=14
+bench preempt_requests=0
+bench checksum8_sum=82
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 1 480000000 0
+bench workers=1
+bench iterations_per_worker=480000000
+bench yield_every=0
+bench elapsed_ticks=71
+bench timer_hz=100
+bench context_switches=17
+bench preempt_requests=0
+bench checksum8_sum=82
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 1 480000000 0
+bench workers=1
+bench iterations_per_worker=480000000
+bench yield_every=0
+bench elapsed_ticks=73
+bench timer_hz=100
+bench context_switches=19
+bench preempt_requests=0
+bench checksum8_sum=82
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 1 480000000 0
+bench workers=1
+bench iterations_per_worker=480000000
+bench yield_every=0
+bench elapsed_ticks=108
+bench timer_hz=100
+bench context_switches=22
+bench preempt_requests=0
+bench checksum8_sum=82
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 1 480000000 0
+bench workers=1
+bench iterations_per_worker=480000000
+bench yield_every=0
+bench elapsed_ticks=126
+bench timer_hz=100
+bench context_switches=23
+bench preempt_requests=0
+bench checksum8_sum=82
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 1 480000000 0
+bench workers=1
+bench iterations_per_worker=480000000
+bench yield_every=0
+bench elapsed_ticks=81
+bench timer_hz=100
+bench context_switches=20
+bench preempt_requests=0
+bench checksum8_sum=82
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 1 480000000 0
+bench workers=1
+bench iterations_per_worker=480000000
+bench yield_every=0
+bench elapsed_ticks=70
+bench timer_hz=100
+bench context_switches=15
+bench preempt_requests=0
+bench checksum8_sum=82
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 1 480000000 0
+bench workers=1
+bench iterations_per_worker=480000000
+bench yield_every=0
+bench elapsed_ticks=67
+bench timer_hz=100
+bench context_switches=18
+bench preempt_requests=0
+bench checksum8_sum=82
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 1 480000000 0
+bench workers=1
+bench iterations_per_worker=480000000
+bench yield_every=0
+bench elapsed_ticks=84
+bench timer_hz=100
+bench context_switches=17
+bench preempt_requests=0
+bench checksum8_sum=82
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 0
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=0
+bench elapsed_ticks=76
+bench timer_hz=100
+bench context_switches=574
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 0
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=0
+bench elapsed_ticks=74
+bench timer_hz=100
+bench context_switches=565
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 0
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=0
+bench elapsed_ticks=73
+bench timer_hz=100
+bench context_switches=553
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 0
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=0
+bench elapsed_ticks=71
+bench timer_hz=100
+bench context_switches=553
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 0
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=0
+bench elapsed_ticks=74
+bench timer_hz=100
+bench context_switches=555
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 0
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=0
+bench elapsed_ticks=71
+bench timer_hz=100
+bench context_switches=560
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 0
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=0
+bench elapsed_ticks=76
+bench timer_hz=100
+bench context_switches=574
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 0
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=0
+bench elapsed_ticks=76
+bench timer_hz=100
+bench context_switches=568
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 0
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=0
+bench elapsed_ticks=74
+bench timer_hz=100
+bench context_switches=562
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 0
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=0
+bench elapsed_ticks=73
+bench timer_hz=100
+bench context_switches=559
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 0
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=0
+bench elapsed_ticks=77
+bench timer_hz=100
+bench context_switches=548
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 0
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=0
+bench elapsed_ticks=76
+bench timer_hz=100
+bench context_switches=575
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 0
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=0
+bench elapsed_ticks=82
+bench timer_hz=100
+bench context_switches=580
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 0
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=0
+bench elapsed_ticks=76
+bench timer_hz=100
+bench context_switches=578
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 0
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=0
+bench elapsed_ticks=70
+bench timer_hz=100
+bench context_switches=548
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 0
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=0
+bench elapsed_ticks=72
+bench timer_hz=100
+bench context_switches=561
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 12 40000000 0
+bench workers=12
+bench iterations_per_worker=40000000
+bench yield_every=0
+bench elapsed_ticks=76
+bench timer_hz=100
+bench context_switches=598
+bench preempt_requests=0
+bench checksum8_sum=1273
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 12 40000000 0
+bench workers=12
+bench iterations_per_worker=40000000
+bench yield_every=0
+bench elapsed_ticks=86
+bench timer_hz=100
+bench context_switches=628
+bench preempt_requests=0
+bench checksum8_sum=1273
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 12 40000000 0
+bench workers=12
+bench iterations_per_worker=40000000
+bench yield_every=0
+bench elapsed_ticks=79
+bench timer_hz=100
+bench context_switches=608
+bench preempt_requests=0
+bench checksum8_sum=1273
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 12 40000000 0
+bench workers=12
+bench iterations_per_worker=40000000
+bench yield_every=0
+bench elapsed_ticks=81
+bench timer_hz=100
+bench context_switches=614
+bench preempt_requests=0
+bench checksum8_sum=1273
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 12 40000000 0
+bench workers=12
+bench iterations_per_worker=40000000
+bench yield_every=0
+bench elapsed_ticks=78
+bench timer_hz=100
+bench context_switches=614
+bench preempt_requests=0
+bench checksum8_sum=1273
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 12 40000000 0
+bench workers=12
+bench iterations_per_worker=40000000
+bench yield_every=0
+bench elapsed_ticks=85
+bench timer_hz=100
+bench context_switches=603
+bench preempt_requests=0
+bench checksum8_sum=1273
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 12 40000000 0
+bench workers=12
+bench iterations_per_worker=40000000
+bench yield_every=0
+bench elapsed_ticks=176
+bench timer_hz=100
+bench context_switches=616
+bench preempt_requests=0
+bench checksum8_sum=1273
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 12 40000000 0
+bench workers=12
+bench iterations_per_worker=40000000
+bench yield_every=0
+bench elapsed_ticks=93
+bench timer_hz=100
+bench context_switches=625
+bench preempt_requests=0
+bench checksum8_sum=1273
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 12 40000000 0
+bench workers=12
+bench iterations_per_worker=40000000
+bench yield_every=0
+bench elapsed_ticks=97
+bench timer_hz=100
+bench context_switches=666
+bench preempt_requests=0
+bench checksum8_sum=1273
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 12 40000000 0
+bench workers=12
+bench iterations_per_worker=40000000
+bench yield_every=0
+bench elapsed_ticks=88
+bench timer_hz=100
+bench context_switches=652
+bench preempt_requests=0
+bench checksum8_sum=1273
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 12 40000000 0
+bench workers=12
+bench iterations_per_worker=40000000
+bench yield_every=0
+bench elapsed_ticks=106
+bench timer_hz=100
+bench context_switches=674
+bench preempt_requests=0
+bench checksum8_sum=1273
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 12 40000000 0
+bench workers=12
+bench iterations_per_worker=40000000
+bench yield_every=0
+bench elapsed_ticks=102
+bench timer_hz=100
+bench context_switches=639
+bench preempt_requests=0
+bench checksum8_sum=1273
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 12 40000000 0
+bench workers=12
+bench iterations_per_worker=40000000
+bench yield_every=0
+bench elapsed_ticks=111
+bench timer_hz=100
+bench context_switches=672
+bench preempt_requests=0
+bench checksum8_sum=1273
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 12 40000000 0
+bench workers=12
+bench iterations_per_worker=40000000
+bench yield_every=0
+bench elapsed_ticks=229
+bench timer_hz=100
+bench context_switches=684
+bench preempt_requests=0
+bench checksum8_sum=1273
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 12 40000000 0
+bench workers=12
+bench iterations_per_worker=40000000
+bench yield_every=0
+bench elapsed_ticks=131
+bench timer_hz=100
+bench context_switches=676
+bench preempt_requests=0
+bench checksum8_sum=1273
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 12 40000000 0
+bench workers=12
+bench iterations_per_worker=40000000
+bench yield_every=0
+bench elapsed_ticks=123
+bench timer_hz=100
+bench context_switches=686
+bench preempt_requests=0
+bench checksum8_sum=1273
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 65536
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=65536
+bench elapsed_ticks=129
+bench timer_hz=100
+bench context_switches=7356
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 65536
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=65536
+bench elapsed_ticks=118
+bench timer_hz=100
+bench context_switches=7371
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 65536
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=65536
+bench elapsed_ticks=217
+bench timer_hz=100
+bench context_switches=7395
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 65536
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=65536
+bench elapsed_ticks=148
+bench timer_hz=100
+bench context_switches=7441
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 65536
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=65536
+bench elapsed_ticks=200
+bench timer_hz=100
+bench context_switches=7361
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 65536
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=65536
+bench elapsed_ticks=123
+bench timer_hz=100
+bench context_switches=7386
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 65536
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=65536
+bench elapsed_ticks=231
+bench timer_hz=100
+bench context_switches=7281
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 65536
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=65536
+bench elapsed_ticks=135
+bench timer_hz=100
+bench context_switches=7366
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 65536
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=65536
+bench elapsed_ticks=127
+bench timer_hz=100
+bench context_switches=7411
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 65536
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=65536
+bench elapsed_ticks=133
+bench timer_hz=100
+bench context_switches=7329
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 65536
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=65536
+bench elapsed_ticks=266
+bench timer_hz=100
+bench context_switches=7371
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 65536
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=65536
+bench elapsed_ticks=114
+bench timer_hz=100
+bench context_switches=7237
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 65536
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=65536
+bench elapsed_ticks=629
+bench timer_hz=100
+bench context_switches=6935
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 65536
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=65536
+bench elapsed_ticks=148
+bench timer_hz=100
+bench context_switches=7290
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 65536
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=65536
+bench elapsed_ticks=126
+bench timer_hz=100
+bench context_switches=7354
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench 4 120000000 65536
+bench workers=4
+bench iterations_per_worker=120000000
+bench yield_every=65536
+bench elapsed_ticks=113
+bench timer_hz=100
+bench context_switches=7307
+bench preempt_requests=0
+bench checksum8_sum=409
+bench free_pages_before=0
+bench free_pages_after=0
+bench correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench_ipc 33554432
+ipc bytes=33554432
+ipc pipe_capacity=4096
+ipc elapsed_ticks=185
+ipc timer_hz=100
+ipc context_switches=16420
+ipc free_pages_before=0
+ipc free_pages_after=0
+ipc correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench_ipc 33554432
+ipc bytes=33554432
+ipc pipe_capacity=4096
+ipc elapsed_ticks=214
+ipc timer_hz=100
+ipc context_switches=16445
+ipc free_pages_before=0
+ipc free_pages_after=0
+ipc correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench_ipc 33554432
+ipc bytes=33554432
+ipc pipe_capacity=4096
+ipc elapsed_ticks=148
+ipc timer_hz=100
+ipc context_switches=16425
+ipc free_pages_before=0
+ipc free_pages_after=0
+ipc correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench_ipc 33554432
+ipc bytes=33554432
+ipc pipe_capacity=4096
+ipc elapsed_ticks=103
+ipc timer_hz=100
+ipc context_switches=16407
+ipc free_pages_before=0
+ipc free_pages_after=0
+ipc correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench_ipc 33554432
+ipc bytes=33554432
+ipc pipe_capacity=4096
+ipc elapsed_ticks=88
+ipc timer_hz=100
+ipc context_switches=16403
+ipc free_pages_before=0
+ipc free_pages_after=0
+ipc correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench_ipc 33554432
+ipc bytes=33554432
+ipc pipe_capacity=4096
+ipc elapsed_ticks=74
+ipc timer_hz=100
+ipc context_switches=16393
+ipc free_pages_before=0
+ipc free_pages_after=0
+ipc correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench_ipc 33554432
+ipc bytes=33554432
+ipc pipe_capacity=4096
+ipc elapsed_ticks=72
+ipc timer_hz=100
+ipc context_switches=16394
+ipc free_pages_before=0
+ipc free_pages_after=0
+ipc correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench_ipc 33554432
+ipc bytes=33554432
+ipc pipe_capacity=4096
+ipc elapsed_ticks=78
+ipc timer_hz=100
+ipc context_switches=16396
+ipc free_pages_before=0
+ipc free_pages_after=0
+ipc correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench_ipc 33554432
+ipc bytes=33554432
+ipc pipe_capacity=4096
+ipc elapsed_ticks=83
+ipc timer_hz=100
+ipc context_switches=16398
+ipc free_pages_before=0
+ipc free_pages_after=0
+ipc correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench_ipc 33554432
+ipc bytes=33554432
+ipc pipe_capacity=4096
+ipc elapsed_ticks=84
+ipc timer_hz=100
+ipc context_switches=16393
+ipc free_pages_before=0
+ipc free_pages_after=0
+ipc correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench_ipc 33554432
+ipc bytes=33554432
+ipc pipe_capacity=4096
+ipc elapsed_ticks=93
+ipc timer_hz=100
+ipc context_switches=16403
+ipc free_pages_before=0
+ipc free_pages_after=0
+ipc correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench_ipc 33554432
+ipc bytes=33554432
+ipc pipe_capacity=4096
+ipc elapsed_ticks=204
+ipc timer_hz=100
+ipc context_switches=16429
+ipc free_pages_before=0
+ipc free_pages_after=0
+ipc correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench_ipc 33554432
+ipc bytes=33554432
+ipc pipe_capacity=4096
+ipc elapsed_ticks=107
+ipc timer_hz=100
+ipc context_switches=16409
+ipc free_pages_before=0
+ipc free_pages_after=0
+ipc correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench_ipc 33554432
+ipc bytes=33554432
+ipc pipe_capacity=4096
+ipc elapsed_ticks=95
+ipc timer_hz=100
+ipc context_switches=16399
+ipc free_pages_before=0
+ipc free_pages_after=0
+ipc correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench_ipc 33554432
+ipc bytes=33554432
+ipc pipe_capacity=4096
+ipc elapsed_ticks=85
+ipc timer_hz=100
+ipc context_switches=16393
+ipc free_pages_before=0
+ipc free_pages_after=0
+ipc correctness=ok
+linux_exit_code=0
+linux-bench % /bin/bench_ipc 33554432
+ipc bytes=33554432
+ipc pipe_capacity=4096
+ipc elapsed_ticks=101
+ipc timer_hz=100
+ipc context_switches=16408
+ipc free_pages_before=0
+ipc free_pages_after=0
+ipc correctness=ok
+linux_exit_code=0
+linux-bench % /bin/busybox cat /proc/stat
+cpu  3928 0 1532 1137 0 1038 105 0 0 0
+cpu0 3928 0 1532 1137 0 1038 105 0 0 0
+intr 70632 449 9 0 0 10422 0 0 0 1 0 0 0 5 0 0 16 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+ctxt 411201
+btime 1790962072
+processes 870
+procs_running 1
+procs_blocked 0
+softirq 7497 0 3334 0 0 0 0 1 0 0 4162
+linux_exit_code=0
+linux-bench % 

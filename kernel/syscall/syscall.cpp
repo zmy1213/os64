@@ -7,6 +7,7 @@
 #include "task/scheduler.hpp"
 #include "memory/paging.hpp"
 #include "net/network.hpp"
+#include "cpu/smp.hpp"
 #include "log/log.hpp"
 
 namespace {
@@ -242,7 +243,9 @@ int32_t read_stdin_stream(void* buffer, size_t bytes_to_read) {
     // 这里 deliberately 不把“当前没有字符”当成 EOF。
     // 第一版 stdin 更像终端输入：如果中断开着，就等下一次键盘 IRQ 把字符送进来。
     if (!interrupts_are_enabled()) {
-      return 0;
+      // 正式线程不能把“当前无法等待”伪装成 EOF。早期无线程烟测
+      // 仍保留原有无中断探测行为，用户态入口通常会重新打开 IF。
+      return scheduler_active_thread() != nullptr ? kSyscallIoError : 0;
     }
 
     // 如果当前正跑在线程上下文里，
@@ -252,10 +255,11 @@ int32_t read_stdin_stream(void* buffer, size_t bytes_to_read) {
       continue;
     }
 
-    // 退化路径里虽然没有真正 block 住线程，
-    // 但依然尽量把 CPU 交还出去，避免在内核里纯忙等。
-    // 如果当前还没有线程上下文，或者暂时没法真正 block，
-    // 那就退回到旧的“hlt 等中断 + 安全点 yield”路径。
+    // 正式线程的等待登记失败时，返回错误而不是持着 BKL 裸 HLT。
+    // 键盘/串口 IRQ 通常在 BSP；AP 占锁睡下会让 BSP 等锁，互相卡住。
+    if (scheduler_active_thread() != nullptr) return kSyscallIoError;
+
+    // 只有尚无线程的启动阶段保留 HLT 等待；此时还未启用 SMP/BKL。
     wait_for_interrupt();
     (void)scheduler_yield_if_requested();
   }
@@ -349,6 +353,8 @@ bool user_syscall_arguments_valid(const SyscallInterruptFrame* frame) {
              user_range_valid(frame->rdi, frame->rsi * sizeof(KernelLogRecord), true);
     case kSyscallNumberPerformanceSnapshot:
       return user_range_valid(frame->rdi, sizeof(PerformanceSnapshot), true);
+    case kSyscallNumberSmpSnapshot:
+      return user_range_valid(frame->rdi, sizeof(SmpSnapshot), true);
     case kSyscallNumberPipe:
       return user_range_valid(frame->rdi, 2*sizeof(int32_t), true);
     case kSyscallNumberDup2:
@@ -367,6 +373,13 @@ bool user_syscall_arguments_valid(const SyscallInterruptFrame* frame) {
              user_range_valid(frame->rcx, frame->r8, false);
     case kSyscallNumberUdpReceive:
       return frame->rdi <= INT32_MAX && frame->rcx <= kNetworkUdpMaxPayload &&
+             user_range_valid(frame->rsi, sizeof(NetworkDatagram), true) &&
+             user_range_valid(frame->rdx, frame->rcx, true);
+    case kSyscallNumberUdpReceiveWait:
+      // UINT32_MAX 是明确的无限等待值；其余超时限制为一分钟。
+      // 在转成 uint32_t 之前检查整个 64 位寄存器，不能静默截断高位。
+      return frame->rdi <= INT32_MAX && frame->rcx <= kNetworkUdpMaxPayload &&
+             (frame->r8 <= 60000 || frame->r8 == UINT32_MAX) &&
              user_range_valid(frame->rsi, sizeof(NetworkDatagram), true) &&
              user_range_valid(frame->rdx, frame->rcx, true);
     default:
@@ -547,6 +560,10 @@ int64_t dispatch_syscall_registers(uint64_t syscall_number,
                           static_cast<size_t>(argument1), argument2);
     case kSyscallNumberPerformanceSnapshot:
       return sys_performance_snapshot(reinterpret_cast<PerformanceSnapshot*>(argument0));
+    case kSyscallNumberSmpSnapshot:
+      if (argument0 == 0) return kSyscallInvalidArgument;
+      smp_snapshot(reinterpret_cast<SmpSnapshot*>(argument0));
+      return kSyscallOk;
     case kSyscallNumberPipe:
       return sys_pipe(context, reinterpret_cast<int32_t*>(argument0));
     case kSyscallNumberDup2:
@@ -569,6 +586,11 @@ int64_t dispatch_syscall_registers(uint64_t syscall_number,
       return network_udp_receive(static_cast<int32_t>(argument0),
           reinterpret_cast<NetworkDatagram*>(argument1), reinterpret_cast<void*>(argument2),
           argument3, user_network_owner());
+    case kSyscallNumberUdpReceiveWait:
+      if (!user_network_owner()) return -2;
+      return network_udp_receive_wait(static_cast<int32_t>(argument0),
+          reinterpret_cast<NetworkDatagram*>(argument1), reinterpret_cast<void*>(argument2),
+          argument3, static_cast<uint32_t>(argument4), user_network_owner());
     default:
       (void)argument3;
       return syscall_status_result(kSyscallInvalidArgument);
@@ -1259,7 +1281,7 @@ extern "C" void kernel_handle_syscall(SyscallInterruptFrame* frame) {
 
   if (frame_came_from_user_mode(frame) && !user_syscall_arguments_valid(frame)) {
     // UDP 的 -1 表示“暂时无包/ARP忙”，非法参数要保持其独立的 -2 约定。
-    const bool udp=frame->rax>=kSyscallNumberUdpOpen && frame->rax<=kSyscallNumberUdpReceive;
+    const bool udp=frame->rax>=kSyscallNumberUdpOpen && frame->rax<=kSyscallNumberUdpReceiveWait;
     frame->rax = encode_syscall_result(udp ? -2 : kSyscallInvalidArgument);
     return;
   }

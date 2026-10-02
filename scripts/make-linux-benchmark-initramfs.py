@@ -12,6 +12,7 @@ INIT = b'''#!/bin/busybox sh
 /bin/busybox mount -t sysfs sysfs /sys
 /bin/busybox mount -t devtmpfs devtmpfs /dev
 echo linux_kernel=$(/bin/busybox uname -r)
+echo linux_online_cpus=$(/bin/busybox cat /sys/devices/system/cpu/online)
 echo linux_bench_ready
 while true; do
   printf 'linux-bench %% '

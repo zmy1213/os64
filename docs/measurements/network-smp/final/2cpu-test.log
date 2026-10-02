@@ -1,0 +1,3 @@
+Network regression passed: real ARP/ICMP/UDP, blocking UDP, compute coexistence, ownership and exit cleanup.
+Sequential echo: 2104.7 roundtrips/s; median 0.21 ms; burst 256/256 received.
+Logs, capture and measured metrics: /Users/zhuzhumingyang/.codex/.chatgpt-projects/g-p-6abf87118e248191a3ad512c6490325a/os64/build/network-test-final-smp-2

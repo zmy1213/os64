@@ -9,6 +9,7 @@
 #include "storage/boot_volume.hpp"
 #include "task/scheduler.hpp"
 #include "cpu/cpu.hpp"
+#include "cpu/smp.hpp"
 #include "log/log.hpp"
 #include "perf/perf.hpp"
 #include "net/network.hpp"
@@ -418,6 +419,7 @@ void handle_help_command(const ShellState* shell) {
   write_newline(shell);
   write_string(shell, "e820  - show boot memory map");
   write_newline(shell);
+  write_string(shell, "smp   - show online CPUs and per-CPU user work"); write_newline(shell);
   write_string(shell, "cpu   - show cpuid summary");
   write_newline(shell);
   write_string(shell, "uptime - show tick-based uptime");
@@ -1487,6 +1489,19 @@ void handle_e820_command(const ShellState* shell) {
   }
 }
 
+void handle_smp_command(const ShellState* shell) {
+  SmpSnapshot snapshot{}; smp_snapshot(&snapshot);
+  write_string(shell, "smp_online_cpus="); write_u64(shell,snapshot.online_cpus); write_newline(shell);
+  write_string(shell, "smp_online_mask="); write_u64(shell,snapshot.online_mask); write_newline(shell);
+  for (uint32_t i=0;i<kSmpMaxCpuCount;++i) {
+    if (!(snapshot.online_mask & (1ULL<<i))) continue;
+    write_string(shell, "cpu="); write_u64(shell,i);
+    write_string(shell, " apic_id="); write_u64(shell,snapshot.apic_ids[i]);
+    write_string(shell, " user_dispatches="); write_u64(shell,snapshot.user_dispatches[i]);
+    write_string(shell, " user_ticks="); write_u64(shell,snapshot.user_ticks[i]); write_newline(shell);
+  }
+}
+
 void handle_cpu_command(const ShellState* shell) {
   const CpuidResult leaf0 = read_cpuid(0, 0);
   const CpuidResult extended_leaf = read_cpuid(0x80000000u, 0);
@@ -1796,6 +1811,10 @@ static ShellCommandResult shell_execute_legacy_line(ShellState* shell,
     return kShellCommandExecuted;
   }
 
+  if (command_matches(trimmed_line, "smp", &arguments) && is_empty_after_trim(arguments)) {
+    handle_smp_command(shell); return kShellCommandExecuted;
+  }
+
   if (command_matches(trimmed_line, "cpu", &arguments) &&
       is_empty_after_trim(arguments)) {
     handle_cpu_command(shell);
@@ -1841,7 +1860,7 @@ bool same_word(const char* a, const char* b) {
 bool legacy_builtin(const char* name) {
   const char* names[] = {"help", "mem", "ticks", "heap", "disk", "pwd", "cd", "ls",
     "cat", "stat", "touch", "mkdir", "write", "append", "rm", "sync", "run", "ps",
-    "shutdown", "reboot", "irq", "bootinfo", "e820", "cpu", "uptime", "echo", "history", "clear"};
+    "shutdown", "reboot", "irq", "bootinfo", "e820", "cpu", "smp", "uptime", "echo", "history", "clear"};
   for (const char* builtin : names) { if (same_word(name, builtin)) { return true; } }
   return false;
 }
@@ -1879,11 +1898,15 @@ void show_network(const ShellState* shell) {
   write_string(shell, "network_gateway="); write_string(shell, address); write_newline(shell);
   const char* names[] = {"network_echo_port", "network_rx_packets", "network_tx_packets", "network_rx_bytes",
     "network_tx_bytes", "network_rx_dropped", "network_tx_busy", "network_device_errors", "network_invalid",
-    "network_unsupported", "network_udp_received", "network_udp_sent", "network_udp_dropped", "network_udp_echoed"};
+    "network_unsupported", "network_udp_received", "network_udp_sent", "network_udp_dropped", "network_udp_echoed",
+    "network_udp_wait_calls", "network_udp_wait_blocks", "network_udp_wait_timeouts",
+    "network_udp_wait_closed", "network_udp_wait_wakes"};
   const uint64_t values[] = {status.echo_port, device.rx_packets, device.tx_packets, device.rx_bytes, device.tx_bytes,
     device.rx_dropped, device.tx_busy, device.device_errors, status.invalid_packets, status.unsupported_packets,
-    status.udp_received, status.udp_sent, status.udp_dropped, status.udp_echoed};
-  for (size_t i = 0; i < 14; ++i) {
+    status.udp_received, status.udp_sent, status.udp_dropped, status.udp_echoed,
+    status.udp_wait_calls, status.udp_wait_blocks, status.udp_wait_timeouts,
+    status.udp_wait_closed, status.udp_wait_wakes};
+  for (size_t i = 0; i < 19; ++i) {
     write_string(shell, names[i]); write_char(shell, '='); write_u64(shell, values[i]); write_newline(shell);
   }
 }

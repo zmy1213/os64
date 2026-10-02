@@ -4,7 +4,7 @@
 
 目前已连通从启动到日常交互的完整教学流程：64 位内核、可回收物理页和内核堆、用户地址空间与动态堆、时钟抢占与阻塞调度、ELF 用户进程、系统调用、可保存到磁盘的文件系统、键盘/串口终端、Shell 和用户态行式文本编辑器。
 
-目标平台是 QEMU 的单核传统 PC：BIOS、VGA 文本显示、8259 PIC、PIT、PS/2 键盘、16550 串口、IDE ATA 数据盘和 PCI virtio-net 网卡。当前已有阻塞管道、描述符继承、UDP 网络、内核日志与多进程压力测试；性能结果按实测记录。
+目标平台是 QEMU 的 1–4 核传统 PC：BIOS、VGA 文本显示、8259 PIC、PIT、PS/2 键盘、16550 串口、IDE ATA 数据盘和 PCI virtio-net 网卡。当前已有真实 AP 启动、固定核心的并行用户进程、阻塞管道、描述符继承、阻塞/超时 UDP 网络、内核日志与计算通信混合压力测试；内核操作由大内核锁串行保护，性能结果按实测记录。
 
 ## 从零开始读
 
@@ -22,7 +22,7 @@ make build
 make run-gui
 ```
 
-`make run-gui` 打开 QEMU 窗口，在窗口中输入命令。若希望在当前终端交互，运行 `make run`；串口支持文字输入、方向键、历史和删除编辑。退出模拟器可以关闭窗口，或在系统 Shell 中输入 `shutdown`。
+默认启动四个虚拟 CPU；`OS64_CPUS=1 make run` 可指定单核。`make run-gui` 打开 QEMU 窗口，在窗口中输入命令。若希望在当前终端交互，运行 `make run`；串口支持文字输入、方向键、历史和删除编辑。退出模拟器可以关闭窗口，或在系统 Shell 中输入 `shutdown`。
 
 工具要求：NASM、QEMU、Python 3、Clang++、ELF 链接器 LLD 和 LLVM objcopy。也支持 `x86_64-elf-g++/ld/objcopy` 交叉工具链。脚本自动发现 PATH 和 macOS Homebrew LLVM，不使用宿主 macOS 链接器。Linux 可以安装：
 
@@ -68,8 +68,8 @@ shutdown
 | --- | --- |
 | 文件和目录 | `pwd`、`cd`、`ls`、`cat`、`stat`、`touch`、`mkdir`、`write`、`append`、`rm`、`sync` |
 | 程序与进程 | 直接输入 `/bin` 中命令名、`run`、`ps`、`jobs`、`wait` |
-| 系统信息 | `mem`、`heap`、`disk`、`ticks`、`uptime`、`irq`、`bootinfo`、`e820`、`cpu`、`perf`、`dmesg`、`logsave` |
-| 网络 | `net`、`ping IPv4`、用户 `udp_test` |
+| 系统信息 | `mem`、`heap`、`disk`、`ticks`、`uptime`、`irq`、`bootinfo`、`e820`、`cpu`、`smp`、`perf`、`dmesg`、`logsave` |
+| 网络 | `net`、`ping IPv4`、用户 `udp_test`、`udp_mixed` |
 | 终端与电源 | `help`、`echo`、`history`、`clear`、`reboot`、`shutdown` |
 
 在 Shell 单独运行 `run /bin/edit /work/lesson.txt`。编辑器运行后，在 `edit> ` 输入 `append hello`、`print`、`save`、`quit`；回到 Shell 后 `cat /work/lesson.txt`。未保存时 `quit` 会提醒，`quit!` 丢弃内存修改。它是逐行操作的文本编辑器，最大文本 32 KiB，不是全屏编辑器。用户程序、内存库和 ABI 见 [user/README.md](user/README.md)。
@@ -90,6 +90,9 @@ jobs
 wait
 run /bin/pipe_test
 run /bin/fp_test
+smp
+run /bin/smp_test
+run /bin/coop_test
 run /bin/bench 8 20000000
 perf
 dmesg
@@ -100,11 +103,13 @@ ping 10.0.2.2
 
 Shell 在 `/bin` 查找不带斜线的命令；支持引号、转义、`$?`/`$PWD`/固定 `$PATH`、四段管道、输入/输出/错误重定向、条件执行及简单后台任务。每段在独立用户进程中运行，所有管段先启动再等待；文件位置与管道端点经引用计数共享。这里还没有完整 POSIX 脚本语言、环境变量表、通配符、信号或 TTY 作业控制，详见 [进程协作与 Shell 教程](docs/IPC_SHELL_TUTORIAL.md)。
 
-默认启动脚本添加 virtio-net legacy PCI 网卡和 QEMU user 网络，客体地址 `10.0.2.15`，宿主 `127.0.0.1:5555` 转发到客体 UDP 回显端口 9000。真实驱动通过 DMA 描述符队列传递 Ethernet 帧，协议实现 ARP、IPv4、ICMP 和 UDP；用户 UDP 句柄按进程隔离并在退出时关闭。没有网卡仍能启动。TCP、DNS、DHCP、IPv6、Wi-Fi 尚未实现，配置和从零实验见 [网络教程](docs/NETWORK_TUTORIAL.md)。
+默认启动脚本添加 virtio-net legacy PCI 网卡和 QEMU user 网络，客体地址 `10.0.2.15`，宿主 `127.0.0.1:5555` 转发到客体 UDP 回显端口 9000。真实驱动通过 DMA 描述符队列传递 Ethernet 帧，协议实现 ARP、IPv4、ICMP 和 UDP；用户 UDP 句柄按进程隔离并在退出时关闭；接收可阻塞、指定超时或无限等待，由 BSP 网卡工作线程唤醒 AP 上的接收进程。没有网卡仍能启动。TCP、DNS、DHCP、IPv6、Wi-Fi 尚未实现，配置和从零实验见 [网络教程](docs/NETWORK_TUTORIAL.md)。
 
 内核默认 `-O2` 编译，可用 `KERNEL_OPT_LEVEL=0 make build` 保留便于逐句调试的版本。x87、SSE/SSE2 的浮点现场通过 FXSAVE/FXRSTOR 随线程保存；内核仍用通用寄存器编译，尚未开放 AVX/XSAVE。日志是有界 256 条内存环，带序号、时钟、等级和组件，覆盖最旧记录会计数；不在 IRQ 热路径同步写串口或磁盘，`logsave` 才主动保存。
 
-[性能教程](docs/PERFORMANCE_TUTORIAL.md) 说明如何校验计算结果、测多进程与管道、读取调度计数，并在相同 QEMU/单 CPU/128 MiB 条件下对照 Linux。性能指标分别解释吞吐、延迟、尾延迟、丢包和资源回收；任何结果都不能直接外推为“所有工作负载最快”。
+[AP 启动教程](docs/SMP_BOOT_TUTORIAL.md) 从固件名单、INIT/SIPI 和 16→64 位跳板讲起；[多核调度教程](docs/SMP_SCHEDULER_TUTORIAL.md) 解释每核状态、持锁切栈、固定核心与等待回收。
+
+[性能教程](docs/PERFORMANCE_TUTORIAL.md) 说明如何校验计算结果、测多进程与管道、读取调度计数，并在相同 QEMU/1、2、4 CPU/128 MiB 条件下对照 Linux。性能指标分别解释吞吐、延迟、尾延迟、丢包和资源回收；任何结果都不能直接外推为“所有工作负载最快”。
 
 ## 镜像和保存
 
@@ -145,6 +150,9 @@ make test
 测试包括：
 
 - 自写启动链、内存、系统调用、ring 3、抢占与键盘的原始回归。
+- 固件拓扑 sanitizer；1/2/4 核真实 AP 运行、十二个用户进程计算/私有堆/定时唤醒/故障回收、每核浮点隔离。
+- `make test-scheduler-host` 直接测试生产调度队列 helper 的保序、核心归属、固定绑定和时钟域/期限边界；ASan/UBSan 检查内存行为，不执行真实 CR3、CLI、IPI 或汇编切栈。
+- 1/2/4 核约 17 MiB 多生产者管道，逐记录/逐字节/计算结果校验、满管道关闭唤醒及重复资源回收。
 - QMP 真实键盘输入执行用户程序，检查参数、进程创建/等待、错误指针、故障隔离、睡眠与计算程序。
 - 连续运行 55 次程序，比较空闲物理页数量，检查回收。
 - 三次冷启动，检查保存文件、跨间接块内容和删除结果。
@@ -156,9 +164,11 @@ make test
 - 管道、日志/性能、UDP 系统调用的坏指针和整数边界；拒绝后功能仍可用，资源和磁盘保持稳定。
 - 日志环覆盖/边界 sanitizer、x87/SSE 初始值与切换隔离、8/12 工作者计算、8 进程定时进度、32 MiB 管道校验，以及日志保存后的冷启动读取。
 
-系统测试使用自己的临时数据盘，并检查用户 `build/data.img` 的摘要保持不变。日志位于 `build/system-test/`、`build/memory-user-test/`、`build/ipc-test/`、`build/syscall-boundary-test/`、`build/network-test/`、`build/performance-results/` 和 `build/*.serial.log`。单项入口及预期现象见 [主教程第 11 章验证表](docs/BEGINNER_TUTORIAL.md)。
+[最终功能验证记录](docs/measurements/validation/README.md) 保留 18 项集成检查及对应普通内核摘要；[最终网络记录](docs/measurements/network-smp/final/README.md) 单独保留该镜像的 1/2/4 核阻塞接收、有限超时与混合负载结果。它们是功能证据，不能直接当性能加速比。
 
-`make benchmark` 是独立的 Linux 对照实验，按 [性能教程](docs/PERFORMANCE_TUTORIAL.md) 准备官方 Linux 资产后执行，不包含在普通回归中。它会逐项检查正确性和计算机器码，再输出原始样本与统计。
+系统测试使用自己的临时数据盘，并检查用户 `build/data.img` 的摘要保持不变。日志位于 `build/system-test/`、`build/memory-user-test/`、`build/ipc-test/`、`build/syscall-boundary-test/`、`build/network-test/`、`build/smp-test-results/`、`build/cooperation-test/`、`build/performance-results/` 和 `build/*.serial.log`。单项入口及预期现象见 [主教程第 11 章验证表](docs/BEGINNER_TUTORIAL.md)。
+
+`make benchmark` 是独立的 Linux 对照实验，按 [性能教程](docs/PERFORMANCE_TUTORIAL.md) 准备官方 Linux 资产后执行，不包含在普通回归中。它会逐项检查正确性和计算机器码，再输出原始样本与统计。`BENCHMARK_CPUS=2 make benchmark` 或 `4` 使用对应核数；多核组额外核实 Linux online 核数及两系统每核实际用户工作。
 
 ## 当前边界
 
@@ -168,9 +178,9 @@ make test
 
 文件系统数据盘当前有 64 个 inode 槽位；格式最多支持 128 个 inode 槽位，单文件最多 69,632 字节。`rm` 可以删除文件和空目录，仍打开的文件与活动工作目录不能删除。
 
-用户态支持时钟抢占；内核线程在受控的睡眠、阻塞和让出点调度。尚未实现 SMP、多用户权限、`fork`/`exec` 替换、信号、动态链接、demand paging/换页、AVX/XSAVE、TCP/IPv6、图形桌面、USB/AHCI/NVMe 或 UEFI，不能运行 Linux 二进制，也没有做真实硬件兼容认证。用户栈保护不代表所有内核栈都有 guard；运行时文件事务不提供断电一致性。
+用户态支持时钟抢占；内核线程在受控的睡眠、阻塞和让出点调度。已实现最多四核固定核心的用户进程并行与串行内核；尚未实现迁移、跨核共享地址空间/TLB shootdown、多用户权限、`fork`/`exec` 替换、信号、动态链接、demand paging/换页、AVX/XSAVE、TCP/IPv6、图形桌面、USB/AHCI/NVMe 或 UEFI，不能运行 Linux 二进制，也没有做真实硬件兼容认证。用户栈保护不代表所有内核栈都有 guard；运行时文件事务不提供断电一致性。
 
-[现代操作系统对照](docs/MODERN_OS_COMPARISON.md) 按已实现/未实现逐项列出差距，并以多进程计算与调度为重点给出后续五阶段验收。单核增加进程数让任务轮流运行，真正的多核并行还需要 AP 启动、每 CPU 状态、跨核同步、IPI 和 TLB shootdown。
+[现代操作系统对照](docs/MODERN_OS_COMPARISON.md) 按已实现/未实现逐项列出差距，并以多进程计算与调度为重点给出后续五阶段验收。单核增加进程数让任务轮流运行；当前 AP 启动、每 CPU 状态、内核锁与 IPI 支撑四核并行。继续开放迁移或同一用户页表跨核运行时，还须 TLB shootdown 和远端运行状态同步。
 
 ## 阅读实现
 

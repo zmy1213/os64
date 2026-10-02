@@ -327,8 +327,12 @@ size_t console_read_line_with_history(char* buffer,
         continue;
       }
 
-      // 如果当前还没有线程上下文，或者暂时不能真正 block，
-      // 再退回到旧的 `hlt` 等待路径。
+      // 等待队列登记失败时，正式线程仍必须切走并释放内核锁。
+      // 只让无线程的早期启动路径使用裸 HLT；否则会阻塞其他核心。
+      if (scheduler_active_thread() != nullptr) {
+        if (!scheduler_sleep_current_thread(1)) return 0;
+        continue;
+      }
       wait_for_interrupt();
 
       // 如果 timer 已经把时间片用尽的请求挂起来了，

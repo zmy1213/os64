@@ -75,6 +75,18 @@ bool cpu_initialize() {
   return true;
 }
 const CpuInformation& cpu_information() { return g_information; }
+bool cpu_initialize_local() {
+  if (!g_initialized || !g_information.floating_state_enabled) return false;
+  uint64_t cr0,cr4;
+  asm volatile("mov %%cr0,%0" : "=r"(cr0));
+  cr0=(cr0 & ~((1ULL<<2)|(1ULL<<3))) | (1ULL<<1) | (1ULL<<5);
+  asm volatile("mov %0,%%cr0" : : "r"(cr0) : "memory");
+  asm volatile("mov %%cr4,%0" : "=r"(cr4));
+  cr4 |= (1ULL<<9)|(1ULL<<10);
+  asm volatile("mov %0,%%cr4" : : "r"(cr4) : "memory");
+  asm volatile("fxrstor64 %0" : : "m"(g_initial_state) : "memory");
+  return true;
+}
 void cpu_initialize_floating_state(CpuFloatingState* state) {
   if (state != nullptr) memory_copy(state, &g_initial_state, sizeof(*state));
 }

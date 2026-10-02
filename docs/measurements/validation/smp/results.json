@@ -1,0 +1,109 @@
+{
+  "requested_cpus": [
+    1,
+    2,
+    4
+  ],
+  "repeats": 4,
+  "kernel_sha256": "ad77896db0f3579dce24c259a3c2eb252e539b4319b23ff4b24ca83ecca83303",
+  "harness_sha256": "0bd52525f64ffdf181486654a90b1a9bb3d44869fdc27d004765609743222812",
+  "checks": [
+    {
+      "cpus": 1,
+      "repeat": 0,
+      "online_cpus": 1,
+      "worker_cpu_mask": 1,
+      "free_pages_before": 31306,
+      "free_pages_after": 31306
+    },
+    {
+      "cpus": 1,
+      "repeat": 1,
+      "online_cpus": 1,
+      "worker_cpu_mask": 1,
+      "free_pages_before": 31306,
+      "free_pages_after": 31306
+    },
+    {
+      "cpus": 1,
+      "repeat": 2,
+      "online_cpus": 1,
+      "worker_cpu_mask": 1,
+      "free_pages_before": 31306,
+      "free_pages_after": 31306
+    },
+    {
+      "cpus": 1,
+      "repeat": 3,
+      "online_cpus": 1,
+      "worker_cpu_mask": 1,
+      "free_pages_before": 31306,
+      "free_pages_after": 31306
+    },
+    {
+      "cpus": 2,
+      "repeat": 0,
+      "online_cpus": 2,
+      "worker_cpu_mask": 3,
+      "free_pages_before": 31300,
+      "free_pages_after": 31300
+    },
+    {
+      "cpus": 2,
+      "repeat": 1,
+      "online_cpus": 2,
+      "worker_cpu_mask": 3,
+      "free_pages_before": 31300,
+      "free_pages_after": 31300
+    },
+    {
+      "cpus": 2,
+      "repeat": 2,
+      "online_cpus": 2,
+      "worker_cpu_mask": 3,
+      "free_pages_before": 31300,
+      "free_pages_after": 31300
+    },
+    {
+      "cpus": 2,
+      "repeat": 3,
+      "online_cpus": 2,
+      "worker_cpu_mask": 3,
+      "free_pages_before": 31300,
+      "free_pages_after": 31300
+    },
+    {
+      "cpus": 4,
+      "repeat": 0,
+      "online_cpus": 4,
+      "worker_cpu_mask": 15,
+      "free_pages_before": 31300,
+      "free_pages_after": 31300
+    },
+    {
+      "cpus": 4,
+      "repeat": 1,
+      "online_cpus": 4,
+      "worker_cpu_mask": 15,
+      "free_pages_before": 31300,
+      "free_pages_after": 31300
+    },
+    {
+      "cpus": 4,
+      "repeat": 2,
+      "online_cpus": 4,
+      "worker_cpu_mask": 15,
+      "free_pages_before": 31300,
+      "free_pages_after": 31300
+    },
+    {
+      "cpus": 4,
+      "repeat": 3,
+      "online_cpus": 4,
+      "worker_cpu_mask": 15,
+      "free_pages_before": 31300,
+      "free_pages_after": 31300
+    }
+  ],
+  "existing_data_unchanged": true
+}

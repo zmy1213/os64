@@ -1,7 +1,9 @@
 #include "net/network.hpp"
+#include "cpu/smp.hpp"
 #include "interrupts/interrupts.hpp"
 #include "interrupts/pit.hpp"
 #include "runtime/runtime.hpp"
+#include "task/scheduler.hpp"
 
 namespace {
 constexpr uint16_t kEthernetIpv4 = 0x0800;
@@ -16,6 +18,7 @@ constexpr uint16_t kPingIdentifier = 0x6400;
 constexpr size_t kPingPayload = 32;
 struct ArpEntry { bool valid; uint32_t address; uint8_t mac[6]; uint64_t learned; };
 struct Datagram { NetworkDatagram metadata; uint8_t bytes[kNetworkUdpMaxPayload]; };
+struct UdpWaiter { ThreadControlBlock* thread; uint32_t tid; };
 struct UdpSocket {
   bool open;
   uint16_t port;
@@ -24,6 +27,7 @@ struct UdpSocket {
   uint16_t first;
   uint16_t count;
   Datagram inbox[kDatagrams];
+  UdpWaiter waiters[kSchedulerMaxThreadCount];
 };
 struct PingState {
   bool active;
@@ -43,6 +47,21 @@ struct State {
   bool polling;
 };
 State g_network;
+// SMP 下整个内核持 CPU-owned BKL；它提供跨 CPU 互斥，cli 只保护本 CPU 的
+// “检查条件→登记等待→block”时序。不能把 cli/volatile 当成跨核锁。
+void restore_interrupts(bool enabled) { if(enabled) enable_interrupts(); }
+void wake_udp_receivers(UdpSocket* socket,bool all) {
+  for(auto& waiter:socket->waiters) {
+    ThreadControlBlock* thread=waiter.thread;
+    const uint32_t tid=waiter.tid;
+    waiter={};
+    // 超时/退出后的旧 TCB 指针不能唤醒恰好复用了同一槽的新线程。
+    if(thread && thread->in_use && thread->tid==tid && scheduler_wake_thread(thread)) {
+      ++g_network.status.udp_wait_wakes;
+      if(!all) return;
+    }
+  }
+}
 uint16_t read16(const uint8_t* bytes) { return static_cast<uint16_t>((uint16_t{bytes[0]}<<8)|bytes[1]); }
 uint32_t read32(const uint8_t* bytes) { return (uint32_t{bytes[0]}<<24)|(uint32_t{bytes[1]}<<16)|(uint32_t{bytes[2]}<<8)|bytes[3]; }
 void write16(uint8_t* bytes,uint16_t value) { bytes[0]=static_cast<uint8_t>(value>>8); bytes[1]=static_cast<uint8_t>(value); }
@@ -123,7 +142,10 @@ void ethernet_header(uint8_t* frame,const uint8_t* destination,uint16_t type) {
 bool transmit_frame(uint8_t* frame,size_t bytes) {
   // 以太网不含 FCS 的最小帧长为 60 字节；填充不是 IP/UDP 的有效载荷。
   if(bytes<60) { memory_set(frame+bytes,0,60-bytes); bytes=60; }
-  return virtio_net_send(frame,bytes);
+  const bool sent=virtio_net_send(frame,bytes);
+  // TX completion 校验可能发现设备错误；不能让无限等待的接收者一直睡着。
+  if(!virtio_net_status().ready) (void)network_status();
+  return sent;
 }
 bool send_arp(uint16_t operation,uint32_t destination_ip,const uint8_t* destination_mac) {
   uint8_t frame[60]{};
@@ -154,8 +176,9 @@ bool resolve_mac(uint32_t destination,uint32_t timeout_ms,uint8_t* result) {
     if(requests<3 && timer_tick_count()-last_request>=ticks/3) {
       (void)send_arp(1,hop,broadcast); last_request=timer_tick_count(); ++requests;
     }
-    // 等网络时让出线程，不能只 hlt 整颗 CPU 而让其它可运行进程挨饿。
-    if(!timer_sleep_ms(1)) wait_for_interrupt();
+    // AP 持 BKL 时不能退回 HLT：BSP 的 tick/网卡 worker 都需要同一把锁。
+    // 有线程则必须成功切到其他线程/idle；无法 sleep 时按失败返回。
+    if(!timer_sleep_ms(1)) return false;
   }
   return false;
 }
@@ -239,9 +262,10 @@ void receive_udp(const uint8_t* ethernet,uint32_t source,const uint8_t* payload,
     if(!socket.open || socket.port!=destination_port) continue;
     if(socket.count==kDatagrams) { ++g_network.status.udp_dropped; return; }
     Datagram& datagram=socket.inbox[(socket.first+socket.count)%kDatagrams];
-    datagram.metadata={source,source_port,destination_port,static_cast<uint16_t>(bytes)};
+    datagram.metadata={source,source_port,destination_port,static_cast<uint16_t>(bytes),0};
     if(bytes) memory_copy(datagram.bytes,payload+kUdpHeader,bytes);
     ++socket.count;
+    wake_udp_receivers(&socket,false);
     return;
   }
   ++g_network.status.udp_dropped;
@@ -293,14 +317,24 @@ bool network_initialize(PageAllocator* allocator) {
   return true;
 }
 const NetworkStatus& network_status() {
-  g_network.status.ready=g_network.status.ready && virtio_net_status().ready;
+  if(g_network.status.ready && !virtio_net_status().ready) {
+    g_network.status.ready=false;
+    const bool enabled=interrupts_are_enabled();
+    disable_interrupts();
+    for(auto& socket:g_network.sockets) wake_udp_receivers(&socket,true);
+    restore_interrupts(enabled);
+  }
   return g_network.status;
 }
 uint32_t network_poll(uint32_t budget) {
+  // 网卡与硬件 IRQ 留在 BSP；AP 的 UDP syscall 通过共享 inbox 收数据。
+  // 尚未启 SMP 的启动/宿主测试仍可主动 pump 协议层。
+  if(smp_is_enabled() && smp_current_cpu_index()!=0) return 0;
   if(!network_status().ready || g_network.polling) return 0;
   g_network.polling=true;
   const uint32_t count=virtio_net_poll(budget,receive_frame,nullptr);
   g_network.polling=false;
+  (void)network_status();
   return count;
 }
 bool network_parse_ipv4(const char* text,uint32_t* address) {
@@ -352,7 +386,7 @@ bool network_ping(uint32_t destination,uint32_t timeout_ms,NetworkPingResult* re
   const uint64_t ticks=timeout_ticks(timeout_ms);
   while(timer_tick_count()-g_network.ping.started<ticks && !g_network.ping.replied && network_status().ready) {
     network_poll();
-    if(!g_network.ping.replied && !timer_sleep_ms(1)) wait_for_interrupt();
+    if(!g_network.ping.replied && !timer_sleep_ms(1)) break;
   }
   result->replied=g_network.ping.replied;
   if(result->replied) result->round_trip_ms=static_cast<uint32_t>(
@@ -374,13 +408,23 @@ int32_t network_udp_open(uint16_t port,uint32_t owner_pid) {
   return -1;
 }
 bool network_udp_close(int32_t handle,uint32_t owner_pid) {
+  const bool enabled=interrupts_are_enabled();
+  disable_interrupts();
   UdpSocket* socket=lookup_socket(handle,owner_pid);
-  if(socket==nullptr) return false;
-  socket->open=false; socket->first=socket->count=0; return true;
+  if(socket==nullptr) { restore_interrupts(enabled); return false; }
+  socket->open=false; socket->first=socket->count=0;
+  wake_udp_receivers(socket,true);
+  restore_interrupts(enabled);
+  return true;
 }
 void network_udp_close_owner(uint32_t owner_pid) {
+  const bool enabled=interrupts_are_enabled();
+  disable_interrupts();
   for(auto& socket:g_network.sockets)
-    if(socket.open && socket.owner_pid==owner_pid) { socket.open=false; socket.first=socket.count=0; }
+    if(socket.open && socket.owner_pid==owner_pid) {
+      socket.open=false; socket.first=socket.count=0; wake_udp_receivers(&socket,true);
+    }
+  restore_interrupts(enabled);
 }
 int32_t network_udp_send(int32_t handle,uint32_t destination,uint16_t port,const void* payload,
                          size_t bytes,uint32_t arp_timeout_ms,uint32_t owner_pid) {
@@ -410,4 +454,77 @@ int32_t network_udp_receive(int32_t handle,NetworkDatagram* metadata,void* paylo
   socket->first=static_cast<uint16_t>((socket->first+1)%kDatagrams);
   --socket->count;
   return bytes;
+}
+
+int32_t network_udp_receive_wait(int32_t handle,NetworkDatagram* metadata,void* payload,
+                                 size_t capacity,uint32_t timeout_ms,uint32_t owner_pid) {
+  ++g_network.status.udp_wait_calls;
+  if(!network_status().ready) return -3;
+  if(metadata==nullptr || capacity>kNetworkUdpMaxPayload || (capacity && payload==nullptr) ||
+      (timeout_ms>60000 && timeout_ms!=UINT32_MAX)) return -2;
+  UdpSocket* socket=lookup_socket(handle,owner_pid);
+  if(socket==nullptr) return -2;
+  ThreadControlBlock* const thread=scheduler_active_thread();
+  uint64_t deadline=UINT64_MAX;
+  if(timeout_ms!=0 && timeout_ms!=UINT32_MAX) {
+    if(!timer_is_ready()) return -2;
+    const uint64_t now=timer_tick_count(), ticks=timeout_ticks(timeout_ms);
+    if(ticks==0 || now>=UINT64_MAX-ticks) return -2;
+    deadline=now+ticks;
+  }
+  bool waited=false;
+  for(;;) {
+    const bool enabled=interrupts_are_enabled();
+    disable_interrupts();
+    if(!network_status().ready) { restore_interrupts(enabled); return -3; }
+    socket=lookup_socket(handle,owner_pid);
+    if(socket==nullptr) {
+      restore_interrupts(enabled);
+      if(waited) { ++g_network.status.udp_wait_closed; return -4; }
+      return -2;
+    }
+    if(socket->count) {
+      // 线程可能在等待时被调度出去，用户堆映射也可能被另一个线程修改。
+      // 不能仅相信进入 syscall 时的检查；最终 copy 前按当前地址空间重验。
+      if(thread && thread->execution_mode==kThreadExecutionModeUser &&
+          (!scheduler_user_range_valid(reinterpret_cast<uint64_t>(metadata),sizeof(*metadata),true) ||
+           (capacity && !scheduler_user_range_valid(reinterpret_cast<uint64_t>(payload),capacity,true)))) {
+        restore_interrupts(enabled); return -2;
+      }
+      const Datagram& datagram=socket->inbox[socket->first];
+      const uint16_t bytes=datagram.metadata.payload_bytes;
+      if(capacity<bytes) { restore_interrupts(enabled); return -2; }
+      *metadata=datagram.metadata;
+      if(bytes) memory_copy(payload,datagram.bytes,bytes);
+      socket->first=static_cast<uint16_t>((socket->first+1)%kDatagrams);
+      --socket->count;
+      restore_interrupts(enabled);
+      return bytes;
+    }
+    if(timeout_ms==0 || (deadline!=UINT64_MAX && timer_tick_count()>=deadline)) {
+      if(timeout_ms) ++g_network.status.udp_wait_timeouts;
+      restore_interrupts(enabled); return -1;
+    }
+    if(!enabled || !thread || thread->is_idle_thread || !timer_is_ready()) {
+      restore_interrupts(enabled); return -2;
+    }
+    size_t waiter_slot=0;
+    while(waiter_slot<kSchedulerMaxThreadCount && socket->waiters[waiter_slot].thread &&
+          socket->waiters[waiter_slot].thread!=thread) ++waiter_slot;
+    if(waiter_slot==kSchedulerMaxThreadCount) { restore_interrupts(enabled); return -1; }
+    socket->waiters[waiter_slot]={thread,thread->tid};
+    waited=true;
+    // BKL 覆盖不同 CPU，cli 覆盖本 CPU：收包方不可能在登记与 block 之间
+    // 抢跑并漏掉唤醒。截止时间由统一 BSP tick 驱动，AP tick 不重复计时。
+    const bool blocked=scheduler_block_current_thread_until(deadline);
+    disable_interrupts();
+    if(socket->waiters[waiter_slot].thread==thread && socket->waiters[waiter_slot].tid==thread->tid)
+      socket->waiters[waiter_slot]={};
+    restore_interrupts(enabled);
+    if(blocked) { ++g_network.status.udp_wait_blocks; continue; }
+    // 过期检查与调度器登记之间恰好到 deadline 时，不 busy-loop；重验一次
+    // 条件可优先取已到达的数据，再返回 timeout。无可用调度器则直接失败。
+    if(deadline!=UINT64_MAX && timer_tick_count()>=deadline) continue;
+    return -1;
+  }
 }
