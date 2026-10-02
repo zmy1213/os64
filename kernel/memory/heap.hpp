@@ -6,8 +6,8 @@
 
 #include "memory/page_allocator.hpp"
 
-constexpr uint64_t kKernelHeapStart = 0x0000000000400000ULL;  // 第一版把堆虚拟地址放在 4 MiB。
-constexpr uint64_t kKernelHeapLimit = 0x0000000000800000ULL;  // 先给它预留到 8 MiB，便于调试。
+constexpr uint64_t kKernelHeapStart = 0x0000000001000000ULL;  // 16 MiB，和独立用户窗口分离。
+constexpr uint64_t kKernelHeapLimit = 0x0000000001400000ULL;
 
 struct KernelHeapFreeRegion;
 
@@ -29,6 +29,8 @@ struct KernelHeap {
 // 建好一份“还没真正映射任何页”的空堆。
 // 这里只是把状态清干净，并记住以后要向哪个页分配器要物理页。
 bool initialize_kernel_heap(KernelHeap* heap, PageAllocator* allocator);
+// Map capacity before cloning user roots so every process sees stable kernel pages.
+bool heap_reserve(KernelHeap* heap, size_t bytes);
 
 // 分配一块堆内存。
 // `size` 是调用者真正想要的 payload 大小；

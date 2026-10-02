@@ -23,7 +23,7 @@ uint64_t allocate_clone_table_page(PageAllocator* allocator) {
     return 0;
   }
 
-  const uint64_t page = alloc_page(allocator);
+  const uint64_t page = alloc_page_below(allocator, kPagingBootIdentityLimit);
   if (page == 0 || page >= kPagingBootIdentityLimit) {
     return 0;
   }
@@ -35,6 +35,27 @@ uint64_t allocate_clone_table_page(PageAllocator* allocator) {
 
   memory_set(table, 0, kPagingPageSize);
   return page;
+}
+
+void destroy_table(PageAllocator* allocator, uint64_t physical_address,
+                   uint8_t levels, bool release_user_pages) {
+  auto* const table = table_from_physical_address(physical_address);
+  if (table == nullptr || levels == 0) {
+    return;
+  }
+  for (size_t index = 0; index < kPageTableEntryCount; ++index) {
+    const uint64_t entry = table[index];
+    if ((entry & kPagePresent) == 0) {
+      continue;
+    }
+    if (levels > 1 && (entry & kPageLarge) == 0) {
+      destroy_table(allocator, entry & kPageMask, levels - 1,
+                    release_user_pages);
+    } else if (levels == 1 && release_user_pages && (entry & kPageUser) != 0) {
+      (void)free_page(allocator, entry & kPageMask);
+    }
+  }
+  (void)free_page(allocator, physical_address);
 }
 
 // 递归克隆一层页表：
@@ -80,6 +101,7 @@ uint64_t clone_page_table_level(PageAllocator* allocator,
       const uint64_t cloned_child = clone_page_table_level(
           allocator, child_physical_address, remaining_levels - 1);
       if (cloned_child == 0) {
+        destroy_table(allocator, cloned_page, remaining_levels, false);
         return 0;
       }
 
@@ -87,7 +109,8 @@ uint64_t clone_page_table_level(PageAllocator* allocator,
       continue;
     }
 
-    destination[index] = entry;
+    // A child receives kernel mappings, never aliases of its parent's user pages.
+    destination[index] = (entry & kPageUser) != 0 ? 0 : entry;
   }
 
   return cloned_page;
@@ -135,6 +158,12 @@ bool initialize_kernel_address_space_view(AddressSpace* space) {
 }
 
 bool clone_current_address_space(AddressSpace* space, PageAllocator* allocator) {
+  return clone_address_space_from_root(space, allocator,
+                                       paging_current_root_physical());
+}
+
+bool clone_address_space_from_root(AddressSpace* space, PageAllocator* allocator,
+                                   uint64_t source_root) {
   if (space == nullptr || allocator == nullptr) {
     return false;
   }
@@ -142,9 +171,8 @@ bool clone_current_address_space(AddressSpace* space, PageAllocator* allocator) 
   memory_set(space, 0, sizeof(*space));
   fill_common_layout(space);
 
-  const uint64_t current_root = paging_current_root_physical();
   const uint64_t cloned_root =
-      clone_page_table_level(allocator, current_root, 4);
+      clone_page_table_level(allocator, source_root, 4);
   if (cloned_root == 0) {
     return false;
   }
@@ -172,12 +200,17 @@ bool address_space_map_user_page(AddressSpace* space, PageAllocator* allocator,
   }
 
   if (!user_region_contains(virtual_address) ||
+      physical_address < kAllocatorMinAddress ||
+      physical_address >= kPagingBootIdentityLimit ||
       (physical_address & (kPagingPageSize - 1)) != 0) {
     return false;
   }
 
-  const bool already_mapped =
-      address_space_resolve_mapping(space, virtual_address) != 0;
+  const bool already_mapped = address_space_user_range_valid(
+      space, virtual_address, 1, false);
+  if (already_mapped) {
+    return false;
+  }
   if (!map_page_in_root(allocator, space->root_physical_address,
                         virtual_address, physical_address,
                         flags | kPageUser)) {
@@ -200,4 +233,76 @@ uint64_t address_space_resolve_mapping(const AddressSpace* space,
 
   return resolve_physical_address_in_root(space->root_physical_address,
                                           virtual_address);
+}
+
+bool address_space_destroy(AddressSpace* space, PageAllocator* allocator) {
+  if (space == nullptr || allocator == nullptr || !space->ready ||
+      !space->owns_page_table_root ||
+      space->root_physical_address == paging_current_root_physical()) {
+    return false;
+  }
+  destroy_table(allocator, space->root_physical_address, 4, true);
+  memory_set(space, 0, sizeof(*space));
+  return true;
+}
+
+bool address_space_user_range_valid(const AddressSpace* space,
+                                     uint64_t address, size_t bytes,
+                                     bool writable) {
+  if (space == nullptr || !space->ready ||
+      address < space->user_region_base || address >= space->user_region_limit ||
+      bytes > space->user_region_limit - address) {
+    return false;
+  }
+  if (bytes == 0) {
+    return true;
+  }
+  const uint64_t required = kPagePresent | kPageUser |
+                            (writable ? kPageWritable : 0);
+  const uint64_t last_page = (address + bytes - 1) & ~(kPagingPageSize - 1);
+  for (uint64_t page = address & ~(kPagingPageSize - 1);;
+       page += kPagingPageSize) {
+    auto* table = table_from_physical_address(space->root_physical_address);
+    for (int shift = 39; shift >= 12; shift -= 9) {
+      if (table == nullptr) {
+        return false;
+      }
+      const uint64_t entry = table[(page >> shift) & 0x1FF];
+      if ((entry & required) != required ||
+          (shift > 12 && (entry & kPageLarge) != 0)) {
+        return false;
+      }
+      if (shift > 12) {
+        table = table_from_physical_address(entry & kPageMask);
+      }
+    }
+    if (page == last_page) {
+      return true;
+    }
+  }
+}
+
+bool address_space_copy_to_user(const AddressSpace* space, uint64_t address,
+                                 const void* source, size_t bytes) {
+  if ((source == nullptr && bytes != 0) ||
+      !address_space_user_range_valid(space, address, bytes, true)) {
+    return false;
+  }
+  const auto* cursor = static_cast<const uint8_t*>(source);
+  while (bytes != 0) {
+    const uint64_t physical = address_space_resolve_mapping(space, address);
+    if (physical == 0 || physical >= kPagingBootIdentityLimit) {
+      return false;
+    }
+    size_t chunk = kPagingPageSize - (address & (kPagingPageSize - 1));
+    if (chunk > bytes) {
+      chunk = bytes;
+    }
+    memory_copy(reinterpret_cast<void*>(static_cast<uintptr_t>(physical)),
+                cursor, chunk);
+    address += chunk;
+    cursor += chunk;
+    bytes -= chunk;
+  }
+  return true;
 }

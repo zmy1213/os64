@@ -109,6 +109,8 @@ enum Os64FsValidationDebugCode : uint32_t {
   kOs64FsValidationDebugDataBlockReference = 5, // inode 引用了非法块，或者两个 inode/块槽重复引用同一块。
   kOs64FsValidationDebugBitmapMismatch = 6,     // data bitmap 和 inode 实际引用图不一致。
   kOs64FsValidationDebugFreeCountMismatch = 7,  // superblock 里的空闲计数和实际扫描结果不一致。
+  kOs64FsValidationDebugDirectoryReference = 8,
+  kOs64FsValidationDebugUnreachableInode = 9,
 };
 
 struct Os64FsValidationDebug {

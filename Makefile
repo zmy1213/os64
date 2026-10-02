@@ -1,46 +1,49 @@
-# Use the Homebrew QEMU binary by default so the repo works on this machine
-# without extra PATH setup.
-QEMU ?= /opt/homebrew/bin/qemu-system-x86_64
+.NOTPARALLEL:
+.PHONY: all build stage1 users check-env run run-gui run-stage1 run-stage1-gui test test-stage1 test-system test-storage-host test-page-fault test-invalid-opcode reset-data clean distclean
 
-.PHONY: all stage1 run-stage1 run-stage1-gui test-stage1 test-page-fault test-invalid-opcode clean
+all: build
+build stage1:
+	@bash scripts/build-stage1-image.sh
 
-# The default target only builds the current boot image.
-all: stage1
+users:
+	@bash scripts/build-user.sh
 
-# Assemble stage1/stage2 and lay them out into a raw disk image.
-stage1:
-	bash scripts/build-stage1-image.sh
+check-env:
+	@bash scripts/check-env.sh
 
-# Headless run: useful when we only care about serial output in the terminal.
-run-stage1: stage1
-	$(QEMU) \
-		-drive format=raw,file=build/disk.img,if=floppy,index=0 \
-		-display none \
-		-monitor none \
-		-serial stdio \
-		-no-reboot \
-		-no-shutdown \
-		-device isa-debug-exit,iobase=0xf4,iosize=0x04
+run run-stage1: build
+	@bash scripts/run-qemu.sh
 
-# GUI run: useful when we want to see the BIOS text screen directly.
-run-stage1-gui: stage1
-	$(QEMU) \
-		-drive format=raw,file=build/disk.img,if=floppy,index=0 \
-		-serial stdio \
-		-no-reboot \
-		-no-shutdown \
-		-device isa-debug-exit,iobase=0xf4,iosize=0x04
+run-gui run-stage1-gui: build
+	@bash scripts/run-qemu.sh --gui
 
-# Automated regression test: build the image, boot QEMU, and inspect serial log.
-test-stage1: stage1
-	bash scripts/test-stage1.sh
+# Old milestones use the immutable RAM fixture; the system suite uses its own
+# temporary IDE data disk and never writes build/data.img.
+test: test-stage1 test-system test-storage-host test-page-fault test-invalid-opcode
+	@$(MAKE) --no-print-directory build
+
+test-stage1: build
+	@bash scripts/test-stage1.sh
+
+test-system: build
+	@bash scripts/test-system.sh
+
+test-storage-host: build
+	@bash scripts/test-storage-host.sh
 
 test-page-fault:
-	bash scripts/test-page-fault.sh
+	@bash scripts/test-page-fault.sh
 
 test-invalid-opcode:
-	bash scripts/test-invalid-opcode.sh
+	@bash scripts/test-invalid-opcode.sh
 
-# Remove build outputs so the next run starts from a clean image.
+# Reset is explicit. Ordinary build and clean preserve the persistent data disk.
+reset-data: build
+	@cp build/data_volume.bin build/data.img
+	@echo 'Persistent data disk reset to the current template.'
+
 clean:
-	rm -rf build
+	@python3 scripts/clean-build.py
+
+distclean:
+	@rm -rf build

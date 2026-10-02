@@ -133,7 +133,7 @@ bool vfs_file_is_open(const VfsFile* file) {
 }
 
 bool vfs_close_file(VfsFile* file) {
-  if (!vfs_file_is_open(file)) {
+  if (file == nullptr || !file->handle.open) {
     return false;
   }
 
@@ -197,7 +197,7 @@ bool vfs_directory_is_open(const VfsDirectory* directory) {
 }
 
 bool vfs_close_directory(VfsDirectory* directory) {
-  if (!vfs_directory_is_open(directory)) {
+  if (directory == nullptr || !directory->handle.open) {
     return false;
   }
 

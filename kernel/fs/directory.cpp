@@ -67,7 +67,7 @@ bool directory_is_open(const DirectoryHandle* handle) {
 }
 
 bool directory_close(DirectoryHandle* handle) {
-  if (!directory_is_open(handle)) {
+  if (handle == nullptr || !handle->open) {
     return false;
   }
 

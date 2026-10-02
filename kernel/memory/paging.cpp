@@ -59,7 +59,7 @@ uint64_t allocate_page_table_page(PageAllocator* allocator) {
     return 0;
   }
 
-  const uint64_t page = alloc_page(allocator);
+  const uint64_t page = alloc_page_below(allocator, kPagingBootIdentityLimit);
   if (page == 0) {
     return 0;
   }

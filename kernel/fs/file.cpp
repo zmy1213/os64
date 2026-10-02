@@ -65,7 +65,7 @@ bool file_is_open(const FileHandle* handle) {
 }
 
 bool file_close(FileHandle* handle) {
-  if (!file_is_open(handle)) {
+  if (handle == nullptr || !handle->open) {
     return false;
   }
 
@@ -94,13 +94,22 @@ bool file_handle_stat(const FileHandle* handle, FileStat* out_stat) {
     return false;
   }
 
-  return copy_inode_to_stat(&handle->inode, out_stat);
+  Os64FsInode inode;
+  return os64fs_read_inode(handle->filesystem, handle->inode.inode_number, &inode) &&
+         inode.type == kOs64FsTypeFile && copy_inode_to_stat(&inode, out_stat);
 }
 
 size_t file_read(FileHandle* handle, void* buffer, size_t bytes_to_read) {
   if (!file_is_open(handle) || buffer == nullptr || bytes_to_read == 0) {
     return 0;
   }
+
+  // Another descriptor may have replaced or appended the file after open.
+  // Refresh block references as well as size before reading any data.
+  Os64FsInode current;
+  if (!os64fs_read_inode(handle->filesystem, handle->inode.inode_number, &current) ||
+      current.type != kOs64FsTypeFile) return 0;
+  handle->inode = current;
 
   // 已经在文件末尾了，就直接返回 0，表示 EOF。
   if (handle->offset >= handle->inode.size_bytes) {
@@ -127,9 +136,14 @@ size_t file_read(FileHandle* handle, void* buffer, size_t bytes_to_read) {
 }
 
 bool file_seek(FileHandle* handle, uint32_t offset) {
-  if (!file_is_open(handle) || offset > handle->inode.size_bytes) {
+  if (!file_is_open(handle)) return false;
+  Os64FsInode current;
+  if (!os64fs_read_inode(handle->filesystem, handle->inode.inode_number, &current) ||
+      current.type != kOs64FsTypeFile || offset > current.size_bytes) {
     return false;
   }
+
+  handle->inode = current;
 
   handle->offset = offset;
   return true;

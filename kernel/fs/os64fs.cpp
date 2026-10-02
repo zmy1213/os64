@@ -1,6 +1,7 @@
 #include "fs/os64fs.hpp"
 
 #include "runtime/runtime.hpp"
+#include "memory/kmemory.hpp"
 
 namespace {
 
@@ -108,7 +109,7 @@ uint32_t filesystem_indirect_entry_capacity(const Os64Fs* filesystem) {
 }
 
 uint32_t bitmap_required_bytes(uint32_t bit_count) {
-  return (bit_count + 7u) / 8u;
+  return bit_count / 8u + ((bit_count % 8u) != 0);
 }
 
 bool bitmap_bit_is_set(const uint8_t* bitmap,
@@ -326,6 +327,7 @@ bool filesystem_layout_is_valid(const Os64Fs* filesystem) {
   // 签名、版本、各区域起止扇区、inode 大小、目录项大小、空闲计数，都先过一遍。
   if (!signature_matches(sb.signature) ||
       sb.version != kOs64FsVersion ||
+      sector_size != 512 ||
       sb.total_sectors != filesystem->device->sector_count ||
       sb.inode_bitmap_start_sector == 0 ||
       sb.inode_bitmap_sector_count == 0 ||
@@ -343,21 +345,19 @@ bool filesystem_layout_is_valid(const Os64Fs* filesystem) {
       sb.inode_table_start_sector >= sb.total_sectors ||
       sb.data_start_sector >= sb.total_sectors ||
       sb.data_sector_count == 0 ||
-      sb.data_start_sector + sb.data_sector_count > sb.total_sectors ||
-      sb.data_block_size == 0 ||
-      sb.data_block_size < sector_size ||
-      (sb.data_block_size % sector_size) != 0 ||
+      static_cast<uint64_t>(sb.data_start_sector) + sb.data_sector_count > sb.total_sectors ||
+      sb.data_block_size != 512 ||
       sb.free_inode_count > (sb.inode_count - 1)) {
     return false;
   }
 
-  const uint32_t inode_table_bytes = sb.inode_count * sb.inode_size;
-  const uint32_t inode_table_capacity_bytes =
-      sb.inode_table_sector_count * sector_size;
-  const uint32_t inode_bitmap_capacity_bytes =
-      sb.inode_bitmap_sector_count * sector_size;
-  const uint32_t data_bitmap_capacity_bytes =
-      sb.data_bitmap_sector_count * sector_size;
+  const uint64_t inode_table_bytes = static_cast<uint64_t>(sb.inode_count) * sb.inode_size;
+  const uint64_t inode_table_capacity_bytes =
+      static_cast<uint64_t>(sb.inode_table_sector_count) * sector_size;
+  const uint64_t inode_bitmap_capacity_bytes =
+      static_cast<uint64_t>(sb.inode_bitmap_sector_count) * sector_size;
+  const uint64_t data_bitmap_capacity_bytes =
+      static_cast<uint64_t>(sb.data_bitmap_sector_count) * sector_size;
   if (inode_table_bytes == 0 ||
       inode_table_bytes > inode_table_capacity_bytes ||
       inode_table_capacity_bytes > kOs64FsMaxInodeTableBytes ||
@@ -370,12 +370,12 @@ bool filesystem_layout_is_valid(const Os64Fs* filesystem) {
     return false;
   }
 
-  const uint32_t inode_bitmap_end_sector =
-      sb.inode_bitmap_start_sector + sb.inode_bitmap_sector_count;
-  const uint32_t data_bitmap_end_sector =
-      sb.data_bitmap_start_sector + sb.data_bitmap_sector_count;
-  const uint32_t inode_table_end_sector =
-      sb.inode_table_start_sector + sb.inode_table_sector_count;
+  const uint64_t inode_bitmap_end_sector =
+      static_cast<uint64_t>(sb.inode_bitmap_start_sector) + sb.inode_bitmap_sector_count;
+  const uint64_t data_bitmap_end_sector =
+      static_cast<uint64_t>(sb.data_bitmap_start_sector) + sb.data_bitmap_sector_count;
+  const uint64_t inode_table_end_sector =
+      static_cast<uint64_t>(sb.inode_table_start_sector) + sb.inode_table_sector_count;
 
   // 这里进一步检查“磁盘布局有没有互相重叠”：
   // inode bitmap -> data bitmap -> inode table -> data area 必须按顺序排开。
@@ -413,8 +413,10 @@ bool inode_is_valid(const Os64Fs* filesystem, const Os64FsInode* inode) {
       filesystem_indirect_entry_capacity(filesystem);
   const uint32_t max_block_count =
       static_cast<uint32_t>(kOs64FsDirectBlockCount) + max_indirect_entries;
-  if (inode->block_count < required_blocks ||
-      inode->block_count > max_block_count) {
+  if (inode->block_count != required_blocks ||
+      inode->block_count > max_block_count || inode->link_count != 1 ||
+      (inode->type == kOs64FsTypeDirectory &&
+       (inode->size_bytes % sizeof(Os64FsDirEntry)) != 0)) {
     return false;
   }
 
@@ -650,6 +652,67 @@ bool mark_data_block_allocated(Os64Fs* filesystem,
   return true;
 }
 
+bool validate_directory_references(Os64Fs* filesystem) {
+  constexpr size_t kMaximumInodeCount = kOs64FsMaxInodeTableBytes / sizeof(Os64FsInode);
+  uint32_t parents[kMaximumInodeCount] = {};
+  for (uint32_t number = 1; number < filesystem->superblock.inode_count; ++number) {
+    if (!bitmap_bit_is_set(filesystem->inode_bitmap_cache,
+                           filesystem->inode_bitmap_bytes, number)) continue;
+    const Os64FsInode* directory = cached_inode_pointer(filesystem, number);
+    if (directory->type != kOs64FsTypeDirectory) continue;
+    const uint32_t count = os64fs_directory_entry_count(filesystem, directory);
+    for (uint32_t i = 0; i < count; ++i) {
+      Os64FsDirEntry entry;
+      Os64FsInode child;
+      if (!os64fs_read_directory_entry(filesystem, directory, i, &entry) ||
+          entry.name_length == 0 ||
+          component_is_dot(entry.name, entry.name_length) ||
+          component_is_dot_dot(entry.name, entry.name_length) ||
+          entry.inode_number >= filesystem->superblock.inode_count ||
+          entry.inode_number == filesystem->superblock.root_inode ||
+          !bitmap_bit_is_set(filesystem->inode_bitmap_cache,
+                             filesystem->inode_bitmap_bytes, entry.inode_number) ||
+          !os64fs_read_inode(filesystem, entry.inode_number, &child) ||
+          child.type != entry.type || parents[entry.inode_number] != 0) {
+        set_validation_debug(filesystem, kOs64FsValidationDebugDirectoryReference, number, i, 0);
+        return false;
+      }
+      for (uint32_t c = 0; c < entry.name_length; ++c) {
+        if (entry.name[c] == '/' || entry.name[c] == '\0') {
+          set_validation_debug(filesystem, kOs64FsValidationDebugDirectoryReference, number, i, c);
+          return false;
+        }
+      }
+      for (uint32_t previous = 0; previous < i; ++previous) {
+        Os64FsDirEntry other;
+        if (!os64fs_read_directory_entry(filesystem, directory, previous, &other) ||
+            name_matches(&other, entry.name, entry.name_length)) {
+          set_validation_debug(filesystem, kOs64FsValidationDebugDirectoryReference, number, i, previous);
+          return false;
+        }
+      }
+      parents[entry.inode_number] = number;
+    }
+  }
+  for (uint32_t number = 1; number < filesystem->superblock.inode_count; ++number) {
+    if (!bitmap_bit_is_set(filesystem->inode_bitmap_cache,
+                           filesystem->inode_bitmap_bytes, number)) continue;
+    uint32_t current = number;
+    uint32_t depth = 1;
+    while (current != filesystem->superblock.root_inode &&
+           current != 0 && depth <= kOs64FsMaxPathDepth) {
+      current = parents[current];
+      ++depth;
+    }
+    if (current != filesystem->superblock.root_inode || depth > kOs64FsMaxPathDepth) {
+      set_validation_debug(filesystem, kOs64FsValidationDebugUnreachableInode, number,
+                           filesystem->superblock.root_inode, current);
+      return false;
+    }
+  }
+  return true;
+}
+
 bool validate_allocation_maps_and_collect_stats(Os64Fs* filesystem) {
   if (filesystem == nullptr || !os64fs_is_mounted(filesystem)) {
     return false;
@@ -764,6 +827,8 @@ bool validate_allocation_maps_and_collect_stats(Os64Fs* filesystem) {
       return false;
     }
   }
+
+  if (!validate_directory_references(filesystem)) return false;
 
   const uint32_t allocatable_inodes = filesystem->superblock.inode_count - 1;
   const uint32_t free_inode_count =
@@ -1136,7 +1201,7 @@ bool sync_metadata(Os64Fs* filesystem) {
          write_inode_bitmap(filesystem) &&
          write_data_bitmap(filesystem) &&
          write_inode_table(filesystem) &&
-         write_superblock(filesystem);
+         write_superblock(filesystem) && block_device_flush(filesystem->device);
 }
 
 bool allocate_inode_number(Os64Fs* filesystem, uint32_t* out_inode_number) {
@@ -1282,6 +1347,11 @@ bool ensure_inode_file_block(Os64Fs* filesystem,
     return false;
   }
 
+  if (file_block_index >= kOs64FsDirectBlockCount +
+                         filesystem_indirect_entry_capacity(filesystem)) {
+    return false;
+  }
+
   uint32_t new_block_index = 0;
   if (!allocate_data_block_index(filesystem, &new_block_index)) {
     return false;
@@ -1388,6 +1458,11 @@ bool write_inode_bytes(Os64Fs* filesystem,
   }
 
   const uint32_t block_size = filesystem->superblock.data_block_size;
+  const uint64_t maximum_size =
+      (kOs64FsDirectBlockCount + filesystem_indirect_entry_capacity(filesystem)) *
+      static_cast<uint64_t>(block_size);
+  if (bytes_to_write > maximum_size ||
+      static_cast<uint64_t>(offset) + bytes_to_write > maximum_size) return false;
   const auto* source = static_cast<const uint8_t*>(buffer);
   size_t written = 0;
 
@@ -1760,7 +1835,7 @@ bool os64fs_read_inode_data(const Os64Fs* filesystem,
                                 buffer, bytes_to_read);
 }
 
-bool os64fs_create_file(Os64Fs* filesystem, const char* path) {
+static bool os64fs_create_file_impl(Os64Fs* filesystem, const char* path) {
   if (!os64fs_is_mounted(filesystem) || path == nullptr) {
     return false;
   }
@@ -1811,7 +1886,7 @@ bool os64fs_create_file(Os64Fs* filesystem, const char* path) {
   return true;
 }
 
-bool os64fs_create_directory(Os64Fs* filesystem, const char* path) {
+static bool os64fs_create_directory_impl(Os64Fs* filesystem, const char* path) {
   if (!os64fs_is_mounted(filesystem) || path == nullptr) {
     return false;
   }
@@ -1874,7 +1949,7 @@ bool write_file_common(Os64Fs* filesystem,
   if (!target.child_exists) {
     // 这一步让“write 一个还不存在的文件路径”也能直接成功，
     // 相当于自动做了“先 create，再写”。
-    if (!os64fs_create_file(filesystem, path) ||
+    if (!os64fs_create_file_impl(filesystem, path) ||
         !os64fs_read_inode(filesystem, target.parent_inode.inode_number,
                            &target.parent_inode) ||
         !lookup_mutation_target(filesystem, path, &target) ||
@@ -1912,17 +1987,17 @@ bool write_file_common(Os64Fs* filesystem,
 
 }  // namespace
 
-bool os64fs_write_file(Os64Fs* filesystem, const char* path,
+static bool os64fs_write_file_impl(Os64Fs* filesystem, const char* path,
                        const void* buffer, size_t bytes_to_write) {
   return write_file_common(filesystem, path, buffer, bytes_to_write, false);
 }
 
-bool os64fs_append_file(Os64Fs* filesystem, const char* path,
+static bool os64fs_append_file_impl(Os64Fs* filesystem, const char* path,
                         const void* buffer, size_t bytes_to_write) {
   return write_file_common(filesystem, path, buffer, bytes_to_write, true);
 }
 
-bool os64fs_unlink(Os64Fs* filesystem, const char* path) {
+static bool os64fs_unlink_impl(Os64Fs* filesystem, const char* path) {
   if (!os64fs_is_mounted(filesystem) || path == nullptr) {
     return false;
   }
@@ -1967,4 +2042,138 @@ bool os64fs_unlink(Os64Fs* filesystem, const char* path) {
 
 bool os64fs_sync(Os64Fs* filesystem) {
   return os64fs_is_mounted(filesystem) && sync_metadata(filesystem);
+}
+
+namespace {
+// A bounded in-memory write set makes resource failures reversible. A v3
+// mutation can touch at most 136 file sectors, one indirect sector, a few
+// directory sectors, and 33 metadata sectors. Nothing reaches the medium
+// until the complete mutation and its allocation-map check have succeeded.
+constexpr uint32_t kMutationSectorLimit = 256;
+struct MutationSector {
+  uint32_t index;
+  uint8_t original[512];
+  uint8_t changed[512];
+};
+struct Mutation {
+  Os64Fs snapshot;
+  BlockDevice* backing;
+  BlockDevice staged;
+  uint32_t sector_count;
+  MutationSector sectors[kMutationSectorLimit];
+};
+bool g_mutation_active = false;
+
+MutationSector* find_mutation_sector(Mutation* mutation, uint32_t index) {
+  for (uint32_t i = 0; i < mutation->sector_count; ++i) {
+    if (mutation->sectors[i].index == index) return &mutation->sectors[i];
+  }
+  return nullptr;
+}
+bool staged_read(const void* context, uint32_t index, void* buffer, size_t size) {
+  auto* mutation = const_cast<Mutation*>(static_cast<const Mutation*>(context));
+  MutationSector* sector = find_mutation_sector(mutation, index);
+  if (sector == nullptr) return block_device_read_sector(mutation->backing, index, buffer, size);
+  if (buffer == nullptr || size < 512) return false;
+  memory_copy(buffer, sector->changed, 512);
+  return true;
+}
+bool staged_write(void* context, uint32_t index, const void* buffer, size_t size) {
+  auto* mutation = static_cast<Mutation*>(context);
+  if (buffer == nullptr || size < 512) return false;
+  MutationSector* sector = find_mutation_sector(mutation, index);
+  if (sector == nullptr) {
+    if (mutation->sector_count == kMutationSectorLimit) return false;
+    sector = &mutation->sectors[mutation->sector_count];
+    if (!block_device_read_sector(mutation->backing, index, sector->original, 512)) return false;
+    sector->index = index;
+    ++mutation->sector_count;
+  }
+  memory_copy(sector->changed, buffer, 512);
+  return true;
+}
+bool staged_flush(void*) { return true; }
+
+enum MutationOperation { kCreateFile, kCreateDirectory, kWriteFile, kAppendFile, kUnlink };
+
+bool mutate(Os64Fs* filesystem, const char* path, const void* buffer,
+            size_t size, MutationOperation operation) {
+  if (!os64fs_is_mounted(filesystem) || path == nullptr || g_mutation_active ||
+      ((operation == kWriteFile || operation == kAppendFile) &&
+       size != 0 && buffer == nullptr)) return false;
+  auto* mutation = static_cast<Mutation*>(kmalloc(sizeof(Mutation)));
+  if (mutation == nullptr) return false;
+  g_mutation_active = true;
+  memory_copy(&mutation->snapshot, filesystem, sizeof(*filesystem));
+  mutation->backing = filesystem->device;
+  mutation->sector_count = 0;
+  mutation->staged = *mutation->backing;
+  mutation->staged.context = mutation;
+  mutation->staged.read_sector = staged_read;
+  mutation->staged.write_sector = staged_write;
+  mutation->staged.flush = staged_flush;
+  filesystem->device = &mutation->staged;
+
+  bool success = false;
+  switch (operation) {
+    case kCreateFile: success = os64fs_create_file_impl(filesystem, path); break;
+    case kCreateDirectory: success = os64fs_create_directory_impl(filesystem, path); break;
+    case kWriteFile: success = os64fs_write_file_impl(filesystem, path, buffer, size); break;
+    case kAppendFile: success = os64fs_append_file_impl(filesystem, path, buffer, size); break;
+    case kUnlink: success = os64fs_unlink_impl(filesystem, path); break;
+  }
+  if (success) success = validate_allocation_maps_and_collect_stats(filesystem);
+
+  uint32_t attempted = 0;
+  if (success) {
+    for (uint32_t i = 0; i < mutation->sector_count; ++i) {
+      // A failed sector transfer may have altered the medium, so rollback
+      // also includes the failed attempt rather than only successful ones.
+      attempted = i + 1;
+      if (!block_device_write_sector(mutation->backing, mutation->sectors[i].index,
+                                     mutation->sectors[i].changed, 512)) {
+        success = false;
+        break;
+      }
+    }
+    if (success) success = block_device_flush(mutation->backing);
+  }
+  bool rollback_ok = true;
+  if (!success) {
+    const bool rollback_needed = attempted != 0;
+    while (attempted != 0) {
+      const MutationSector& sector = mutation->sectors[--attempted];
+      if (!block_device_write_sector(mutation->backing, sector.index, sector.original, 512)) {
+        rollback_ok = false;
+      }
+    }
+    if (rollback_needed &&
+        !block_device_flush(mutation->backing)) rollback_ok = false;
+    memory_copy(filesystem, &mutation->snapshot, sizeof(*filesystem));
+    // Continuing after an unrecoverable hardware failure could overwrite
+    // live blocks. Require a new mount instead of accepting further writes.
+    if (!rollback_ok) filesystem->mounted = false;
+  } else {
+    filesystem->device = mutation->backing;
+  }
+  (void)kfree(mutation);
+  g_mutation_active = false;
+  return success;
+}
+}  // namespace
+
+bool os64fs_create_file(Os64Fs* filesystem, const char* path) {
+  return mutate(filesystem, path, nullptr, 0, kCreateFile);
+}
+bool os64fs_create_directory(Os64Fs* filesystem, const char* path) {
+  return mutate(filesystem, path, nullptr, 0, kCreateDirectory);
+}
+bool os64fs_write_file(Os64Fs* filesystem, const char* path, const void* buffer, size_t size) {
+  return mutate(filesystem, path, buffer, size, kWriteFile);
+}
+bool os64fs_append_file(Os64Fs* filesystem, const char* path, const void* buffer, size_t size) {
+  return mutate(filesystem, path, buffer, size, kAppendFile);
+}
+bool os64fs_unlink(Os64Fs* filesystem, const char* path) {
+  return mutate(filesystem, path, nullptr, 0, kUnlink);
 }

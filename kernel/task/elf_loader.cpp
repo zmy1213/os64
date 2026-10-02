@@ -16,6 +16,16 @@ constexpr uint8_t kElfCurrentVersion = 1;
 constexpr uint16_t kElfTypeExecutable = 2;
 constexpr uint16_t kElfMachineX86_64 = 0x3E;
 
+struct StagingPage {
+  PageAllocator* allocator;
+  uint64_t page;
+  ~StagingPage() {
+    if (page != 0) {
+      (void)free_page(allocator, page);
+    }
+  }
+};
+
 // ELF loader 里的对齐 helper 本质上都在服务“按页映射”：
 // ELF 段的起止位置不一定页对齐，但页表映射一定是按 4 KiB 页做的。
 uint64_t align_down(uint64_t value, uint64_t alignment) {
@@ -141,7 +151,8 @@ bool entry_belongs_to_any_loadable_segment(
 
     const uint64_t segment_end =
         segment.virtual_address + segment.memory_size;
-    if (entry_point >= segment.virtual_address &&
+    if ((segment.flags & kElfProgramFlagExecute) != 0 &&
+        entry_point >= segment.virtual_address &&
         entry_point < segment_end) {
       return true;
     }
@@ -190,7 +201,9 @@ bool load_elf_user_program(PageAllocator* allocator,
     return false;
   }
 
-  const uint64_t staging_physical_page = alloc_page(allocator);
+  const uint64_t staging_physical_page =
+      alloc_page_below(allocator, kPagingBootIdentityLimit);
+  const StagingPage staging_owner{allocator, staging_physical_page};
   if (!page_is_directly_accessible_in_boot_identity_map(staging_physical_page)) {
     (void)file_close(&file_handle);
     return false;
@@ -217,6 +230,42 @@ bool load_elf_user_program(PageAllocator* allocator,
   const auto* const program_headers =
       reinterpret_cast<const Elf64ProgramHeader*>(
           staging_buffer + file_header->program_header_offset);
+
+  // Validate the whole image before publishing any mappings. Reject overlapping
+  // load pages rather than silently replacing a physical page owned by this image.
+  uint64_t planned_pages[kElfLoaderMaxLoadablePages];
+  uint32_t planned_count = 0;
+  for (uint16_t i = 0; i < file_header->program_header_count; ++i) {
+    const auto& segment = program_headers[i];
+    if (segment.type != kElfProgramTypeLoad) {
+      continue;
+    }
+    if (!loadable_segment_is_valid(user_space, &segment,
+                                   file_stat_result.size_bytes)) {
+      return false;
+    }
+    for (uint64_t page = align_down(segment.virtual_address, kPagingPageSize);
+         page < align_up(segment.virtual_address + segment.memory_size,
+                         kPagingPageSize);
+         page += kPagingPageSize) {
+      if (planned_count == kElfLoaderMaxLoadablePages ||
+          address_space_user_range_valid(user_space, page, 1, false)) {
+        return false;
+      }
+      for (uint32_t previous = 0; previous < planned_count; ++previous) {
+        if (planned_pages[previous] == page) {
+          return false;
+        }
+      }
+      planned_pages[planned_count++] = page;
+    }
+  }
+  if (planned_count == 0 ||
+      !entry_belongs_to_any_loadable_segment(program_headers,
+                                             file_header->program_header_count,
+                                             file_header->entry)) {
+    return false;
+  }
 
   // 第 1 遍扫描：只做“验证 + 规划映射”。
   // 这里会统计：
@@ -264,7 +313,8 @@ bool load_elf_user_program(PageAllocator* allocator,
     // 先把房子准备好，后面再往里面搬文件字节。
     // 先把这个段覆盖到的每一页都分出来并映射进用户地址空间。
     for (uint32_t page_index = 0; page_index < page_count; ++page_index) {
-      const uint64_t physical_page = alloc_page(allocator);
+      const uint64_t physical_page =
+          alloc_page_below(allocator, kPagingBootIdentityLimit);
       if (!page_is_directly_accessible_in_boot_identity_map(physical_page)) {
         return false;
       }
@@ -274,6 +324,7 @@ bool load_elf_user_program(PageAllocator* allocator,
       if (!address_space_map_user_page(user_space, allocator,
                                        load_base + page_index * kPagingPageSize,
                                        physical_page, page_flags)) {
+        (void)free_page(allocator, physical_page);
         return false;
       }
 

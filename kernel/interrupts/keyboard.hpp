@@ -32,6 +32,8 @@ bool initialize_keyboard();
 // 让更上层知道“键盘输入子系统是否真的初始化过了”。
 // 第一版 stdin/read(0) 会用它来避免在键盘还没准备好时傻等。
 bool keyboard_is_ready();
+// Shared terminal input queue; callers may submit UART or keyboard events.
+void keyboard_submit_input_event(const KeyboardInputEvent& event);
 
 // 当 IRQ1 到来时，由中断路径调用它。
 // 它会从键盘控制器里读出 1 个扫描码并记下来。

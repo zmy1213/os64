@@ -2,6 +2,7 @@
 
 #include "interrupts/interrupts.hpp"
 #include "interrupts/keyboard.hpp"
+#include "interrupts/pit.hpp"
 #include "runtime/runtime.hpp"
 #include "task/scheduler.hpp"
 
@@ -9,6 +10,12 @@ namespace {
 
 constexpr size_t kMaxSyscallPositiveResult = 2147483647U;
 SyscallContext* g_active_syscall_context = nullptr;  // 早期 boot/smoke 还会显式安装一份“当前内核上下文”；真正在线程里跑时，会优先改成取当前进程自己的 syscall_context。
+SchedulerState* g_process_scheduler = nullptr;
+PageAllocator* g_process_allocator = nullptr;
+const Os64Fs* g_process_filesystem = nullptr;
+VfsMount* g_process_vfs = nullptr;
+constexpr size_t kMaxUserArguments = 8;
+constexpr size_t kMaxUserTransfer = 69632;
 
 extern "C" bool kernel_user_mode_exit_is_armed();
 extern "C" [[noreturn]] void kernel_handle_user_mode_exit(uint64_t return_value);
@@ -287,6 +294,72 @@ bool frame_came_from_user_mode(const SyscallInterruptFrame* frame) {
   return frame != nullptr && (frame->cs & 0x3) == 3;
 }
 
+bool user_range_valid(uint64_t address, size_t bytes, bool writable) {
+  if (bytes == 0) {
+    return true;
+  }
+  AddressSpace current;
+  return initialize_kernel_address_space_view(&current) &&
+         address_space_user_range_valid(&current, address, bytes, writable);
+}
+
+bool user_path_valid(uint64_t address) {
+  for (size_t i = 0; i < kSyscallPathCapacity; ++i) {
+    if (address + i < address || !user_range_valid(address + i, 1, false)) {
+      return false;
+    }
+    if (*reinterpret_cast<const char*>(address + i) == '\0') {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool user_syscall_arguments_valid(const SyscallInterruptFrame* frame) {
+  switch (frame->rax) {
+    case kSyscallNumberGetCwd:
+      return frame->rsi <= kMaxUserTransfer &&
+             user_range_valid(frame->rdi, frame->rsi, true);
+    case kSyscallNumberChdir:
+    case kSyscallNumberOpen:
+    case kSyscallNumberOpenFlags:
+    case kSyscallNumberMkdir:
+    case kSyscallNumberUnlink:
+      return user_path_valid(frame->rdi);
+    case kSyscallNumberRead:
+    case kSyscallNumberWrite:
+      return frame->rdx <= kMaxUserTransfer &&
+             user_range_valid(frame->rsi, frame->rdx,
+                              frame->rax == kSyscallNumberRead);
+    case kSyscallNumberStat:
+      return user_range_valid(frame->rsi, sizeof(VfsStat), true);
+    case kSyscallNumberStatPath:
+      return user_path_valid(frame->rdi) &&
+             user_range_valid(frame->rsi, sizeof(VfsStat), true);
+    case kSyscallNumberListDir:
+      return user_path_valid(frame->rdi) && frame->rdx <= 128 &&
+             user_range_valid(frame->rsi,
+                              frame->rdx * sizeof(VfsDirectoryEntry), true);
+    case kSyscallNumberSpawn: {
+      if (!user_path_valid(frame->rdi) || frame->rdx > kMaxUserArguments ||
+          !user_range_valid(frame->rsi, frame->rdx * sizeof(uint64_t), false)) {
+        return false;
+      }
+      const auto* arguments = reinterpret_cast<const uint64_t*>(frame->rsi);
+      for (size_t i = 0; i < frame->rdx; ++i) {
+        if (!user_path_valid(arguments[i])) {
+          return false;
+        }
+      }
+      return true;
+    }
+    case kSyscallNumberWaitPid:
+      return frame->rsi == 0 || user_range_valid(frame->rsi, sizeof(int32_t), true);
+    default:
+      return true;
+  }
+}
+
 void capture_current_user_trap_frame(const SyscallInterruptFrame* frame) {
   ThreadControlBlock* const current_thread = scheduler_active_thread();
   if (current_thread == nullptr ||
@@ -356,6 +429,13 @@ int64_t dispatch_syscall_registers(uint64_t syscall_number,
     case kSyscallNumberOpen:
       return static_cast<int64_t>(
           sys_open(context, reinterpret_cast<const char*>(argument0)));
+    case kSyscallNumberOpenFlags:
+      if (argument1 > UINT32_MAX) {
+        return kSyscallInvalidArgument;
+      }
+      return static_cast<int64_t>(
+          sys_open(context, reinterpret_cast<const char*>(argument0),
+                    static_cast<uint32_t>(argument1)));
     case kSyscallNumberRead:
       return static_cast<int64_t>(
           sys_read(context,
@@ -372,6 +452,10 @@ int64_t dispatch_syscall_registers(uint64_t syscall_number,
       // `exit` 比普通 syscall 特殊：
       // 它不会像 read/open 那样“返回到用户态继续下一条指令”，
       // 而是直接把这条用户线程的生命周期结束掉。
+      if (scheduler_active_thread() != nullptr &&
+          scheduler_active_thread()->execution_mode == kThreadExecutionModeUser) {
+        scheduler_exit_current_user_process(static_cast<int64_t>(argument0));
+      }
       if (!kernel_user_mode_exit_is_armed()) {
         return syscall_status_result(kSyscallUnsupported);
       }
@@ -414,6 +498,28 @@ int64_t dispatch_syscall_registers(uint64_t syscall_number,
                       reinterpret_cast<const char*>(argument0),
                       reinterpret_cast<VfsDirectoryEntry*>(argument1),
                       static_cast<size_t>(argument2)));
+    case kSyscallNumberMkdir:
+      return sys_mkdir(context, reinterpret_cast<const char*>(argument0));
+    case kSyscallNumberUnlink:
+      return sys_unlink(context, reinterpret_cast<const char*>(argument0));
+    case kSyscallNumberSync:
+      return sys_sync(context);
+    case kSyscallNumberGetPid: {
+      auto* thread = scheduler_active_thread();
+      return thread != nullptr && thread->owner != nullptr ? thread->owner->pid : 0;
+    }
+    case kSyscallNumberSleep:
+      if (argument0 > 86400000ULL || !timer_is_ready()) {
+        return kSyscallInvalidArgument;
+      }
+      return timer_sleep_ms(argument0) ? kSyscallOk : kSyscallUnsupported;
+    case kSyscallNumberSpawn:
+      return sys_spawn(context, reinterpret_cast<const char*>(argument0),
+                        reinterpret_cast<const char* const*>(argument1),
+                        static_cast<size_t>(argument2));
+    case kSyscallNumberWaitPid:
+      return sys_waitpid(static_cast<int32_t>(argument0),
+                          reinterpret_cast<int32_t*>(argument1));
     default:
       (void)argument3;
       return syscall_status_result(kSyscallInvalidArgument);
@@ -473,7 +579,8 @@ bool initialize_syscall_context(SyscallContext* context,
 
 bool syscall_context_is_ready(const SyscallContext* context) {
   return context != nullptr &&
-         file_descriptor_table_is_ready(context->fd_table);
+         context->fd_table != nullptr && context->fd_table->vfs != nullptr &&
+         context->fd_table->vfs->os64fs != nullptr;
 }
 
 bool install_syscall_write_handler(SyscallContext* context,
@@ -626,8 +733,18 @@ SyscallStatus sys_chdir(SyscallContext* context, const char* path) {
              : kSyscallInvalidArgument;
 }
 
-int32_t sys_open(SyscallContext* context, const char* path) {
+int32_t sys_open(SyscallContext* context, const char* path, uint32_t flags) {
   if (!syscall_context_is_ready(context) || path == nullptr) {
+    return kSyscallInvalidArgument;
+  }
+  if (flags == 0) {
+    flags = kOpenRead;
+  }
+  constexpr uint32_t allowed = kOpenRead | kOpenWrite | kOpenCreate |
+                               kOpenTruncate | kOpenAppend;
+  if ((flags & ~allowed) != 0 || (flags & (kOpenRead | kOpenWrite)) == 0 ||
+      ((flags & (kOpenCreate | kOpenTruncate | kOpenAppend)) != 0 &&
+       (flags & kOpenWrite) == 0)) {
     return kSyscallInvalidArgument;
   }
 
@@ -640,15 +757,16 @@ int32_t sys_open(SyscallContext* context, const char* path) {
 
   // open 前先 stat 一下，这样能把“不存在”和“路径是目录”分成不同错误码。
   VfsStat stat;
-  if (!vfs_stat(context->fd_table->vfs, resolved, &stat)) {
+  const bool exists = vfs_stat(context->fd_table->vfs, resolved, &stat);
+  if (!exists && (flags & kOpenCreate) == 0) {
     return kSyscallNotFound;
   }
 
-  if (stat.type != kVfsNodeTypeFile) {
+  if (exists && stat.type != kVfsNodeTypeFile) {
     return kSyscallNotFile;
   }
 
-  const int32_t fd = fd_open(context->fd_table, resolved);
+  const int32_t fd = fd_open(context->fd_table, resolved, flags);
   if (fd == kInvalidFileDescriptor) {
     return kSyscallIoError;
   }
@@ -686,6 +804,10 @@ int32_t sys_read(SyscallContext* context, int32_t fd,
   const int32_t table_fd = syscall_fd_to_table_fd(fd);
   if (!syscall_fd_is_open(context, table_fd)) {
     return kSyscallBadFileDescriptor;
+  }
+
+  if (!fd_can_read(context->fd_table, table_fd)) {
+    return kSyscallUnsupported;
   }
 
   const size_t bytes_read =
@@ -737,9 +859,11 @@ int32_t sys_write(SyscallContext* context, int32_t fd,
     return kSyscallBadFileDescriptor;
   }
 
-  // 现在底层文件系统仍然是只读 OS64FS，所以先明确返回“不支持写”，
-  // 不假装成功，也不把未来的可写文件系统设计锁死。
-  return kSyscallUnsupported;
+  if (!fd_can_write(context->fd_table, table_fd)) {
+    return kSyscallUnsupported;
+  }
+  const int32_t written = fd_write(context->fd_table, table_fd, buffer, bytes_to_write);
+  return written < 0 ? kSyscallIoError : written;
 }
 
 SyscallStatus sys_stat_path(SyscallContext* context, const char* path,
@@ -816,7 +940,8 @@ SyscallStatus sys_close(SyscallContext* context, int32_t fd) {
   }
 
   const int32_t table_fd = syscall_fd_to_table_fd(fd);
-  if (!syscall_fd_is_open(context, table_fd)) {
+  if (table_fd < 0 || static_cast<size_t>(table_fd) >= kFileDescriptorCapacity ||
+      !context->fd_table->entries[table_fd].open) {
     return kSyscallBadFileDescriptor;
   }
 
@@ -863,6 +988,153 @@ SyscallStatus sys_stat(SyscallContext* context, int32_t fd,
              : kSyscallIoError;
 }
 
+bool install_syscall_process_services(SchedulerState* scheduler,
+                                      PageAllocator* allocator,
+                                      const Os64Fs* filesystem,
+                                      VfsMount* vfs) {
+  if (!scheduler_is_ready(scheduler) || allocator == nullptr ||
+      !os64fs_is_mounted(filesystem) || !vfs_is_mounted(vfs)) {
+    return false;
+  }
+  g_process_scheduler = scheduler;
+  g_process_allocator = allocator;
+  g_process_filesystem = filesystem;
+  g_process_vfs = vfs;
+  return true;
+}
+
+int32_t sys_spawn(SyscallContext* context, const char* path,
+                  const char* const* argv, size_t argc) {
+  if (!syscall_context_is_ready(context) || g_process_scheduler == nullptr ||
+      path == nullptr || argc > kMaxUserArguments || (argc != 0 && argv == nullptr)) {
+    return kSyscallInvalidArgument;
+  }
+  char resolved[kSyscallPathCapacity];
+  if (!syscall_resolve_path(context, path, resolved, sizeof(resolved))) {
+    return kSyscallInvalidArgument;
+  }
+  char copied_arguments[kMaxUserArguments][kSyscallPathCapacity];
+  const char* arguments[kMaxUserArguments];
+  if (argc == 0) {
+    arguments[0] = resolved;
+    argc = 1;
+  } else {
+    for (size_t i = 0; i < argc; ++i) {
+      if (!copy_string(copied_arguments[i], sizeof(copied_arguments[i]), argv[i])) {
+        return kSyscallInvalidArgument;
+      }
+      arguments[i] = copied_arguments[i];
+    }
+  }
+  VfsStat stat;
+  if (!vfs_stat(g_process_vfs, resolved, &stat)) {
+    return kSyscallNotFound;
+  }
+  if (stat.type != kVfsNodeTypeFile) {
+    return kSyscallNotFile;
+  }
+  SchedulerElfThreadLoadResult launch;
+  if (!scheduler_create_user_elf_thread(g_process_scheduler, g_process_allocator,
+                                        g_process_filesystem, g_process_vfs,
+                                        context->write_handler, context->write_context,
+                                        resolved, "main", resolved,
+                                        kUserAddressSpaceDefaultStackTop, 0x202,
+                                        kThreadPriorityNormal, &launch)) {
+    return kSyscallIoError;
+  }
+  if (!copy_string(launch.process->syscall_context.current_working_directory,
+                    kSyscallPathCapacity, context->current_working_directory) ||
+      !scheduler_prepare_user_arguments(launch.process, launch.thread, argc, arguments)) {
+    (void)scheduler_discard_process(g_process_scheduler, launch.process->pid);
+    return kSyscallIoError;
+  }
+  return static_cast<int32_t>(launch.process->pid);
+}
+
+int32_t sys_waitpid(int32_t pid, int32_t* status) {
+  if (pid <= 0 || g_process_scheduler == nullptr) {
+    return kSyscallInvalidArgument;
+  }
+  int64_t exit_status = 0;
+  if (!scheduler_wait_process(g_process_scheduler, static_cast<uint32_t>(pid),
+                                &exit_status)) {
+    return kSyscallNotFound;
+  }
+  if (!scheduler_reap_process(g_process_scheduler, static_cast<uint32_t>(pid), nullptr)) {
+    return kSyscallIoError;
+  }
+  if (status != nullptr) {
+    *status = static_cast<int32_t>(exit_status);
+  }
+  return pid;
+}
+
+SyscallStatus sys_mkdir(SyscallContext* context, const char* path) {
+  char resolved[kSyscallPathCapacity];
+  if (path == nullptr || !syscall_resolve_path(context, path, resolved, sizeof(resolved))) {
+    return kSyscallInvalidArgument;
+  }
+  VfsMount mount = *context->fd_table->vfs;
+  return vfs_create_directory(&mount, resolved) ? kSyscallOk : kSyscallIoError;
+}
+
+SyscallStatus sys_unlink(SyscallContext* context, const char* path) {
+  char resolved[kSyscallPathCapacity];
+  if (path == nullptr || !syscall_resolve_path(context, path, resolved, sizeof(resolved))) {
+    return kSyscallInvalidArgument;
+  }
+  VfsStat stat;
+  if (!vfs_stat(context->fd_table->vfs, resolved, &stat)) {
+    return kSyscallNotFound;
+  }
+  // This small filesystem refuses removal of open inodes and active cwd's.
+  // That keeps descriptors valid without claiming Unix orphan-inode semantics.
+  const auto busy_context = [&stat, &resolved, &context](const SyscallContext* candidate) {
+    if (!syscall_context_is_ready(candidate) ||
+        candidate->fd_table->vfs->os64fs != context->fd_table->vfs->os64fs) {
+      return false;
+    }
+    if (stat.type == kVfsNodeTypeDirectory) {
+      const size_t length = string_length(resolved);
+      const char* cwd = candidate->current_working_directory;
+      size_t i = 0;
+      while (i < length && cwd[i] == resolved[i]) {
+        ++i;
+      }
+      if (i == length && (cwd[i] == '\0' || cwd[i] == '/')) {
+        return true;
+      }
+    }
+    for (size_t i = 0; i < kFileDescriptorCapacity; ++i) {
+      const auto& entry = candidate->fd_table->entries[i];
+      if (entry.open && entry.file.handle.inode.inode_number == stat.inode_number) {
+        return true;
+      }
+    }
+    return false;
+  };
+  if (busy_context(context)) {
+    return kSyscallUnsupported;
+  }
+  if (g_process_scheduler != nullptr) {
+    for (const auto& process : g_process_scheduler->processes) {
+      if (process.in_use && busy_context(&process.syscall_context)) {
+        return kSyscallUnsupported;
+      }
+    }
+  }
+  VfsMount mount = *context->fd_table->vfs;
+  return vfs_unlink(&mount, resolved) ? kSyscallOk : kSyscallIoError;
+}
+
+SyscallStatus sys_sync(SyscallContext* context) {
+  if (!syscall_context_is_ready(context)) {
+    return kSyscallInvalidArgument;
+  }
+  VfsMount mount = *context->fd_table->vfs;
+  return vfs_sync(&mount) ? kSyscallOk : kSyscallIoError;
+}
+
 extern "C" void kernel_handle_syscall(SyscallInterruptFrame* frame) {
   if (frame == nullptr) {
     return;
@@ -871,6 +1143,11 @@ extern "C" void kernel_handle_syscall(SyscallInterruptFrame* frame) {
   // 先把“这次从用户态打进来的寄存器现场”留档，
   // 这样后面就算线程在 syscall 里 yield/block，也还有机会恢复回原来的用户态位置。
   capture_current_user_trap_frame(frame);
+
+  if (frame_came_from_user_mode(frame) && !user_syscall_arguments_valid(frame)) {
+    frame->rax = encode_syscall_result(kSyscallInvalidArgument);
+    return;
+  }
 
   // `int 0x80` 现在走的是 DPL=3 的 interrupt gate。
   // 这意味着：

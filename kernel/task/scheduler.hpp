@@ -62,6 +62,12 @@ struct ProcessControlBlock {
   bool in_use;                                     // 这个 PCB 槽位现在是否已经被占用。
   bool is_kernel_process;                          // 现在开始真的区分：这是共享内核地址空间的 kernel process，还是带独立用户页表根的 user process。
   uint32_t pid;                                    // 第一版进程号，后面 shell/ps/等待机制都会靠它识别对象。
+  uint32_t parent_pid;
+  int64_t exit_code;
+  uint64_t fault_vector;
+  uint64_t fault_address;
+  PageAllocator* page_allocator;
+  bool auto_reap;
   ProcessState state;                              // 当前进程大体处在什么生命周期阶段。
   uint32_t live_thread_count;                      // 这个进程还有多少线程没退出。
   uint64_t total_thread_ticks;                     // 这个进程名下所有线程一共消耗了多少 timer tick。
@@ -90,6 +96,7 @@ struct ThreadControlBlock {
   uint64_t yield_count;                            // 这个线程主动/被请求让出 CPU 多少次。
   uint64_t consumed_ticks;                         // 这个线程在运行态下累计消耗了多少 timer tick。
   uint64_t wake_tick;                              // 如果线程在 sleep，这里记录“第几个 tick 应该被唤醒”。
+  uint32_t waiting_for_pid;
   bool is_idle_thread;                             // idle thread 是特殊线程：永远存在，但不计入普通 live thread。
   UserModeLaunchContext user_mode;                 // 如果这是 user thread，这里就是那份真正会交给 `iretq` 路径的用户态启动现场。
   void* user_kernel_entry_stack_allocation;        // user thread 需要第二根专用内核进入栈：专门给 TSS.rsp0 接 ring3 -> ring0 的 syscall/interrupt 帧。
@@ -148,6 +155,21 @@ bool initialize_scheduler(SchedulerState* scheduler,
                           uint32_t time_slice_ticks);
 bool scheduler_is_ready(const SchedulerState* scheduler);
 bool scheduler_set_active(SchedulerState* scheduler);
+SchedulerState* scheduler_active_state();
+ProcessControlBlock* scheduler_find_process(SchedulerState* scheduler, uint32_t pid);
+bool scheduler_prepare_user_arguments(ProcessControlBlock* process,
+                                       ThreadControlBlock* thread,
+                                       size_t argc, const char* const* argv);
+bool scheduler_wait_process(SchedulerState* scheduler, uint32_t pid,
+                             int64_t* exit_status);
+bool scheduler_reap_process(SchedulerState* scheduler, uint32_t pid,
+                             int64_t* exit_status);
+bool scheduler_discard_process(SchedulerState* scheduler, uint32_t pid);
+bool scheduler_destroy(SchedulerState* scheduler);
+bool scheduler_user_range_valid(uint64_t address, size_t bytes, bool writable);
+[[noreturn]] void scheduler_exit_current_user_process(int64_t exit_status);
+bool scheduler_handle_user_exception(const InterruptFrame* frame,
+                                      uint64_t fault_address);
 
 // 创建 kernel process：共享当前内核地址空间视图，不自己克隆用户页表根。
 ProcessControlBlock* scheduler_create_kernel_process(

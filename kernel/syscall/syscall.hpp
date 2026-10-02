@@ -46,6 +46,14 @@ enum SyscallNumber : uint64_t {
   kSyscallNumberWrite = 9,  // 这次先追加，不去重排前一轮已经用起来的编号。
   kSyscallNumberExit = 10,  // 第一版用户态先靠它告诉内核：“我已经跑完，可以回到 smoke test 继续了”。
   kSyscallNumberYield = 11, // 第一版“用户线程主动让出 CPU”入口；这一步先主要服务于用户态恢复烟测。
+  kSyscallNumberMkdir = 12,
+  kSyscallNumberGetPid = 13,
+  kSyscallNumberSleep = 14,
+  kSyscallNumberSpawn = 15,
+  kSyscallNumberWaitPid = 16,
+  kSyscallNumberUnlink = 17,
+  kSyscallNumberSync = 18,
+  kSyscallNumberOpenFlags = 19,
 };
 
 // 这是第一版“写输出”回调。
@@ -109,7 +117,8 @@ int32_t sys_getcwd(SyscallContext* context, char* buffer, size_t capacity);
 SyscallStatus sys_chdir(SyscallContext* context, const char* path);
 
 // 成功返回 fd，失败返回负数 SyscallStatus。
-int32_t sys_open(SyscallContext* context, const char* path);
+int32_t sys_open(SyscallContext* context, const char* path,
+                 uint32_t flags = 0);
 
 // 成功返回读到的字节数，EOF/当前无可读字符时返回 0，失败返回负数 SyscallStatus。
 // 现在：
@@ -142,6 +151,20 @@ SyscallStatus sys_close(SyscallContext* context, int32_t fd);
 SyscallStatus sys_seek(SyscallContext* context, int32_t fd, uint32_t offset);
 SyscallStatus sys_stat(SyscallContext* context, int32_t fd,
                        VfsStat* out_stat);
+
+struct SchedulerState;
+struct PageAllocator;
+struct Os64Fs;
+bool install_syscall_process_services(SchedulerState* scheduler,
+                                      PageAllocator* allocator,
+                                      const Os64Fs* filesystem,
+                                      VfsMount* vfs);
+int32_t sys_spawn(SyscallContext* context, const char* path,
+                  const char* const* argv, size_t argc);
+int32_t sys_waitpid(int32_t pid, int32_t* status);
+SyscallStatus sys_mkdir(SyscallContext* context, const char* path);
+SyscallStatus sys_unlink(SyscallContext* context, const char* path);
+SyscallStatus sys_sync(SyscallContext* context);
 
 // 这是 `int 0x80` 打进内核后的 C++ 总入口。
 // 汇编 stub 会先把寄存器现场整理成 `SyscallInterruptFrame`，

@@ -6,7 +6,8 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/build"
 DISK_IMG="$BUILD_DIR/disk.img"
 SERIAL_LOG="$BUILD_DIR/stage1-stage2.serial.log"
-QEMU_BIN="${QEMU_BIN:-/opt/homebrew/bin/qemu-system-x86_64}"
+source "$ROOT_DIR/scripts/toolchain.sh"
+resolve_qemu
 source "$ROOT_DIR/scripts/qemu-test-lib.sh"
 
 serial_log_is_ready_to_stop() {
@@ -35,7 +36,7 @@ trap 'kill "$qemu_pid" 2>/dev/null || true; wait "$qemu_pid" 2>/dev/null || true
 
 # 现在不再固定 `sleep 2`。
 # 原因是随着内核不断变大，“2 秒一定够”这个假设会越来越脆弱。
-if ! wait_for_serial_markers "$SERIAL_LOG" "$qemu_pid" 80 serial_log_is_ready_to_stop; then
+if ! wait_for_serial_markers "$SERIAL_LOG" "$qemu_pid" 300 serial_log_is_ready_to_stop; then
   :
 fi
 
@@ -440,11 +441,11 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "os64fs_write_data_free=100" "$SERIAL_LOG" \
   && grep -q "os64fs_write ok" "$SERIAL_LOG" \
   && grep -q "fs write ok" "$SERIAL_LOG" \
-  && grep -q "shell_process_pid=6" "$SERIAL_LOG" \
-  && grep -q "shell_thread_tid=13" "$SERIAL_LOG" \
+  && grep -q "shell_process_pid=1" "$SERIAL_LOG" \
+  && grep -q "shell_thread_tid=1" "$SERIAL_LOG" \
   && grep -q "shell thread ok" "$SERIAL_LOG" \
-  && grep -q "shell_thread_started_pid=6" "$SERIAL_LOG" \
-  && grep -q "shell_thread_started_tid=13" "$SERIAL_LOG" \
+  && grep -q "shell_thread_started_pid=1" "$SERIAL_LOG" \
+  && grep -q "shell_thread_started_tid=1" "$SERIAL_LOG" \
   && grep -q "clear - clear console area" "$SERIAL_LOG" \
   && grep -q "shell_line=mem" "$SERIAL_LOG" \
   && grep -q "mem_free_pages=" "$SERIAL_LOG" \
@@ -595,8 +596,8 @@ if grep -q "stage1 ok" "$SERIAL_LOG" \
   && grep -q "shell_result=unknown" "$SERIAL_LOG" \
   && grep -q "unknown command: bad" "$SERIAL_LOG" \
   && grep -q "shell ok" "$SERIAL_LOG"; then
-  echo "stage1->stage2->protected-mode->long-mode->kernel->idt->allocator->paging->heap->kmemory->boot-volume->filesystem->file-layer->directory-layer->vfs->fd->syscall->pic->pit->timer->sleep->keyboard->char-input->console-line->shell serial test passed"
-  cat "$SERIAL_LOG"
+  echo "Boot and kernel milestone regression passed (log: $SERIAL_LOG)"
+  if [ "${TEST_VERBOSE:-0}" = 1 ]; then cat "$SERIAL_LOG"; fi
   exit 0
 fi
 

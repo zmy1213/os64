@@ -25,6 +25,8 @@ section .text
 ;   RDI = 要把当前 RSP 保存到哪里
 ;   RSI = 下一条线程恢复时应该使用的 RSP
 scheduler_switch_context:
+    pushfq
+    cli
     push rbp
     push rbx
     push r12
@@ -41,6 +43,7 @@ scheduler_switch_context:
     pop r12
     pop rbx
     pop rbp
+    popfq
     ret
 
 ; 这是在原来最小上下文切换之上再多做一步 CR3 切换的版本。
@@ -58,6 +61,8 @@ scheduler_switch_context:
 ;   RSI = 下一条线程恢复时应该使用的 RSP
 ;   RDX = 下一条线程恢复前必须先装入的 CR3
 scheduler_switch_context_and_root:
+    pushfq
+    cli
     push rbp
     push rbx
     push r12
@@ -76,6 +81,7 @@ scheduler_switch_context_and_root:
     pop r12
     pop rbx
     pop rbp
+    popfq
     ret
 
 ; 下面这几个偏移必须和 `kernel/task/user_mode.hpp` 里的

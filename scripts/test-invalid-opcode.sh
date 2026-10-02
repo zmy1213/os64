@@ -5,7 +5,8 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/build"
 DISK_IMG="$BUILD_DIR/disk.img"
 SERIAL_LOG="$BUILD_DIR/invalid-opcode.serial.log"
-QEMU_BIN="${QEMU_BIN:-/opt/homebrew/bin/qemu-system-x86_64}"
+source "$ROOT_DIR/scripts/toolchain.sh"
+resolve_qemu
 source "$ROOT_DIR/scripts/qemu-test-lib.sh"
 
 serial_log_has_expected_markers() {
@@ -184,7 +185,7 @@ trap 'kill "$qemu_pid" 2>/dev/null || true; wait "$qemu_pid" 2>/dev/null || true
 
 # 这里不再固定等 3 秒，因为测试内核一旦继续变大，固定秒数就会变成假失败源。
 test_passed=0
-if wait_for_serial_markers "$SERIAL_LOG" "$qemu_pid" 80 serial_log_has_expected_markers; then
+if wait_for_serial_markers "$SERIAL_LOG" "$qemu_pid" 300 serial_log_has_expected_markers; then
   test_passed=1
 fi
 
@@ -197,7 +198,7 @@ fi
 
 if [ "$test_passed" -eq 1 ]; then
   echo "invalid-opcode smoke test passed"
-  cat "$SERIAL_LOG"
+  if [ "${TEST_VERBOSE:-0}" = 1 ]; then cat "$SERIAL_LOG"; fi
   exit 0
 fi
 

@@ -25,6 +25,8 @@ struct BlockDevice {
                        uint32_t sector_index,
                        const void* buffer,
                        size_t buffer_size);
+  // Optional for RAM devices; persistent devices must complete cached writes.
+  bool (*flush)(void* context);
 };
 
 // 把一段已经准备好的 BootVolume 包装成统一的块设备接口。
@@ -48,5 +50,7 @@ bool block_device_read_sector(const BlockDevice* device, uint32_t sector_index,
 // 当前最终会落到 BootVolume 的内存副本；以后换成 ATA/AHCI 驱动时，这个接口可以保持不变。
 bool block_device_write_sector(BlockDevice* device, uint32_t sector_index,
                                const void* buffer, size_t buffer_size);
+
+bool block_device_flush(BlockDevice* device);
 
 #endif

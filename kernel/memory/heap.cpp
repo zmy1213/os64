@@ -121,7 +121,8 @@ bool ensure_heap_mapping(KernelHeap* heap, uint64_t additional_bytes) {
   // 堆眼下还不够大时，就一页一页往后扩：
   // 先找物理页，再把这张物理页映射到堆虚拟区间里。
   while (heap->mapped_limit < required_end) {
-    const uint64_t physical_page = alloc_page(heap->page_allocator);
+    const uint64_t physical_page =
+        alloc_page_at_least(heap->page_allocator, kPagingBootIdentityLimit);
     if (physical_page == 0) {
       return false;
     }
@@ -222,6 +223,18 @@ bool initialize_kernel_heap(KernelHeap* heap, PageAllocator* allocator) {
   heap->failed_allocations = 0;
   heap->free_list = nullptr;
   return heap->virtual_start < heap->virtual_limit;
+}
+
+bool heap_reserve(KernelHeap* heap, size_t bytes) {
+  if (heap == nullptr || heap->page_allocator == nullptr ||
+      bytes > heap->virtual_limit - heap->virtual_start) {
+    return false;
+  }
+  const uint64_t mapped = heap->mapped_limit - heap->virtual_start;
+  if (bytes <= mapped) {
+    return true;
+  }
+  return ensure_heap_mapping(heap, align_up(bytes - mapped, kPagingPageSize));
 }
 
 void* heap_alloc(KernelHeap* heap, size_t size, size_t alignment) {

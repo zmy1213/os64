@@ -1,0 +1,21 @@
+name: boot-and-system-regression
+on: [push, pull_request]
+jobs:
+  qemu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install freestanding toolchain
+        run: sudo apt-get update && sudo apt-get install -y clang lld llvm nasm qemu-system-x86 python3
+      - name: Check toolchain
+        run: make check-env
+      - name: Boot, userland, persistence and fault regressions
+        run: make test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qemu-serial-logs
+          path: |
+            build/*.serial.log
+            build/system-test/*.log

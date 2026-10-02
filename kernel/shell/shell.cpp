@@ -4,13 +4,14 @@
 #include "fs/os64fs.hpp"
 #include "interrupts/keyboard.hpp"
 #include "interrupts/pit.hpp"
+#include "memory/kmemory.hpp"
 #include "runtime/runtime.hpp"
 #include "storage/boot_volume.hpp"
 #include "task/scheduler.hpp"
 
 namespace {
 
-constexpr size_t kShellListDirCapacity = 8;  // 当前教学文件系统很小，先用固定数组装目录项，保持实现简单可预测。
+constexpr size_t kShellListDirCapacity = 128;
 constexpr uint64_t kShellRunUserStackTop = 0x0000000000800000ULL;  // 先继续复用当前教学内核统一的用户栈顶。
 constexpr uint64_t kShellRunDefaultUserRflags = 0x202ULL;          // bit1 恒为 1，并先把 IF 打开，让 shell 启动的用户程序也能继续接收外部 IRQ。
 
@@ -401,7 +402,11 @@ void handle_help_command(const ShellState* shell) {
   write_newline(shell);
   write_string(shell, "sync  - flush filesystem metadata");
   write_newline(shell);
-  write_string(shell, "run   - load and start a user ELF from OS64FS");
+  write_string(shell, "run <path> [args] - run a user ELF and wait for exit");
+  write_newline(shell);
+  write_string(shell, "ps    - show processes and threads");
+  write_newline(shell);
+  write_string(shell, "reboot / shutdown - sync disk and restart / stop");
   write_newline(shell);
   write_string(shell, "irq   - show timer/keyboard irq stats");
   write_newline(shell);
@@ -668,11 +673,18 @@ void handle_ls_command(const ShellState* shell, const char* arguments) {
     return;
   }
 
-  VfsDirectoryEntry entries[kShellListDirCapacity];
+  auto* entries = static_cast<VfsDirectoryEntry*>(
+      kcalloc(entry_count == 0 ? 1 : entry_count, sizeof(VfsDirectoryEntry)));
+  if (entries == nullptr) {
+    write_string(shell, "ls out of memory");
+    write_newline(shell);
+    return;
+  }
   const int32_t copied_count =
       sys_listdir(shell->syscall_context, path, entries,
                   static_cast<size_t>(entry_count));
   if (copied_count != entry_count) {
+    kfree(entries);
     write_string(shell, "ls read failed");
     write_newline(shell);
     return;
@@ -703,6 +715,7 @@ void handle_ls_command(const ShellState* shell, const char* arguments) {
     write_u64(shell, entry.size_bytes);
     write_newline(shell);
   }
+  kfree(entries);
 }
 
 void handle_cat_command(const ShellState* shell, const char* arguments) {
@@ -1090,7 +1103,7 @@ void handle_rm_command(ShellState* shell, const char* arguments) {
     return;
   }
 
-  if (!vfs_unlink(shell->vfs, resolved_path)) {
+  if (sys_unlink(shell->syscall_context, resolved_path) != kSyscallOk) {
     write_string(shell, "rm failed: ");
     write_string(shell, path);
     write_newline(shell);
@@ -1140,12 +1153,37 @@ void handle_run_command(ShellState* shell, const char* arguments) {
   // `run` 是这版 shell 里最像“真正操作系统命令”的一条：
   // 它不是简单打印状态，而是把 ELF 文件真正装进用户地址空间，
   // 再交给 scheduler 作为一条 user thread 去运行。
-  const char* path = skip_spaces(arguments);
-  if (path == nullptr || path[0] == '\0') {
-    write_string(shell, "usage: run <path>");
+  char parsed[8][kSyscallPathCapacity];
+  const char* argument_values[8];
+  size_t argument_count = 0;
+  const char* cursor = skip_spaces(arguments);
+  bool valid = cursor != nullptr;
+  while (valid && cursor[0] != '\0') {
+    if (argument_count == 8) { valid = false; break; }
+    size_t length = 0;
+    char quote = 0;
+    while (cursor[0] != '\0' && (quote != 0 || !is_space_char(cursor[0]))) {
+      char ch = *cursor++;
+      if (ch == '\'' || ch == '"') {
+        if (quote == 0) { quote = ch; continue; }
+        if (quote == ch) { quote = 0; continue; }
+      }
+      if (ch == '\\' && cursor[0] != '\0') { ch = *cursor++; }
+      if (length + 1 >= kSyscallPathCapacity) { valid = false; break; }
+      parsed[argument_count][length++] = ch;
+    }
+    if (quote != 0) { valid = false; }
+    parsed[argument_count][length] = '\0';
+    argument_values[argument_count] = parsed[argument_count];
+    ++argument_count;
+    cursor = skip_spaces(cursor);
+  }
+  if (!valid || argument_count == 0 || parsed[0][0] == '\0') {
+    write_string(shell, "usage: run <path> [args] (8 args, 63 bytes each)");
     write_newline(shell);
     return;
   }
+  const char* path = parsed[0];
 
   char resolved_path[kSyscallPathCapacity];
   if (!syscall_resolve_path(shell->syscall_context, path, resolved_path,
@@ -1198,6 +1236,16 @@ void handle_run_command(ShellState* shell, const char* arguments) {
     return;
   }
 
+  if (sys_chdir(&launch_result.process->syscall_context,
+                  syscall_current_working_directory(shell->syscall_context)) != kSyscallOk ||
+      !scheduler_prepare_user_arguments(launch_result.process, launch_result.thread,
+                                          argument_count, argument_values)) {
+    (void)scheduler_discard_process(shell->scheduler, launch_result.process->pid);
+    write_string(shell, "run argument setup failed");
+    write_newline(shell);
+    return;
+  }
+
   write_string(shell, "run_path=");
   write_string(shell, path);
   write_newline(shell);
@@ -1239,10 +1287,11 @@ void handle_run_command(ShellState* shell, const char* arguments) {
   //
   // 如果 shell 自己已经挂在调度器里，那就只主动 yield 一次，
   // 让新创建的用户线程有机会接过 CPU。
-  if (scheduler_current_thread(shell->scheduler) == nullptr) {
-    (void)scheduler_run_until_idle(shell->scheduler);
-  } else {
-    (void)scheduler_yield_current_thread();
+  int64_t exit_status = 0;
+  if (!scheduler_wait_process(shell->scheduler, launch_result.process->pid, &exit_status)) {
+    write_string(shell, "run wait failed");
+    write_newline(shell);
+    return;
   }
 
   if (launch_result.thread->state == kThreadStateFinished) {
@@ -1261,6 +1310,58 @@ void handle_run_command(ShellState* shell, const char* arguments) {
   write_string(shell,
                scheduler_thread_state_name(launch_result.thread->state));
   write_newline(shell);
+  write_string(shell, "run_exit_code=");
+  if (exit_status < 0) {
+    write_char(shell, '-');
+    write_u64(shell, static_cast<uint64_t>(-(exit_status + 1)) + 1);
+  } else {
+    write_u64(shell, static_cast<uint64_t>(exit_status));
+  }
+  write_newline(shell);
+  (void)scheduler_reap_process(shell->scheduler, launch_result.process->pid, nullptr);
+}
+
+void handle_ps_command(const ShellState* shell) {
+  if (shell->scheduler == nullptr) { return; }
+  write_string(shell, "PID PPID STATE THREADS TICKS NAME");
+  write_newline(shell);
+  for (const auto& process : shell->scheduler->processes) {
+    if (!process.in_use) { continue; }
+    write_u64(shell, process.pid); write_char(shell, ' ');
+    write_u64(shell, process.parent_pid); write_char(shell, ' ');
+    write_string(shell, scheduler_process_state_name(process.state)); write_char(shell, ' ');
+    write_u64(shell, process.live_thread_count); write_char(shell, ' ');
+    write_u64(shell, process.total_thread_ticks); write_char(shell, ' ');
+    write_string(shell, process.name); write_newline(shell);
+  }
+}
+
+void handle_power_command(ShellState* shell, bool restart) {
+  if (sys_sync(shell->syscall_context) != kSyscallOk) {
+    write_string(shell, "disk sync failed; power operation cancelled");
+    write_newline(shell);
+    return;
+  }
+  write_string(shell, restart ? "rebooting" : "shutdown ok");
+  write_newline(shell);
+  disable_interrupts();
+  if (restart) {
+    for (unsigned i = 0; i < 100000; ++i) {
+      uint8_t status;
+      asm volatile("inb %1, %0" : "=a"(status) : "Nd"(static_cast<uint16_t>(0x64)));
+      if ((status & 2) == 0) {
+        asm volatile("outb %0, %1" : : "a"(static_cast<uint8_t>(0xFE)),
+                     "Nd"(static_cast<uint16_t>(0x64)));
+        break;
+      }
+    }
+  } else {
+    asm volatile("outw %0, %1" : : "a"(static_cast<uint16_t>(0x2000)),
+                 "Nd"(static_cast<uint16_t>(0x604)));
+    asm volatile("outw %0, %1" : : "a"(static_cast<uint16_t>(0x2000)),
+                 "Nd"(static_cast<uint16_t>(0xB004)));
+  }
+  for (;;) { wait_for_interrupt(); }
 }
 
 void handle_irq_command(const ShellState* shell) {
@@ -1629,6 +1730,19 @@ ShellCommandResult shell_execute_line(ShellState* shell,
 
   if (command_matches(trimmed_line, "run", &arguments)) {
     handle_run_command(shell, arguments);
+    return kShellCommandExecuted;
+  }
+
+  if (command_matches(trimmed_line, "ps", &arguments) && is_empty_after_trim(arguments)) {
+    handle_ps_command(shell);
+    return kShellCommandExecuted;
+  }
+  if (command_matches(trimmed_line, "shutdown", &arguments) && is_empty_after_trim(arguments)) {
+    handle_power_command(shell, false);
+    return kShellCommandExecuted;
+  }
+  if (command_matches(trimmed_line, "reboot", &arguments) && is_empty_after_trim(arguments)) {
+    handle_power_command(shell, true);
     return kShellCommandExecuted;
   }
 

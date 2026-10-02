@@ -1,6 +1,7 @@
 #include "fs/fd.hpp"
 
 #include "runtime/runtime.hpp"
+#include "memory/kmemory.hpp"
 
 namespace {
 
@@ -53,7 +54,7 @@ bool file_descriptor_table_is_ready(const FileDescriptorTable* table) {
   return table != nullptr && vfs_is_mounted(table->vfs);
 }
 
-int32_t fd_open(FileDescriptorTable* table, const char* path) {
+int32_t fd_open(FileDescriptorTable* table, const char* path, uint32_t flags) {
   if (!file_descriptor_table_is_ready(table) || path == nullptr) {
     return kInvalidFileDescriptor;
   }
@@ -65,12 +66,36 @@ int32_t fd_open(FileDescriptorTable* table, const char* path) {
       continue;
     }
 
+    size_t path_length = 0;
+    while (path_length < kFileDescriptorPathCapacity && path[path_length] != '\0') {
+      ++path_length;
+    }
+    if (path_length == 0 || path_length >= kFileDescriptorPathCapacity) {
+      return kInvalidFileDescriptor;
+    }
+    // A free descriptor must exist before create/truncate can change a file.
+    VfsMount mutable_mount = *table->vfs;
+    VfsStat stat;
+    if (!vfs_stat(table->vfs, path, &stat)) {
+      if ((flags & kOpenCreate) == 0 || !vfs_create_file(&mutable_mount, path)) {
+        return kInvalidFileDescriptor;
+      }
+    } else if (stat.type != kVfsNodeTypeFile) {
+      return kInvalidFileDescriptor;
+    }
+    if ((flags & kOpenTruncate) != 0 &&
+        !vfs_write_file(&mutable_mount, path, nullptr, 0)) {
+      return kInvalidFileDescriptor;
+    }
+
     // 先让 VFS 打开真实文件；只有打开成功后，这个槽位才正式占用。
     if (!vfs_open_file(table->vfs, path, &entry.file)) {
       return kInvalidFileDescriptor;
     }
 
     entry.open = true;
+    entry.flags = flags;
+    memory_copy(entry.path, path, path_length + 1);
     ++table->open_count;
     return static_cast<int32_t>(i);
   }
@@ -88,7 +113,7 @@ bool fd_is_open(const FileDescriptorTable* table, int32_t fd) {
 
 size_t fd_read(FileDescriptorTable* table, int32_t fd,
                void* buffer, size_t bytes_to_read) {
-  if (!fd_is_open(table, fd)) {
+  if (!fd_can_read(table, fd)) {
     return 0;
   }
 
@@ -100,8 +125,65 @@ size_t fd_read(FileDescriptorTable* table, int32_t fd,
   return vfs_read_file(&entry->file, buffer, bytes_to_read);
 }
 
+bool fd_can_read(const FileDescriptorTable* table, int32_t fd) {
+  const FileDescriptorEntry* entry = const_entry(table, fd);
+  return fd_is_open(table, fd) && (entry->flags & kOpenRead) != 0;
+}
+
+bool fd_can_write(const FileDescriptorTable* table, int32_t fd) {
+  const FileDescriptorEntry* entry = const_entry(table, fd);
+  return fd_is_open(table, fd) && (entry->flags & kOpenWrite) != 0;
+}
+
+int32_t fd_write(FileDescriptorTable* table, int32_t fd,
+                 const void* buffer, size_t bytes_to_write) {
+  if (!fd_can_write(table, fd) || (buffer == nullptr && bytes_to_write != 0)) {
+    return -1;
+  }
+  if (bytes_to_write == 0) {
+    return 0;
+  }
+  FileDescriptorEntry* entry = mutable_entry(table, fd);
+  Os64FsInode inode;
+  Os64Fs* fs = table->vfs->os64fs;
+  if (!os64fs_lookup_path(fs, entry->path, &inode) ||
+      inode.inode_number != entry->file.handle.inode.inode_number) {
+    return -1;
+  }
+  const uint32_t offset = (entry->flags & kOpenAppend) != 0
+                              ? inode.size_bytes : entry->file.handle.offset;
+  const uint64_t maximum = (kOs64FsDirectBlockCount + 128ULL) * 512ULL;
+  if (bytes_to_write > maximum || offset > maximum - bytes_to_write) {
+    return -1;
+  }
+  const uint64_t end = static_cast<uint64_t>(offset) + bytes_to_write;
+  if (end > maximum || end > 2147483647ULL) {
+    return -1;
+  }
+  const size_t size = end > inode.size_bytes ? static_cast<size_t>(end)
+                                            : inode.size_bytes;
+  auto* staging = static_cast<uint8_t*>(kcalloc(size, 1));
+  if (staging == nullptr) {
+    return -1;
+  }
+  bool ok = inode.size_bytes == 0 ||
+            os64fs_read_inode_data(fs, &inode, 0, staging, inode.size_bytes);
+  if (ok) {
+    memory_copy(staging + offset, buffer, bytes_to_write);
+    ok = os64fs_write_file(fs, entry->path, staging, size);
+  }
+  kfree(staging);
+  if (!ok || !os64fs_lookup_path(fs, entry->path, &inode)) {
+    return -1;
+  }
+  entry->file.handle.inode = inode;
+  entry->file.handle.offset = static_cast<uint32_t>(end);
+  return static_cast<int32_t>(bytes_to_write);
+}
+
 bool fd_close(FileDescriptorTable* table, int32_t fd) {
-  if (!fd_is_open(table, fd)) {
+  const auto* existing = const_entry(table, fd);
+  if (existing == nullptr || !existing->open) {
     return false;
   }
 

@@ -2,6 +2,7 @@
 #define OS64_ADDRESS_SPACE_HPP
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "memory/page_allocator.hpp"
@@ -28,6 +29,9 @@ bool initialize_kernel_address_space_view(AddressSpace* space);
 // 深拷贝当前页表层级，生成一份“将来可以挂用户页”的独立地址空间。
 // 这一步是从“只有一个全局内核地址空间”走向“每进程一份页表”的关键过渡。
 bool clone_current_address_space(AddressSpace* space, PageAllocator* allocator);
+bool clone_address_space_from_root(AddressSpace* space, PageAllocator* allocator,
+                                   uint64_t source_root);
+bool address_space_destroy(AddressSpace* space, PageAllocator* allocator);
 
 // 在这份地址空间的用户区里挂一张用户页。
 // `virtual_address` 必须落在约定好的用户窗口中；
@@ -40,5 +44,10 @@ bool address_space_map_user_page(AddressSpace* space, PageAllocator* allocator,
 // 反查一条用户映射，看看某个虚拟地址当前到底对应哪张物理页。
 uint64_t address_space_resolve_mapping(const AddressSpace* space,
                                        uint64_t virtual_address);
+bool address_space_user_range_valid(const AddressSpace* space,
+                                     uint64_t address, size_t bytes,
+                                     bool writable);
+bool address_space_copy_to_user(const AddressSpace* space, uint64_t address,
+                                 const void* source, size_t bytes);
 
 #endif

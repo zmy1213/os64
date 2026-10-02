@@ -2,6 +2,7 @@
 
 #include "interrupts/interrupts.hpp"
 #include "interrupts/keyboard.hpp"
+#include "interrupts/serial.hpp"
 #include "task/scheduler.hpp"
 
 namespace {
@@ -9,7 +10,7 @@ namespace {
 constexpr uint16_t kVgaColumns = 80;    // VGA 文本模式固定每行 80 列。
 constexpr uint16_t kVgaRows = 25;       // VGA 文本模式固定 25 行。
 constexpr uintptr_t kVgaBase = 0xB8000; // VGA 文本缓冲区物理地址。
-constexpr size_t kConsoleEditorDraftCapacity = 128;  // 当前 shell/console 的行缓冲都很小，这个固定草稿槽位已经够用。
+constexpr size_t kConsoleEditorDraftCapacity = 256;
 
 uint16_t g_console_start_row = 0;       // 控制台自己的显示区域从哪一行开始。
 uint16_t g_console_start_column = 0;    // 控制台正文从哪一列开始。
@@ -121,12 +122,13 @@ void set_cursor_to_line_offset(const ConsoleCursor& line_start,
                                size_t offset) {
   // 这一轮编辑器先明确只覆盖“不会换行的一行输入”。
   // 当前项目里 shell/console 的读行缓冲都很短，所以这条假设现在成立。
-  g_console_row = line_start.row;
-  g_console_column =
-      static_cast<uint16_t>(line_start.column + offset);
+  const size_t width = g_console_end_column - g_console_start_column;
+  const size_t cells = line_start.column - g_console_start_column + offset;
+  g_console_row = static_cast<uint16_t>(line_start.row + cells / width);
+  g_console_column = static_cast<uint16_t>(g_console_start_column + cells % width);
 }
 
-void redraw_input_line(const ConsoleCursor& line_start,
+void redraw_input_line(ConsoleCursor& line_start,
                        const char* buffer,
                        size_t length,
                        size_t cursor,
@@ -139,6 +141,17 @@ void redraw_input_line(const ConsoleCursor& line_start,
   if (*rendered_length > total_cells) {
     total_cells = *rendered_length;
   }
+  const size_t width = g_console_end_column - g_console_start_column;
+  const size_t last_row = line_start.row +
+      (line_start.column - g_console_start_column + total_cells) / width;
+  if (last_row >= kVgaRows) {
+    const size_t scroll_rows = last_row - kVgaRows + 1;
+    for (size_t i = 0; i < scroll_rows; ++i) {
+      g_console_row = kVgaRows;
+      scroll_if_needed();
+      if (line_start.row > g_console_start_row) { --line_start.row; }
+    }
+  }
 
   // 这一步是当前最关键的“行编辑重绘”逻辑：
   // 不去做复杂终端转义，而是直接把这一整行在 VGA 上按最新草稿重新画一遍。
@@ -150,6 +163,7 @@ void redraw_input_line(const ConsoleCursor& line_start,
 
   set_cursor_to_line_offset(line_start, cursor);
   *rendered_length = length;
+  serial_redraw_input_line(buffer, length, cursor);
 }
 
 void copy_line_text(char* destination,
@@ -283,7 +297,8 @@ size_t console_read_line_with_history(char* buffer,
   size_t length = 0;
   size_t cursor = 0;
   size_t rendered_length = 0;
-  const ConsoleCursor line_start = current_cursor();
+  ConsoleCursor line_start = current_cursor();
+  serial_begin_input_line();
   const size_t available_history_count = history_entry_count(history);
   size_t history_cursor = available_history_count;  // 指向“当前正在看哪条历史”；等于 count 时表示还在新输入草稿上。
   char draft_buffer[kConsoleEditorDraftCapacity];
@@ -327,6 +342,7 @@ size_t console_read_line_with_history(char* buffer,
       if (cursor > 0) {
         --cursor;
         set_cursor_to_line_offset(line_start, cursor);
+        serial_move_input_cursor(cursor);
       }
       continue;
     }
@@ -335,6 +351,7 @@ size_t console_read_line_with_history(char* buffer,
       if (cursor < length) {
         ++cursor;
         set_cursor_to_line_offset(line_start, cursor);
+        serial_move_input_cursor(cursor);
       }
       continue;
     }
@@ -343,6 +360,7 @@ size_t console_read_line_with_history(char* buffer,
       // Home：把编辑光标直接跳到这一行开头。
       cursor = 0;
       set_cursor_to_line_offset(line_start, cursor);
+      serial_move_input_cursor(cursor);
       continue;
     }
 
@@ -350,6 +368,7 @@ size_t console_read_line_with_history(char* buffer,
       // End：把编辑光标直接跳到当前草稿末尾。
       cursor = length;
       set_cursor_to_line_offset(line_start, cursor);
+      serial_move_input_cursor(cursor);
       continue;
     }
 
@@ -442,6 +461,7 @@ size_t console_read_line_with_history(char* buffer,
     if (ch == '\n') {
       // Enter 真正结束这一轮输入，把这一行交还给上层 shell。
       console_write_char('\n');
+      serial_end_input_line();
       buffer[length] = '\0';
       return length;
     }

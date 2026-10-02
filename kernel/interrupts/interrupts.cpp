@@ -4,6 +4,7 @@
 #include "interrupts/keyboard.hpp"
 #include "interrupts/pic.hpp"
 #include "interrupts/pit.hpp"
+#include "interrupts/serial.hpp"
 #include "runtime/runtime.hpp"
 #include "task/scheduler.hpp"
 
@@ -404,6 +405,9 @@ extern "C" void kernel_handle_irq(const RegisterInterruptFrame* frame) {
 
   if (frame->vector == kPicMasterVectorBase) {
     handle_timer_irq();
+    // A context switch may leave this IRQ handler suspended for an arbitrary
+    // time. Release IRQ0 before switching so other threads still receive ticks.
+    send_pic_eoi(static_cast<uint8_t>(frame->vector));
 
     // 这一轮第一次允许“正在 ring3 里跑的用户线程”被 timer 抢占。
     // 流程是：
@@ -421,8 +425,11 @@ extern "C" void kernel_handle_irq(const RegisterInterruptFrame* frame) {
       // 我们才把它记成一次正式 user preempt trap。
       capture_current_user_preempt_trap_frame(frame);
     }
+    return;
   } else if (frame->vector == static_cast<uint8_t>(kPicMasterVectorBase + 1)) {
     handle_keyboard_irq();
+  } else if (frame->vector == static_cast<uint8_t>(kPicMasterVectorBase + 4)) {
+    handle_serial_irq();
   }
 
   // IRQ 收到以后，不管具体是哪一路，最后都要记得 EOI。

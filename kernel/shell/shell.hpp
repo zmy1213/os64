@@ -16,7 +16,7 @@ struct Os64Fs;
 struct VfsMount;
 
 constexpr size_t kShellHistoryCapacity = 24;       // 文件系统命令变多后，先记最近 24 条命令，仍然保持固定 ring buffer。
-constexpr size_t kShellHistoryEntryCapacity = 32;  // 和当前 shell 输入缓冲区保持同量级，先不做超长命令历史。
+constexpr size_t kShellHistoryEntryCapacity = 256;
 
 // shell 只要求外界提供一个“输出 1 个字符”的最小能力。
 // 这样它就不用关心自己是在写 VGA、串口，还是两边一起写。

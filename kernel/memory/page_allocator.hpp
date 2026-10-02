@@ -21,6 +21,11 @@ struct PageAllocator {
   PageAllocatorRange ranges[kMaxUsableRanges];  // 记录所有能拿来分配页的 usable 区间。
   uint16_t range_count;                         // 一共收集到了多少段 usable 区间。
   uint16_t active_range;                        // 当前正在从哪一段里分配。
+  uint64_t recycled_page_head;
+  uint64_t recycled_page_count;
+  // Only the early identity-mapped 1–2 MiB pool can currently be freed.
+  // Ownership bits reject double frees without touching live page contents.
+  uint64_t low_page_allocated[4];
 };
 
 // 读 BootInfo 里的 E820 表，把“可用物理内存”整理成若干可分配区间。
@@ -31,6 +36,9 @@ bool initialize_page_allocator(PageAllocator* allocator, const BootInfo* boot_in
 // 真正分配 1 个 4 KiB 物理页。
 // 成功返回物理地址；失败返回 0。
 uint64_t alloc_page(PageAllocator* allocator);
+uint64_t alloc_page_below(PageAllocator* allocator, uint64_t limit);
+uint64_t alloc_page_at_least(PageAllocator* allocator, uint64_t minimum);
+bool free_page(PageAllocator* allocator, uint64_t physical_address);
 
 // 统计“目前还剩下多少张没被拿走的页”，主要给调试和状态输出用。
 uint64_t count_free_pages(const PageAllocator* allocator);

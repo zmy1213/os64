@@ -13,6 +13,7 @@
 #include "interrupts/keyboard.hpp"
 #include "interrupts/pic.hpp"
 #include "interrupts/pit.hpp"
+#include "interrupts/serial.hpp"
 #include "memory/address_space.hpp"
 #include "memory/heap.hpp"
 #include "memory/kmemory.hpp"
@@ -22,6 +23,7 @@
 #include "shell/shell.hpp"
 #include "storage/block_device.hpp"
 #include "storage/boot_volume.hpp"
+#include "storage/ata_pio.hpp"
 #include "syscall/syscall.hpp"
 #include "task/elf_loader.hpp"
 #include "task/scheduler.hpp"
@@ -130,7 +132,7 @@ constexpr uint64_t kKeyboardTestTimeoutTicks = 20;                     // 键盘
 constexpr uint16_t kConsoleTestStartRow = 12;                          // 压缩状态区以后，把下半屏还给交互终端。
 constexpr size_t kConsoleLineBufferCapacity = 32;                      // 这一轮测试只读短行，32 字节足够验证流程。
 constexpr uint16_t kShellTestStartRow = 12;                            // shell 烟测也复用更大的终端区域。
-constexpr size_t kShellLineBufferCapacity = 40;                        // 现在要测 `stat docs/guide.txt`，把命令行缓冲区稍微放大一点。
+constexpr size_t kShellLineBufferCapacity = 256;
 constexpr uint16_t kCoreStatusRow = 5;                                 // TSS/IDT/BootInfo/E820 这类最早期启动结果压成同一行。
 constexpr uint16_t kMemoryStatusRow = 6;                               // 页分配器/页表/地址空间/堆/kmemory 汇总到同一行。
 constexpr uint16_t kStorageStatusRow = 7;                              // boot volume + filesystem。
@@ -320,6 +322,9 @@ SchedulerState g_scheduler;                   // 现在这份调度器状态开�
 ShellState g_shell;                           // 最小 shell 的状态也先放在全局对象里，后面交互循环会一直复用。
 BootVolume g_boot_volume;                     // 这一轮新增的启动卷状态，表示 stage2 预读进来的那段扇区数据。
 BlockDevice g_boot_block_device;             // 再往上一层，把 boot volume 包成通用块设备接口。
+AtaPioDevice g_data_disk;
+BlockDevice g_data_block_device;
+Os64Fs g_data_filesystem;
 Os64Fs g_os64fs;                             // 第一版只读文件系统状态也先做成全局对象。
 Os64Fs g_os64fs_write_remount_fs;            // 写路径回归里需要“重新挂载再读回来”验证；这个对象很大，放全局区避免把内核栈挤爆。
 VfsMount g_vfs;                              // VFS 根挂载点，shell 以后从这里而不是直接从 OS64FS 进入。
@@ -1070,7 +1075,8 @@ bool run_address_space_smoke_test(PageAllocator* allocator) {
     serial_write_crlf();
   }
 
-  return ok;
+  const bool reclaimed = address_space_destroy(&user_space, allocator);
+  return ok && reclaimed;
 }
 
 // 这是“第一次真正进入用户态”的最小闭环：
@@ -1198,7 +1204,9 @@ bool run_user_mode_smoke_test(PageAllocator* allocator,
     serial_write_crlf();
   }
 
-  return ok;
+  const bool reclaimed = address_space_destroy(&user_space, allocator);
+  (void)free_page(allocator, shared_physical_page);
+  return ok && reclaimed;
 }
 
 // 这一步和前面的 `run_user_mode_smoke_test()` 最大差别只有一个：
@@ -1333,7 +1341,8 @@ bool run_user_file_program_smoke_test(PageAllocator* allocator,
     serial_write_crlf();
   }
 
-  return ok;
+  const bool reclaimed = address_space_destroy(&user_space, allocator);
+  return ok && reclaimed;
 }
 
 // 这一步把“文件里的原始机器码”继续推进成“标准 ELF 可执行文件”。
@@ -1493,7 +1502,8 @@ bool run_user_elf_program_smoke_test(PageAllocator* allocator,
     serial_write_crlf();
   }
 
-  return ok;
+  const bool reclaimed = address_space_destroy(&user_space, allocator);
+  return ok && reclaimed;
 }
 
 // 这一步不再只是在 `kernel_main` 里“手工调一次 ELF loader + user_mode_enter”。
@@ -1671,7 +1681,8 @@ bool run_scheduler_elf_thread_smoke_test(PageAllocator* allocator,
     serial_write_crlf();
   }
 
-  return ok && restored_kernel_context;
+  const bool reclaimed = scheduler_destroy(&g_scheduler);
+  return ok && restored_kernel_context && reclaimed;
 }
 
 // 这里用两次堆分配证明两件事：
@@ -5008,8 +5019,9 @@ bool run_shell_smoke_test(const BootInfo* boot_info,
   }
 
   disable_interrupts();
+  const bool reclaimed = scheduler_destroy(&shell_smoke_scheduler);
   (void)scheduler_set_active(&g_scheduler);
-  return keyboard_irq_count() == expected_irq_count &&
+  return reclaimed && keyboard_irq_count() == expected_irq_count &&
          keyboard_buffered_char_count() == 0;
 }
 
@@ -5051,6 +5063,12 @@ bool start_kernel_shell_under_scheduler() {
   if (shell_process == nullptr) {
     return false;
   }
+  if (!scheduler_initialize_process_syscall_view(shell_process, &g_vfs,
+                                                   g_syscall_context.write_handler,
+                                                   g_syscall_context.write_context)) {
+    return false;
+  }
+  g_shell.syscall_context = &shell_process->syscall_context;
 
   ThreadControlBlock* const shell_thread =
       scheduler_create_kernel_thread(&g_scheduler, shell_process,
@@ -5376,14 +5394,55 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 #endif
 
 #if !defined(OS64_ENABLE_PAGE_FAULT_SMOKE) && !defined(OS64_ENABLE_INVALID_OPCODE_SMOKE)
+  // Regression tests use the immutable boot fixture. The interactive system
+  // mounts its own data disk only after those tests have finished.
+  if (!scheduler_destroy(&g_scheduler) ||
+      !heap_reserve(&g_kernel_heap, kKernelHeapLimit - kKernelHeapStart) ||
+      !initialize_scheduler(&g_scheduler, kSchedulerTimeSliceTicks)) {
+    write_status_line(kShellStatusRow, "runtime init bad");
+    return;
+  }
+  Os64Fs* runtime_filesystem = &g_os64fs;
+  const BlockDevice* runtime_device = &g_boot_block_device;
+  if (initialize_ata_pio_primary_master(&g_data_disk) &&
+      initialize_block_device_from_ata_pio(&g_data_block_device, &g_data_disk)) {
+    if (initialize_os64fs(&g_data_filesystem, &g_data_block_device)) {
+      runtime_filesystem = &g_data_filesystem;
+      runtime_device = &g_data_block_device;
+      serial_write_string("storage_backend=ata-pio");
+      serial_write_crlf();
+    } else {
+      serial_write_string("data_disk_mount_error=");
+      serial_write_u64(os64fs_mount_error(&g_data_filesystem));
+      serial_write_crlf();
+    }
+  }
+  if (runtime_device == &g_boot_block_device) {
+    serial_write_string("storage_backend=ram (volatile)");
+    serial_write_crlf();
+  }
+  if (!initialize_vfs(&g_vfs, runtime_filesystem) ||
+      !initialize_file_descriptor_table(&g_fd_table, &g_vfs) ||
+      !initialize_syscall_context(&g_syscall_context, &g_fd_table) ||
+      !install_syscall_write_handler(&g_syscall_context, syscall_output_write, nullptr) ||
+      !install_syscall_dispatch_context(&g_syscall_context) ||
+      !install_syscall_process_services(&g_scheduler, &g_page_allocator,
+                                          runtime_filesystem, &g_vfs)) {
+    write_status_line(kShellStatusRow, "runtime services bad");
+    return;
+  }
   if (!initialize_shell(&g_shell, boot_info, &g_page_allocator, &g_kernel_heap,
-                        &g_boot_volume, &g_boot_block_device,
-                        &g_os64fs, &g_vfs, &g_scheduler,
+                        &g_boot_volume, runtime_device,
+                        runtime_filesystem, &g_vfs, &g_scheduler,
                         &g_syscall_context, &kShellOutput)) {
     write_status_line(kShellStatusRow, "shell reset bad");
     return;
   }
 
+  if (!initialize_serial_input()) {
+    serial_write_string("serial_input unavailable");
+    serial_write_crlf();
+  }
   enable_interrupts();  // 下面要把 shell 作为真实内核线程交给调度器，所以先把 IRQ 重新打开。
   if (!start_kernel_shell_under_scheduler()) {
     disable_interrupts();
@@ -5409,6 +5468,14 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 
 extern "C" void kernel_handle_exception(const InterruptFrame* frame,
                                          uint64_t fault_address) {
+  if (frame != nullptr && (frame->cs & 3) == 3) {
+    serial_write_string("user_fault_vector=");
+    serial_write_u64(frame->vector);
+    serial_write_crlf();
+    if (scheduler_handle_user_exception(frame, fault_address)) {
+      return;
+    }
+  }
   vga_write_line(12, "kernel exception", kExceptionTextColor);
 
   serial_write_string("exception=");

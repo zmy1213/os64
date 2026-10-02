@@ -11,7 +11,7 @@ constexpr uint8_t kStatusOutputBufferFull = 0x01;     // bit0=1 表示已经有�
 constexpr uint8_t kStatusInputBufferFull = 0x02;      // bit1=1 表示控制器还忙，暂时别再写命令。
 constexpr uint8_t kInjectOutputBufferCommand = 0xD2;  // 8042 命令：把下一个字节塞进输出缓冲，模拟键盘送数据。
 constexpr uint32_t kControllerPollLimit = 100000;     // 防止控制器异常时无限卡在轮询里。
-constexpr uint16_t kKeyboardInputBufferCapacity = 64; // 第一版先留 64 个输入事件槽位，够演示 FIFO 顺序和简单编辑。
+constexpr uint16_t kKeyboardInputBufferCapacity = 256;
 
 volatile uint64_t g_keyboard_irq_count = 0;           // 已经处理过多少次 IRQ1。
 volatile uint8_t g_keyboard_last_scancode = 0;        // 最近一次读到的扫描码。
@@ -25,6 +25,9 @@ volatile uint8_t g_keyboard_has_extended_prefix = 0;  // `0xE0` 前缀表示接�
 volatile uint8_t g_keyboard_initialized = 0;          // 让更高层知道“当前键盘输入队列是否已经进入可消费状态”。
 ThreadControlBlock* g_keyboard_input_waiters[kSchedulerMaxThreadCount];   // 给 console 这种“要等任意输入事件”的路径用。
 ThreadControlBlock* g_keyboard_stream_waiters[kSchedulerMaxThreadCount];  // 第一版先用固定数组记“哪些线程正在等 stdin 字符”。
+bool g_left_shift = false;
+bool g_right_shift = false;
+bool g_caps_lock = false;
 
 inline void out8(uint16_t port, uint8_t value) {
   asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
@@ -133,6 +136,15 @@ bool translate_regular_scancode(uint8_t scancode, KeyboardInputEvent* out_event)
     case 0x30: out_event->character = 'b'; return true;
     case 0x31: out_event->character = 'n'; return true;
     case 0x32: out_event->character = 'm'; return true;
+    case 0x0C: out_event->character = '-'; return true;
+    case 0x0D: out_event->character = '='; return true;
+    case 0x1A: out_event->character = '['; return true;
+    case 0x1B: out_event->character = ']'; return true;
+    case 0x27: out_event->character = ';'; return true;
+    case 0x28: out_event->character = '\''; return true;
+    case 0x29: out_event->character = '`'; return true;
+    case 0x2B: out_event->character = '\\'; return true;
+    case 0x33: out_event->character = ','; return true;
     case 0x34: out_event->character = '.'; return true;
     case 0x35: out_event->character = '/'; return true;
 
@@ -372,6 +384,7 @@ bool initialize_keyboard() {
   g_keyboard_char_count = 0;
   g_keyboard_dropped_char_count = 0;
   g_keyboard_has_extended_prefix = 0;
+  g_left_shift = g_right_shift = g_caps_lock = false;
   for (size_t i = 0; i < kSchedulerMaxThreadCount; ++i) {
     g_keyboard_input_waiters[i] = nullptr;
   }
@@ -386,6 +399,19 @@ bool keyboard_is_ready() {
   return g_keyboard_initialized != 0;
 }
 
+void keyboard_submit_input_event(const KeyboardInputEvent& event) {
+  if (!keyboard_is_ready()) {
+    return;
+  }
+  const uint64_t flags = save_interrupt_flags_and_disable();
+  enqueue_input_event(event);
+  wake_input_waiters();
+  if (event.kind == kKeyboardInputCharacter) {
+    wake_stream_waiters();
+  }
+  restore_interrupt_flags(flags);
+}
+
 void handle_keyboard_irq() {
   // 正常来说 IRQ1 到来时，输出缓冲区里就已经有 1 个扫描码了。
   // 这一层先只做最小事：把它读出来并记住。
@@ -396,19 +422,43 @@ void handle_keyboard_irq() {
   g_keyboard_last_scancode = in8(kKeyboardDataPort);
   ++g_keyboard_irq_count;
 
+  if (g_keyboard_has_extended_prefix == 0) {
+    switch (g_keyboard_last_scancode) {
+      case 0x2A: g_left_shift = true; return;
+      case 0xAA: g_left_shift = false; return;
+      case 0x36: g_right_shift = true; return;
+      case 0xB6: g_right_shift = false; return;
+      case 0x3A: g_caps_lock = !g_caps_lock; return;
+      default: break;
+    }
+  }
+
   KeyboardInputEvent translated_event;
   translated_event.kind = kKeyboardInputCharacter;
   translated_event.character = '\0';
   if (translate_scancode_to_input_event(g_keyboard_last_scancode,
                                         &translated_event)) {
+    if (translated_event.kind == kKeyboardInputCharacter) {
+      const bool shifted = g_left_shift || g_right_shift;
+      char& ch = translated_event.character;
+      if (ch >= 'a' && ch <= 'z') {
+        if (shifted != g_caps_lock) {
+          ch = static_cast<char>(ch - 'a' + 'A');
+        }
+      } else if (shifted) {
+        constexpr char plain[] = "1234567890-=[];'`,./\\";
+        constexpr char upper[] = "!@#$%^&*()_+{}:\"~<>?|";
+        for (size_t i = 0; plain[i] != '\0'; ++i) {
+          if (ch == plain[i]) {
+            ch = upper[i];
+            break;
+          }
+        }
+      }
+    }
     // 真正的主链是：
     // IRQ1 -> 读扫描码 -> 翻译成输入事件 -> 入队 -> 唤醒等待者
-    enqueue_input_event(translated_event);
-    wake_input_waiters();
-
-    if (translated_event.kind == kKeyboardInputCharacter) {
-      wake_stream_waiters();
-    }
+    keyboard_submit_input_event(translated_event);
   }
 }
 

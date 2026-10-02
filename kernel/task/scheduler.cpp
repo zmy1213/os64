@@ -10,6 +10,7 @@ namespace {
 
 constexpr uint8_t kInvalidReadySlot = 0xFF;
 constexpr size_t kMinimumThreadStackBytes = 4096;
+constexpr size_t kUserKernelStackBytes = 32768;
 
 SchedulerState* g_active_scheduler = nullptr;  // 当前系统里先只保留 1 个全局活跃调度器。
 
@@ -18,6 +19,7 @@ extern "C" void scheduler_switch_context_and_root(
     uint64_t load_stack_pointer,
     uint64_t load_root_physical);
 extern "C" void scheduler_thread_bootstrap();
+void reap_orphans(SchedulerState* scheduler);
 
 // 调度器里的这批 helper，大多都在服务“线程切换前后，栈和地址空间根要怎么保存/恢复”。
 uint64_t align_down(uint64_t value, uint64_t alignment) {
@@ -254,6 +256,7 @@ void prepare_initial_thread_stack(ThreadControlBlock* thread) {
 
   *--stack_cursor =
       reinterpret_cast<uint64_t>(&scheduler_thread_bootstrap);  // `ret` 之后第一次落到这里。
+  *--stack_cursor = 0x202;                                      // RFLAGS: new kernel contexts accept IRQs.
   *--stack_cursor = 0;                                          // rbp
   *--stack_cursor = 0;                                          // rbx
   *--stack_cursor = 0;                                          // r12
@@ -326,6 +329,7 @@ void switch_thread_context(SchedulerState* scheduler,
   scheduler_switch_context_and_root(&current_thread->saved_stack_pointer,
                                     next_thread->saved_stack_pointer,
                                     next_root);
+  reap_orphans(scheduler);
 }
 
 void switch_from_bootstrap_to_thread(SchedulerState* scheduler,
@@ -452,6 +456,7 @@ void idle_thread_entry(void*) {
   // 当没有普通线程能跑时，让 CPU 进入“等中断 + 看看是否该切换”的保底循环。
   for (;;) {
     wait_for_interrupt();
+    reap_orphans(g_active_scheduler);
     (void)scheduler_yield_if_requested();
   }
 }
@@ -460,7 +465,270 @@ SchedulerState* active_scheduler() {
   return g_active_scheduler;
 }
 
+void release_thread(ThreadControlBlock* thread) {
+  if (thread->execution_mode == kThreadExecutionModeUser) {
+    (void)kfree(thread->stack_allocation);
+    (void)kfree(thread->user_kernel_entry_stack_allocation);
+  } else if (thread->stack_allocation != nullptr) {
+    (void)kfree(thread->stack_allocation);
+  }
+  memory_set(thread, 0, sizeof(*thread));
+}
+
+void release_process(ProcessControlBlock* process) {
+  for (int32_t fd = 0; fd < static_cast<int32_t>(kFileDescriptorCapacity); ++fd) {
+    if (fd_is_open(&process->file_descriptors, fd)) {
+      (void)fd_close(&process->file_descriptors, fd);
+    }
+  }
+  if (process->address_space.owns_page_table_root) {
+    (void)address_space_destroy(&process->address_space, process->page_allocator);
+  }
+  memory_set(process, 0, sizeof(*process));
+}
+
+void reap_orphans(SchedulerState* scheduler) {
+  if (!scheduler_is_ready(scheduler)) {
+    return;
+  }
+  for (auto& process : scheduler->processes) {
+    if (process.in_use && process.auto_reap && process.state == kProcessStateExited &&
+        (scheduler->current_thread == nullptr ||
+         scheduler->current_thread->owner != &process)) {
+      (void)scheduler_reap_process(scheduler, process.pid, nullptr);
+    }
+  }
+}
+
 }  // namespace
+
+SchedulerState* scheduler_active_state() {
+  return g_active_scheduler;
+}
+
+ProcessControlBlock* scheduler_find_process(SchedulerState* scheduler, uint32_t pid) {
+  if (!scheduler_is_ready(scheduler)) {
+    return nullptr;
+  }
+  for (auto& process : scheduler->processes) {
+    if (process.in_use && process.pid == pid) {
+      return &process;
+    }
+  }
+  return nullptr;
+}
+
+bool scheduler_discard_process(SchedulerState* scheduler, uint32_t pid) {
+  ProcessControlBlock* const process = scheduler_find_process(scheduler, pid);
+  if (process == nullptr || pid == 0 ||
+      (scheduler->current_thread != nullptr && scheduler->current_thread->owner == process)) {
+    return false;
+  }
+  for (const auto& thread : scheduler->threads) {
+    if (thread.in_use && thread.owner == process &&
+        thread.state != kThreadStateFinished &&
+        (thread.state != kThreadStateReady || thread.dispatch_count != 0)) {
+      return false;
+    }
+  }
+  for (size_t priority = 0; priority < kSchedulerPriorityCount; ++priority) {
+    const uint32_t count = scheduler->ready_count_by_priority[priority];
+    for (uint32_t i = 0; i < count; ++i) {
+      ThreadControlBlock* const thread = pop_ready_thread_from_priority(
+          scheduler, static_cast<ThreadPriority>(priority));
+      if (thread != nullptr && thread->owner != process) {
+        (void)push_ready_thread(scheduler, thread);
+      }
+    }
+  }
+  for (auto& thread : scheduler->threads) {
+    if (thread.in_use && thread.owner == process) {
+      if (thread.state != kThreadStateFinished && scheduler->live_thread_count != 0) {
+        --scheduler->live_thread_count;
+      }
+      release_thread(&thread);
+    }
+  }
+  release_process(process);
+  return true;
+}
+
+bool scheduler_reap_process(SchedulerState* scheduler, uint32_t pid,
+                             int64_t* exit_status) {
+  ProcessControlBlock* const process = scheduler_find_process(scheduler, pid);
+  if (process == nullptr || process->state != kProcessStateExited ||
+      process->live_thread_count != 0) {
+    return false;
+  }
+  const int64_t status = process->exit_code;
+  if (!scheduler_discard_process(scheduler, pid)) {
+    return false;
+  }
+  if (exit_status != nullptr) {
+    *exit_status = status;
+  }
+  return true;
+}
+
+bool scheduler_destroy(SchedulerState* scheduler) {
+  if (!scheduler_is_ready(scheduler) || scheduler->current_thread != nullptr ||
+      scheduler->live_thread_count != 0 || scheduler->sleeping_thread_count != 0 ||
+      scheduler->blocked_thread_count != 0) {
+    return false;
+  }
+  for (auto& thread : scheduler->threads) {
+    if (thread.in_use) {
+      release_thread(&thread);
+    }
+  }
+  for (auto& process : scheduler->processes) {
+    if (process.in_use) {
+      release_process(&process);
+    }
+  }
+  if (g_active_scheduler == scheduler) {
+    g_active_scheduler = nullptr;
+    (void)tss_set_kernel_rsp0(tss_default_kernel_rsp0());
+  }
+  memory_set(scheduler, 0, sizeof(*scheduler));
+  return true;
+}
+
+bool scheduler_prepare_user_arguments(ProcessControlBlock* process,
+                                       ThreadControlBlock* thread,
+                                       size_t argc, const char* const* argv) {
+  constexpr size_t kMaxArguments = 16;
+  constexpr size_t kMaxArgumentBytes = 256;
+  if (process == nullptr || thread == nullptr || !process->in_use ||
+      thread->owner != process || thread->state != kThreadStateReady ||
+      thread->dispatch_count != 0 || thread->execution_mode != kThreadExecutionModeUser ||
+      argc > kMaxArguments || (argc != 0 && argv == nullptr)) {
+    return false;
+  }
+  const uint64_t top = thread->user_mode.user_stack_pointer;
+  const uint64_t bottom = align_down(top - 1, kPagingPageSize);
+  uint64_t pointers[kMaxArguments + 1];
+  size_t lengths[kMaxArguments];
+  memory_set(pointers, 0, sizeof(pointers));
+  memory_set(lengths, 0, sizeof(lengths));
+  size_t string_bytes = 0;
+  for (size_t i = 0; i < argc; ++i) {
+    if (argv[i] == nullptr) {
+      return false;
+    }
+    size_t length = 0;
+    while (length < kMaxArgumentBytes && argv[i][length] != '\0') {
+      ++length;
+    }
+    if (length == kMaxArgumentBytes) {
+      return false;
+    }
+    lengths[i] = length + 1;
+    string_bytes += length + 1;
+  }
+  const uint64_t table_bytes = (argc + 2) * sizeof(uint64_t);
+  if (string_bytes > top - bottom || table_bytes + 15 > top - bottom - string_bytes) {
+    return false;
+  }
+  uint64_t cursor = top;
+  for (size_t i = argc; i != 0; --i) {
+    cursor -= lengths[i - 1];
+    pointers[i - 1] = cursor;
+    if (!address_space_copy_to_user(&process->address_space, cursor,
+                                     argv[i - 1], lengths[i - 1])) {
+      return false;
+    }
+  }
+  const uint64_t stack = align_down(cursor - table_bytes, 16);
+  const uint64_t count = argc;
+  if (!address_space_copy_to_user(&process->address_space, stack, &count, sizeof(count)) ||
+      !address_space_copy_to_user(&process->address_space, stack + sizeof(count),
+                                   pointers, (argc + 1) * sizeof(uint64_t))) {
+    return false;
+  }
+  thread->user_mode.user_stack_pointer = stack;
+  return true;
+}
+
+bool scheduler_user_range_valid(uint64_t address, size_t bytes, bool writable) {
+  ThreadControlBlock* const thread = scheduler_active_thread();
+  return thread != nullptr && thread->owner != nullptr &&
+         thread->execution_mode == kThreadExecutionModeUser &&
+         address_space_user_range_valid(&thread->owner->address_space,
+                                          address, bytes, writable);
+}
+
+bool scheduler_wait_process(SchedulerState* scheduler, uint32_t pid,
+                             int64_t* exit_status) {
+  if (scheduler != g_active_scheduler) {
+    return false;
+  }
+  ProcessControlBlock* const process = scheduler_find_process(scheduler, pid);
+  ThreadControlBlock* const waiter = scheduler_active_thread();
+  if (process == nullptr || pid == 0 ||
+      (waiter != nullptr && (waiter->owner == process ||
+                            process->parent_pid != waiter->owner->pid))) {
+    return false;
+  }
+  const bool restore_interrupts = interrupts_are_enabled();
+  while (process->state != kProcessStateExited) {
+    if (waiter == nullptr) {
+      if (!scheduler_run_until_idle(scheduler)) {
+        return false;
+      }
+    } else {
+      disable_interrupts();
+      if (process->state != kProcessStateExited) {
+        waiter->waiting_for_pid = pid;
+        if (!scheduler_block_current_thread_and_enable_interrupts()) {
+          waiter->waiting_for_pid = 0;
+          if (restore_interrupts) {
+            enable_interrupts();
+          }
+          return false;
+        }
+        waiter->waiting_for_pid = 0;
+      }
+      if (restore_interrupts) {
+        enable_interrupts();
+      } else {
+        disable_interrupts();
+      }
+    }
+  }
+  if (exit_status != nullptr) {
+    *exit_status = process->exit_code;
+  }
+  return true;
+}
+
+[[noreturn]] void scheduler_exit_current_user_process(int64_t exit_status) {
+  ThreadControlBlock* const thread = scheduler_active_thread();
+  if (thread != nullptr && thread->execution_mode == kThreadExecutionModeUser &&
+      thread->user_mode.kernel_resume_stack_pointer != 0) {
+    thread->owner->exit_code = exit_status;
+    thread->user_mode.return_value = static_cast<uint64_t>(exit_status);
+    user_mode_resume_kernel(thread->user_mode.kernel_resume_stack_pointer,
+                            thread->user_mode.kernel_root_physical,
+                            static_cast<uint64_t>(exit_status));
+  }
+  for (;;) {
+    disable_interrupts();
+    wait_for_interrupt();
+  }
+}
+
+bool scheduler_handle_user_exception(const InterruptFrame* frame,
+                                      uint64_t fault_address) {
+  ThreadControlBlock* const thread = scheduler_active_thread();
+  if (frame == nullptr || (frame->cs & 3) != 3 || thread == nullptr ||
+      thread->execution_mode != kThreadExecutionModeUser || thread->owner == nullptr) {
+    return false;
+  }
+  thread->owner->fault_vector = frame->vector;
+  thread->owner->fault_address = fault_address;
+  scheduler_exit_current_user_process(128 + static_cast<int64_t>(frame->vector));
+}
 
 bool initialize_scheduler(SchedulerState* scheduler,
                           uint32_t time_slice_ticks) {
@@ -571,6 +839,12 @@ ProcessControlBlock* scheduler_create_user_process(
     return nullptr;
   }
 
+  // All user roots must see stable supervisor mappings for kernel heap stacks
+  // and filesystem buffers, including pages allocated by later syscalls.
+  if (!heap_reserve(kernel_memory_heap(), kKernelHeapLimit - kKernelHeapStart)) {
+    return nullptr;
+  }
+
   ProcessControlBlock* const process = first_free_process_slot(scheduler);
   if (process == nullptr) {
     return nullptr;
@@ -584,7 +858,12 @@ ProcessControlBlock* scheduler_create_user_process(
 
   // user process 和 kernel process 最大区别就在这里：
   // 它要 clone 一份独立页表根，以后才能真的拥有“自己的用户地址空间”。
-  if (!clone_current_address_space(&process->address_space, allocator)) {
+  process->page_allocator = allocator;
+  const ThreadControlBlock* const parent = scheduler->current_thread;
+  process->parent_pid = parent != nullptr && parent->owner != nullptr
+                            ? parent->owner->pid : 0;
+  if (!clone_address_space_from_root(&process->address_space, allocator,
+                                      scheduler_kernel_root_physical(scheduler))) {
     memory_set(process, 0, sizeof(*process));
     return nullptr;
   }
@@ -659,6 +938,9 @@ bool scheduler_create_user_elf_thread(
       !scheduler_initialize_process_syscall_view(process, vfs,
                                                  write_handler,
                                                  write_context)) {
+    if (process != nullptr) {
+      (void)scheduler_discard_process(scheduler, process->pid);
+    }
     return false;
   }
 
@@ -667,11 +949,14 @@ bool scheduler_create_user_elf_thread(
   // 先把 ELF 文件内容和段布局真正装进这份 user process 的地址空间。
   if (!load_elf_user_program(allocator, &process->address_space,
                              filesystem, elf_path, &program)) {
+    (void)scheduler_discard_process(scheduler, process->pid);
     return false;
   }
 
-  const uint64_t stack_physical_page = alloc_page(allocator);
+  const uint64_t stack_physical_page =
+      alloc_page_below(allocator, kPagingBootIdentityLimit);
   if (!page_is_directly_accessible_in_boot_identity_map(stack_physical_page)) {
+    (void)scheduler_discard_process(scheduler, process->pid);
     return false;
   }
 
@@ -690,6 +975,8 @@ bool scheduler_create_user_elf_thread(
                                    stack_page_virtual_address,
                                    stack_physical_page,
                                    kPageWritable)) {
+    (void)free_page(allocator, stack_physical_page);
+    (void)scheduler_discard_process(scheduler, process->pid);
     return false;
   }
 
@@ -701,6 +988,7 @@ bool scheduler_create_user_elf_thread(
                                    user_rflags,
                                    priority);
   if (thread == nullptr) {
+    (void)scheduler_discard_process(scheduler, process->pid);
     return false;
   }
 
@@ -801,38 +1089,19 @@ ThreadControlBlock* scheduler_create_user_thread(
     return nullptr;
   }
 
-  // user thread 进入 ring 3 之前，第一版其实需要两根 low identity-mapped 栈：
-  // 1. scheduler/bootstrap 栈：
-  //    - `scheduler_switch_context()` 会从这里第一次把线程“ret”进 bootstrap
-  //    - `user_mode_enter()` 也会把“最后要退回哪条内核栈”的返回现场保存在这里
-  // 2. TSS.rsp0 专用内核进入栈：
-  //    - 每次用户态 `int 0x80` / 以后外部中断进 ring 0，都先落到这根栈
-  //
-  // 如果只给 1 根栈，那么后续 syscall 压入的 trap frame 会覆盖掉
-  // `user_mode_enter()` 当初保存的最终返回现场，最后 `exit` 就没法安全回到线程入口了。
-  //
-  // 这里不能直接用 heap 栈，因为当前教学内核的 heap 虚拟区和用户区窗口还有重叠，
-  // clone 出来的 user root 不一定能继续看到那根 heap 栈。
-  //
-  // 所以第一版先保守地给 user thread 分 2 页低地址 identity-mapped 栈：
-  // - 在当前 kernel root 下能访问
-  // - 切到 cloned user root 之后也仍然有同样的恒等映射
-  const uint64_t scheduler_stack_page = alloc_page(allocator);
-  const uint64_t kernel_entry_stack_page = alloc_page(allocator);
-  if (scheduler_stack_page == 0 ||
-      scheduler_stack_page >= kPagingBootIdentityLimit ||
-      kernel_entry_stack_page == 0 ||
-      kernel_entry_stack_page >= kPagingBootIdentityLimit) {
+  // Separate supervisor stacks preserve the user_mode_enter return context.
+  // The heap is pre-mapped before cloning, so both CR3 roots see these pages.
+  void* const scheduler_stack = kmalloc_aligned(kUserKernelStackBytes, 16);
+  void* const kernel_entry_stack = kmalloc_aligned(kUserKernelStackBytes, 16);
+  if (scheduler_stack == nullptr || kernel_entry_stack == nullptr) {
+    if (scheduler_stack != nullptr) {
+      (void)kfree(scheduler_stack);
+    }
+    if (kernel_entry_stack != nullptr) {
+      (void)kfree(kernel_entry_stack);
+    }
     return nullptr;
   }
-
-  memory_set(reinterpret_cast<void*>(
-                 static_cast<uintptr_t>(scheduler_stack_page)),
-             0, kPagingPageSize);
-  memory_set(reinterpret_cast<void*>(
-                 static_cast<uintptr_t>(kernel_entry_stack_page)),
-             0,
-             kPagingPageSize);
 
   memory_set(thread, 0, sizeof(*thread));
   thread->in_use = true;
@@ -843,16 +1112,15 @@ ThreadControlBlock* scheduler_create_user_thread(
   thread->execution_mode = kThreadExecutionModeUser;
   thread->entry = nullptr;
   thread->entry_context = nullptr;
-  thread->stack_allocation =
-      reinterpret_cast<void*>(static_cast<uintptr_t>(scheduler_stack_page));
-  thread->stack_allocation_bytes = kPagingPageSize;
+  thread->stack_allocation = scheduler_stack;
+  thread->stack_allocation_bytes = kUserKernelStackBytes;
   thread->is_idle_thread = false;
-  thread->user_kernel_entry_stack_allocation =
-      reinterpret_cast<void*>(static_cast<uintptr_t>(kernel_entry_stack_page));
-  thread->user_kernel_entry_stack_top = kernel_entry_stack_page + kPagingPageSize;
+  thread->user_kernel_entry_stack_allocation = kernel_entry_stack;
+  thread->user_kernel_entry_stack_top =
+      reinterpret_cast<uint64_t>(kernel_entry_stack) + kUserKernelStackBytes;
   thread->user_mode.user_instruction_pointer = user_instruction_pointer;
   thread->user_mode.user_stack_pointer = user_stack_pointer;
-  thread->user_mode.user_rflags = user_rflags;
+  thread->user_mode.user_rflags = (user_rflags & (1ULL << 9)) | 2;
   thread->user_mode.user_code_selector = kUserCodeSelectorRpl3;
   thread->user_mode.user_stack_selector = kUserDataSelectorRpl3;
   copy_name(thread->name, name);
@@ -868,6 +1136,8 @@ ThreadControlBlock* scheduler_create_user_thread(
     thread->in_use = false;
     --owner->live_thread_count;
     --scheduler->live_thread_count;
+    (void)kfree(scheduler_stack);
+    (void)kfree(kernel_entry_stack);
     return nullptr;
   }
 
@@ -887,6 +1157,7 @@ bool scheduler_run_until_idle(SchedulerState* scheduler) {
   }
 
   switch_from_bootstrap_to_thread(scheduler, next_thread);
+  reap_orphans(scheduler);
   return scheduler->live_thread_count == 0 &&
          scheduler->sleeping_thread_count == 0 &&
          scheduler->blocked_thread_count == 0;
@@ -1055,6 +1326,7 @@ bool scheduler_wake_thread(ThreadControlBlock* thread) {
 }
 
 [[noreturn]] void scheduler_exit_current_thread() {
+  disable_interrupts();
   SchedulerState* const scheduler = active_scheduler();
   if (!scheduler_is_ready(scheduler) || scheduler->current_thread == nullptr) {
     for (;;) {
@@ -1076,6 +1348,19 @@ bool scheduler_wake_thread(ThreadControlBlock* thread) {
 
       if (current_thread->owner->live_thread_count == 0) {
         current_thread->owner->state = kProcessStateExited;
+        const uint32_t pid = current_thread->owner->pid;
+        for (auto& child : scheduler->processes) {
+          if (child.in_use && child.parent_pid == pid) {
+            child.parent_pid = 0;
+            child.auto_reap = true;
+          }
+        }
+        for (auto& waiter : scheduler->threads) {
+          if (waiter.in_use && waiter.state == kThreadStateBlocked &&
+              waiter.waiting_for_pid == pid) {
+            (void)wake_thread_internal(scheduler, &waiter, false);
+          }
+        }
       } else {
         current_thread->owner->state = kProcessStateReady;
       }
@@ -1269,6 +1554,7 @@ void run_current_user_thread(ThreadControlBlock* current_thread) {
 
   const uint64_t return_value = user_mode_enter(&current_thread->user_mode);
   current_thread->user_mode.return_value = return_value;
+  current_thread->owner->exit_code = static_cast<int64_t>(return_value);
 }
 
 extern "C" void scheduler_thread_bootstrap() {
@@ -1278,6 +1564,7 @@ extern "C" void scheduler_thread_bootstrap() {
       wait_for_interrupt();
     }
   }
+  reap_orphans(scheduler);
 
   // 每条线程第一次被调度进来时，都会先落到这个统一 bootstrap：
   // - user thread：走 `run_current_user_thread()`
