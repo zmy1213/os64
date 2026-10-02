@@ -6,6 +6,8 @@
 
 #include "fs/fd.hpp"
 #include "interrupts/interrupts.hpp"
+#include "log/log.hpp"
+#include "perf/perf.hpp"
 
 constexpr size_t kSyscallPathCapacity = 64;  // 第一版每个“进程上下文”的 cwd 先限制在 63 个字符内。
 constexpr int32_t kSyscallStandardInputFd = 0;    // 公开 syscall fd 里，0 预留给标准输入。
@@ -23,6 +25,7 @@ enum SyscallStatus : int32_t {
   kSyscallBadFileDescriptor = -4, // fd 不存在或已经关闭。
   kSyscallIoError = -5,           // 底层读、关闭或 seek 失败。
   kSyscallUnsupported = -6,       // 这条 syscall 形状已经有了，但当前内核版本还没支持这类对象/操作。
+  kSyscallBrokenPipe = -7,        // 管道已经没有读端；本教程不发送 SIGPIPE。
 };
 
 // 这是第一版“寄存器 ABI”。
@@ -33,6 +36,7 @@ enum SyscallStatus : int32_t {
 // - RSI = 第 2 个参数
 // - RDX = 第 3 个参数
 // - RCX = 第 4 个参数
+// - R8 = 第 5 个参数（UDP send 的长度；旧调用默认使用 0）
 enum SyscallNumber : uint64_t {
   kSyscallNumberGetCwd = 0,
   kSyscallNumberChdir = 1,
@@ -44,8 +48,8 @@ enum SyscallNumber : uint64_t {
   kSyscallNumberStatPath = 7,
   kSyscallNumberListDir = 8,
   kSyscallNumberWrite = 9,  // 这次先追加，不去重排前一轮已经用起来的编号。
-  kSyscallNumberExit = 10,  // 结束当前用户进程，保存退出码并唤醒等待者。
-  kSyscallNumberYield = 11, // 用户线程主动让出 CPU，之后从原调用点继续。
+  kSyscallNumberExit = 10,  // 第一版用户态先靠它告诉内核：“我已经跑完，可以回到 smoke test 继续了”。
+  kSyscallNumberYield = 11, // 第一版“用户线程主动让出 CPU”入口；这一步先主要服务于用户态恢复烟测。
   kSyscallNumberMkdir = 12,
   kSyscallNumberGetPid = 13,
   kSyscallNumberSleep = 14,
@@ -56,6 +60,16 @@ enum SyscallNumber : uint64_t {
   kSyscallNumberOpenFlags = 19,
   kSyscallNumberBrk = 20,
   kSyscallNumberReplaceFile = 21,
+  kSyscallNumberTicks = 30,
+  kSyscallNumberReadLog = 31,
+  kSyscallNumberPerformanceSnapshot = 32,
+  kSyscallNumberPipe = 22,
+  kSyscallNumberDup2 = 23,
+  kSyscallNumberDup = 24,
+  kSyscallNumberUdpOpen = 36,
+  kSyscallNumberUdpClose = 37,
+  kSyscallNumberUdpSend = 38,
+  kSyscallNumberUdpReceive = 39,
 };
 
 // 这是第一版“写输出”回调。
@@ -66,8 +80,11 @@ using SyscallWriteHandler = size_t (*)(int32_t fd,
                                        size_t bytes_to_write,
                                        void* context);
 
-// 每个进程自己的系统调用视图：fd 表、当前目录和控制台输出回调。
-// 内核启动自测也能显式安装一份上下文，复用同样的文件接口。
+// SyscallContext 是第一版“系统调用上下文”。
+// 现在还没有进程，所以它先保存两样最关键的状态：
+// 1. 当前这组调用共用哪张 fd 表
+// 2. 当前工作目录 cwd 是什么
+// 以后有进程后，这里会自然长成“当前进程的内核视图”。
 struct SyscallContext {
   FileDescriptorTable* fd_table;                    // 以后 open/read/close 都会先从这里进入 fd 层。
   char current_working_directory[kSyscallPathCapacity];  // 现在先把 cwd 放进 syscall 上下文，而不是留在 shell 私有状态里。
@@ -97,7 +114,8 @@ bool install_syscall_write_handler(SyscallContext* context,
                                    SyscallWriteHandler handler,
                                    void* write_context);
 
-// 为启动自测安装后备上下文；调度器运行时优先取当前线程所属进程的上下文。
+// 现在还没有进程切换，所以 CPU 真正打进来的 syscall 统一先看“当前激活的上下文”。
+// 以后这里自然会升级成“当前线程/当前进程的上下文”。
 bool install_syscall_dispatch_context(SyscallContext* context);
 bool syscall_dispatch_is_ready();
 
@@ -118,14 +136,12 @@ SyscallStatus sys_chdir(SyscallContext* context, const char* path);
 int32_t sys_open(SyscallContext* context, const char* path,
                  uint32_t flags = 0);
 
-// 返回字节数，文件 EOF 返回 0，失败返回负数 SyscallStatus；正常 stdin 无字符时阻塞。
-// 现在：
-// - `fd == 0` 会走第一版 stdin 键盘字符流
-// - `fd >= 3` 检查该文件句柄的读权限并读取文件
+// 成功返回读到的字节数，EOF 返回 0，失败返回负数 SyscallStatus。
+// fd 可以连接终端、文件或管道；暂时没字符/管道数据时阻塞，不伪装成 EOF。
 int32_t sys_read(SyscallContext* context, int32_t fd,
                  void* buffer, size_t bytes_to_read);
 
-// 返回写出字节数；stdout/stderr 输出控制台，普通文件要求句柄有写权限。
+// 成功返回真正写出的字节数；无读端的管道返回 BrokenPipe。
 int32_t sys_write(SyscallContext* context, int32_t fd,
                   const void* buffer, size_t bytes_to_write);
 
@@ -165,8 +181,13 @@ SyscallStatus sys_unlink(SyscallContext* context, const char* path);
 SyscallStatus sys_sync(SyscallContext* context);
 // 0 查询末尾；成功返回新末尾，失败返回原末尾（并非负错误码）。
 uint64_t sys_brk(uint64_t requested_break);
+int32_t sys_read_log(KernelLogRecord* output, size_t capacity, uint64_t after_sequence);
+SyscallStatus sys_performance_snapshot(PerformanceSnapshot* output);
 int32_t sys_replace_file(SyscallContext* context, const char* path,
                          const void* buffer, size_t size);
+int32_t sys_pipe(SyscallContext* context, int32_t descriptors[2]);
+int32_t sys_dup2(SyscallContext* context, int32_t old_fd, int32_t new_fd);
+int32_t sys_dup(SyscallContext* context, int32_t old_fd);
 
 // 这是 `int 0x80` 打进内核后的 C++ 总入口。
 // 汇编 stub 会先把寄存器现场整理成 `SyscallInterruptFrame`，

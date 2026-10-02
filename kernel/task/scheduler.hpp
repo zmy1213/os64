@@ -9,11 +9,12 @@
 #include "syscall/syscall.hpp"
 #include "task/elf_loader.hpp"
 #include "task/user_mode.hpp"
+#include "cpu/cpu.hpp"
 
 // 第一版 tasking 先故意保守一点：
 // 只支持很少量的进程和线程，避免一上来把重点淹没在“可变长容器”里。
-constexpr size_t kSchedulerMaxProcessCount = 8;
-constexpr size_t kSchedulerMaxThreadCount = 16;
+constexpr size_t kSchedulerMaxProcessCount = 16;
+constexpr size_t kSchedulerMaxThreadCount = 32;
 constexpr size_t kSchedulerNameCapacity = 24;
 constexpr size_t kSchedulerDefaultKernelThreadStackBytes = 8192;
 constexpr size_t kSchedulerPriorityCount = 4;
@@ -111,6 +112,7 @@ struct ThreadControlBlock {
   uint64_t user_preempt_count;                     // 实际发生过多少次“用户态运行中被 timer 抢占并切去别的线程”。
   uint64_t user_yield_count;                       // 第一版先单独记“用户线程通过 syscall 主动让出 CPU”多少次，方便 smoke test 观察。
   char name[kSchedulerNameCapacity];               // 线程名字先也做成固定数组，避免早期依赖动态字符串。
+  CpuFloatingState floating_state;                 // FXSAVE: x87、MXCSR、XMM0–15，每线程独立。
 };
 
 struct SchedulerState {
@@ -132,6 +134,7 @@ struct SchedulerState {
   uint64_t total_yields;                           // 总共发生了多少次 yield。
   uint64_t preempt_request_count;                  // timer 一共发出过多少次“建议换人”的请求。
   uint64_t bootstrap_stack_pointer;                // 从 kernel_main 进入 scheduler 前的那条原始栈。
+  CpuFloatingState bootstrap_floating_state;        // bootstrap 也是一个可恢复执行上下文。
   ThreadControlBlock* current_thread;              // 当前真正在 CPU 上跑的线程。
   ThreadControlBlock* idle_thread;                 // 没有普通线程可运行时，就落到 idle thread。
   uint8_t ready_queue_thread_slots[kSchedulerPriorityCount]

@@ -1,5 +1,5 @@
 .NOTPARALLEL:
-.PHONY: all build stage1 users check-env run run-gui run-stage1 run-stage1-gui test test-stage1 test-system test-storage-host test-memory-host test-memory-user test-page-fault test-invalid-opcode update-tools reset-data clean distclean
+.PHONY: all build stage1 users check-env run run-gui run-stage1 run-stage1-gui test test-stage1 test-system test-storage-host test-memory-host test-memory-user test-shell-host test-ipc test-syscall-boundaries test-network-host test-network test-log-host test-performance benchmark test-page-fault test-invalid-opcode update-tools reset-data clean distclean
 
 all: build
 build stage1:
@@ -19,7 +19,7 @@ run-gui run-stage1-gui: build
 
 # Old milestones use the immutable RAM fixture; the system suite uses its own
 # temporary IDE data disk and never writes build/data.img.
-test: test-stage1 test-system test-storage-host test-memory-host test-memory-user test-page-fault test-invalid-opcode
+test: test-stage1 test-system test-storage-host test-memory-host test-memory-user test-shell-host test-ipc test-syscall-boundaries test-network-host test-network test-log-host test-performance test-page-fault test-invalid-opcode
 	@$(MAKE) --no-print-directory build
 
 test-stage1: build
@@ -36,6 +36,31 @@ test-memory-host:
 
 test-memory-user: build
 	@bash scripts/test-memory-user.sh
+
+test-shell-host:
+	@bash scripts/test-shell-host.sh
+
+test-ipc: build
+	@bash scripts/test-ipc.sh
+
+test-syscall-boundaries: build
+	@bash scripts/test-syscall-boundaries.sh
+
+test-network-host:
+	@bash scripts/test-network-host.sh
+
+test-network: build
+	@bash scripts/test-network.sh
+
+test-log-host:
+	@bash scripts/test-log-host.sh
+
+test-performance: build
+	@bash scripts/test-performance.sh
+
+# Uses explicitly prepared Linux kernel/initramfs; not part of CI.
+benchmark: build
+	@bash scripts/benchmark.sh
 
 # Update only /bin, with a complete backup; stop QEMU before running this target.
 update-tools: build

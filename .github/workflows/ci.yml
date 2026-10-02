@@ -3,7 +3,7 @@ on: [push, pull_request]
 jobs:
   qemu:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Install freestanding toolchain
@@ -19,3 +19,12 @@ jobs:
           path: |
             build/*.serial.log
             build/system-test/*.log
+            build/memory-user-test/*.log
+            build/ipc-test/*.log
+            build/syscall-boundary-test/*.log
+            build/network-test/*.log
+            build/network-test/*.json
+            build/network-test/*.pcap
+            build/performance-results/*.json
+            build/performance-results/*.md
+            build/build-manifest.json

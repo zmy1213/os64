@@ -1,4 +1,6 @@
 #include "task/scheduler.hpp"
+#include "log/log.hpp"
+#include "net/network.hpp"
 
 #include "boot/segments.hpp"
 #include "interrupts/interrupts.hpp"
@@ -17,7 +19,9 @@ SchedulerState* g_active_scheduler = nullptr;  // 当前系统里先只保留 1 
 extern "C" void scheduler_switch_context_and_root(
     uint64_t* saved_stack_pointer,
     uint64_t load_stack_pointer,
-    uint64_t load_root_physical);
+    uint64_t load_root_physical,
+    CpuFloatingState* save_floating_state,
+    const CpuFloatingState* restore_floating_state);
 extern "C" void scheduler_thread_bootstrap();
 void reap_orphans(SchedulerState* scheduler);
 
@@ -324,7 +328,9 @@ void switch_thread_context(SchedulerState* scheduler,
   ++scheduler->total_switches;
   scheduler_switch_context_and_root(&current_thread->saved_stack_pointer,
                                     next_thread->saved_stack_pointer,
-                                    next_root);
+                                    next_root,
+                                    &current_thread->floating_state,
+                                    &next_thread->floating_state);
   reap_orphans(scheduler);
 }
 
@@ -340,7 +346,9 @@ void switch_from_bootstrap_to_thread(SchedulerState* scheduler,
   ++scheduler->total_switches;
   scheduler_switch_context_and_root(&scheduler->bootstrap_stack_pointer,
                                     next_thread->saved_stack_pointer,
-                                    next_root);
+                                    next_root,
+                                    &scheduler->bootstrap_floating_state,
+                                    &next_thread->floating_state);
 }
 
 void switch_from_thread_to_bootstrap(SchedulerState* scheduler,
@@ -353,7 +361,9 @@ void switch_from_thread_to_bootstrap(SchedulerState* scheduler,
       paging_current_root_physical();
   scheduler_switch_context_and_root(&current_thread->saved_stack_pointer,
                                     scheduler->bootstrap_stack_pointer,
-                                    scheduler_kernel_root_physical(scheduler));
+                                    scheduler_kernel_root_physical(scheduler),
+                                    &current_thread->floating_state,
+                                    &scheduler->bootstrap_floating_state);
 }
 
 void update_owner_ready_state(ProcessControlBlock* owner) {
@@ -472,11 +482,8 @@ void release_thread(ThreadControlBlock* thread) {
 }
 
 void release_process(ProcessControlBlock* process) {
-  for (int32_t fd = 0; fd < static_cast<int32_t>(kFileDescriptorCapacity); ++fd) {
-    if (fd_is_open(&process->file_descriptors, fd)) {
-      (void)fd_close(&process->file_descriptors, fd);
-    }
-  }
+  fd_close_all(&process->file_descriptors);
+  if (!process->is_kernel_process && process->pid) network_udp_close_owner(process->pid);
   if (process->address_space.owns_page_table_root) {
     (void)address_space_destroy(&process->address_space, process->page_allocator);
   }
@@ -729,11 +736,12 @@ bool scheduler_handle_user_exception(const InterruptFrame* frame,
 
 bool initialize_scheduler(SchedulerState* scheduler,
                           uint32_t time_slice_ticks) {
-  if (scheduler == nullptr || time_slice_ticks == 0) {
+  if (scheduler == nullptr || time_slice_ticks == 0 || !cpu_initialize()) {
     return false;
   }
 
   memory_set(scheduler, 0, sizeof(*scheduler));
+  cpu_initialize_floating_state(&scheduler->bootstrap_floating_state);
   scheduler->ready = true;
   scheduler->next_pid = 1;
   scheduler->next_tid = 1;
@@ -762,6 +770,7 @@ bool initialize_scheduler(SchedulerState* scheduler,
 
   ThreadControlBlock* const idle_thread = &scheduler->threads[0];
   memory_set(idle_thread, 0, sizeof(*idle_thread));
+  cpu_initialize_floating_state(&idle_thread->floating_state);
   idle_thread->in_use = true;
   idle_thread->tid = 0;
   idle_thread->state = kThreadStateReady;
@@ -1036,6 +1045,7 @@ ThreadControlBlock* scheduler_create_kernel_thread(
 
   memory_set(thread, 0, sizeof(*thread));
   thread->in_use = true;
+  cpu_initialize_floating_state(&thread->floating_state);
   thread->tid = scheduler->next_tid++;
   thread->state = kThreadStateReady;
   thread->priority = priority;
@@ -1105,6 +1115,7 @@ ThreadControlBlock* scheduler_create_user_thread(
 
   memory_set(thread, 0, sizeof(*thread));
   thread->in_use = true;
+  cpu_initialize_floating_state(&thread->floating_state);
   thread->tid = scheduler->next_tid++;
   thread->state = kThreadStateReady;
   thread->priority = priority;
@@ -1347,6 +1358,11 @@ bool scheduler_wake_thread(ThreadControlBlock* thread) {
       }
 
       if (current_thread->owner->live_thread_count == 0) {
+        kernel_log_process_event(kLogDebug, "exit", current_thread->owner->pid);
+        // 退出立即释放管道引用。若拖到父进程 wait/reap，读者可能永远等不到 EOF。
+        fd_close_all(&current_thread->owner->file_descriptors);
+        if (!current_thread->owner->is_kernel_process)
+          network_udp_close_owner(current_thread->owner->pid);
         current_thread->owner->state = kProcessStateExited;
         const uint32_t pid = current_thread->owner->pid;
         for (auto& child : scheduler->processes) {

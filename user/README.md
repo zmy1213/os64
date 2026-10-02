@@ -136,7 +136,7 @@ extern "C" int main(int, char**) {
 
 用户窗口为 4–8 MiB，ELF 加载段最多 256 页，文件最多 69,632 字节。用户栈固定 64 KiB，下方保留一页 guard；堆在 ELF 段后通过 brk 立即分配，上限 `0x7ef000`。NX 支持时 RW 数据、堆与栈不可执行，loader 拒绝 RWX。完整布局见 [进程运行时](../docs/PROCESS_RUNTIME.md)。
 
-系统调用使用 RAX=编号，RDI/RSI/RDX/RCX=参数，RAX=有符号结果。编号如下，具体结构/包装见 `os64.hpp` 与内核 `syscall.hpp`：
+系统调用使用 RAX=编号，RDI/RSI/RDX/RCX/R8=最多五个参数，RAX=有符号结果。编号如下，具体结构/包装见 `os64.hpp`、`udp.hpp` 与内核 `syscall.hpp`：
 
 | 编号 | 服务 |
 | --- | --- |
@@ -147,7 +147,10 @@ extern "C" int main(int, char**) {
 | 19 | open-with-flags，READ=1 / WRITE=2 / CREATE=4 / TRUNC=8 / APPEND=16 |
 | 20 | brk(0) 查询；brk(address) 返回实际末尾，失败返回旧末尾 |
 | 21 | replace_file(path, buffer, size)，单次事务创建/覆盖，返回字节数或负错误 |
+| 22–24 | pipe、dup2、dup；阻塞管道与共享打开对象 |
+| 30–32 | ticks、read_log、perf_snapshot；有界日志与 ABI v1 快照 |
+| 36–39 | udp_open、udp_close、udp_send、udp_receive；按进程归属的 UDP |
 
-fd 0/1/2 是标准输入/输出/错误，普通文件从 3 开始。spawn 继承 cwd 和控制台输出，不复制父进程的普通 fd。用户态 syscall 指针会检查页映射、user 和写权限；它不是 POSIX/Linux ABI。
+fd 0/1/2 是标准输入/输出/错误，普通文件从 3 开始，公开容量为 19 个。spawn 继承 cwd 及全部描述符，增加共享打开对象的引用计数，父子读取同一文件会共享偏移；Shell 启动普通命令后另关闭子进程非标准描述符，避免管道悬挂。退出立即释放文件/管道/UDP，wait 回收其他资源。用户态 syscall 指针检查页映射、user 和写权限；它不是 POSIX/Linux ABI。
 
-构建的 `user.ld` 将 text/rodata 放 RX 段、data/BSS 放 RW 段。C++ 声明“没有 const”不保证优化后的对象一定落 RW：如果从未修改，编译器可能优化为只读常量。验证 NX 测试时要看最终 ELF program headers 和地址归属；`test-memory-user.py` 会检查实际布局，而不是只相信源码名称。FPU/SIMD 上下文尚未保存，内核与用户仍以 `-mgeneral-regs-only` 编译。
+构建的 `user.ld` 将 text/rodata 放 RX 段、data/BSS 放 RW 段。C++ 声明“没有 const”不保证优化后的对象一定落 RW：如果从未修改，编译器可能优化为只读常量。验证 NX 测试时要看最终 ELF program headers 和地址归属；`test-memory-user.py` 会检查实际布局，而不是只相信源码名称。x87/SSE/SSE2 上下文已由 FXSAVE/FXRSTOR 隔离，fp_test 使用明确的汇编验证寄存器与控制状态。内核与普通用户工具仍以 `-mgeneral-regs-only` 编译；AVX/XSAVE 尚未开放。

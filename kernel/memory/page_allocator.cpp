@@ -120,6 +120,7 @@ bool initialize_page_allocator(PageAllocator* allocator, const BootInfo* boot_in
   // E820 只说明硬件 RAM 是否可用，不知道内核已经把其中一段拿来当启动栈。
   // 即使 BIOS 将这一段报告为 usable，也必须从我们的可分配页里排除。
   change_available_range(allocator, kAllocatorBootStackBase, kAllocatorBootStackLimit, false);
+  change_available_range(allocator, kAllocatorKernelDataBase, kAllocatorKernelDataLimit, false);
   // 目前启动卷在 0x80000，已经落在低 1 MiB 保留区；仍显式保护传入的位置，
   // 这样以后移动启动卷时，页分配器也不会误把它覆盖掉。
   if (boot_info->boot_volume_ptr < kAllocatorManagedLimit &&

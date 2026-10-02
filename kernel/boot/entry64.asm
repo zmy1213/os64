@@ -7,11 +7,24 @@ section .text.entry                    ; 单独放进 .text.entry，链接脚本
 
 global kernel_entry                    ; 导出入口符号，链接脚本会把 ENTRY 指到这里。
 extern kernel_main                     ; 告诉汇编器：kernel_main 在 C++ 文件里实现。
+extern __kernel_bss_start
+extern __kernel_bss_end
 
 kernel_entry:
     mov rsp, KERNEL_STACK_TOP          ; RSP = 64 位内核自己的栈顶。
                                        ; 这样后面即使 stage2 的栈布局改了，也不会影响内核。
     xor rbp, rbp                       ; RBP 先清零，方便后面调试时一眼看出栈回溯从哪里断掉。
+
+    ; BIOS loads only bytes present in kernel.bin. BSS has no file bytes and
+    ; now occupies the reserved 1–1.375 MiB RAM window: initialize it explicitly.
+    mov r12, rdi                       ; preserve the BootInfo argument
+    lea rdi, [rel __kernel_bss_start]
+    lea rcx, [rel __kernel_bss_end]
+    sub rcx, rdi
+    xor eax, eax
+    cld
+    rep stosb
+    mov rdi, r12
 
     call kernel_main                   ; 调用真正的 C++ 入口。
                                        ; stage2 已经把 BootInfo 指针放进 RDI，这里直接沿用。

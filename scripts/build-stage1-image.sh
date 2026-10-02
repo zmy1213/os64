@@ -8,8 +8,13 @@ BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build}"
 mkdir -p "$BUILD_DIR/kernel" "$BUILD_DIR/user"
 
 # Rebuild every source: smoke-test defines must never reuse stale objects.
+KERNEL_OPT_LEVEL="${KERNEL_OPT_LEVEL:-2}"
+case "$KERNEL_OPT_LEVEL" in 0|1|2|3|s|g) ;; *) printf 'Invalid KERNEL_OPT_LEVEL\n' >&2; exit 1 ;; esac
+NETWORK_IRQ_ENABLED="${NETWORK_IRQ_ENABLED:-1}"
+case "$NETWORK_IRQ_ENABLED" in 0|1) ;; *) printf 'Invalid NETWORK_IRQ_ENABLED\n' >&2; exit 1 ;; esac
 CXXFLAGS=( -I "$ROOT_DIR/kernel" -ffreestanding -fno-exceptions -fno-rtti
-  -fno-stack-protector -fno-pic -mno-red-zone -mgeneral-regs-only -mcmodel=kernel -O0 -Wall -Wextra )
+  -fno-stack-protector -fno-pic -fno-builtin -mno-red-zone -mgeneral-regs-only -mcmodel=kernel
+  "-O$KERNEL_OPT_LEVEL" "-DOS64_NETWORK_IRQ_ENABLED=$NETWORK_IRQ_ENABLED" -Wall -Wextra )
 if [[ "$CLANGXX_BIN" == *clang++* ]]; then
   CXXFLAGS=( --target=x86_64-elf "${CXXFLAGS[@]}" )
 fi
@@ -56,5 +61,6 @@ if [ ! -f "$BUILD_DIR/data.img" ]; then
   cp "$BUILD_DIR/data_volume.bin" "$BUILD_DIR/data.img"
   printf 'Created persistent data disk: %s\n' "$BUILD_DIR/data.img"
 fi
+"$PYTHON_BIN" "$ROOT_DIR/scripts/record-build.py" "$BUILD_DIR" "$KERNEL_OPT_LEVEL" "$CLANGXX_BIN" "$NASM_BIN" "$NETWORK_IRQ_ENABLED"
 printf 'Built %s/disk.img (kernel %s bytes); user tools in /bin\n' \
   "$BUILD_DIR" "$(wc -c < "$BUILD_DIR/kernel.bin" | tr -d ' ')"

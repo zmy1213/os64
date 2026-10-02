@@ -8,6 +8,10 @@
 #include "runtime/runtime.hpp"
 #include "storage/boot_volume.hpp"
 #include "task/scheduler.hpp"
+#include "cpu/cpu.hpp"
+#include "log/log.hpp"
+#include "perf/perf.hpp"
+#include "net/network.hpp"
 
 namespace {
 
@@ -424,6 +428,11 @@ void handle_help_command(const ShellState* shell) {
   write_newline(shell);
   write_string(shell, "clear - clear console area");
   write_newline(shell);
+  write_string(shell, "commands: /bin PATH lookup; quotes; | < > >> 2> ; && || &\n");
+  write_string(shell, "jobs / wait - list / join background pipelines\n");
+  write_string(shell, "dmesg / logsave PATH - inspect / save the bounded kernel log\n");
+  write_string(shell, "perf - CPU, memory and scheduler counters\n");
+  write_string(shell, "net / ping IPv4 - network counters / ICMP echo\n");
 }
 
 void handle_mem_command(const ShellState* shell) {
@@ -805,7 +814,8 @@ void handle_cat_command(const ShellState* shell, const char* arguments) {
   write_newline(shell);
 }
 
-void handle_stat_command(const ShellState* shell, const char* arguments) {
+void handle_stat_command(ShellState* shell, const char* arguments) {
+  if (shell != nullptr) { shell->last_status = 1; }
   if (shell == nullptr || !syscall_context_is_ready(shell->syscall_context)) {
     write_string(shell, "fs unavailable");
     write_newline(shell);
@@ -816,6 +826,7 @@ void handle_stat_command(const ShellState* shell, const char* arguments) {
   // 它不读文件内容，只把 VFS 看到的 inode / block / size / type 元数据打印出来。
   const char* path = skip_spaces(arguments);
   if (path == nullptr || path[0] == '\0') {
+    shell->last_status = 2;
     write_string(shell, "usage: stat <path>");
     write_newline(shell);
     return;
@@ -824,6 +835,7 @@ void handle_stat_command(const ShellState* shell, const char* arguments) {
   char resolved_path[kSyscallPathCapacity];
   if (!syscall_resolve_path(shell->syscall_context, path, resolved_path,
                             sizeof(resolved_path))) {
+    shell->last_status = 2;
     write_string(shell, "stat path too long");
     write_newline(shell);
     return;
@@ -886,9 +898,11 @@ void handle_stat_command(const ShellState* shell, const char* arguments) {
     write_u64(shell, stat.indirect_block);
     write_newline(shell);
   }
+  shell->last_status = 0;
 }
 
 void handle_touch_command(ShellState* shell, const char* arguments) {
+  if (shell != nullptr) { shell->last_status = 1; }
   if (shell == nullptr || shell->vfs == nullptr ||
       !vfs_is_mounted(shell->vfs) ||
       !syscall_context_is_ready(shell->syscall_context)) {
@@ -901,6 +915,7 @@ void handle_touch_command(ShellState* shell, const char* arguments) {
   // 如果文件本来就有，它不会像 Unix 那样更新时间戳，因为当前文件系统还没有时间字段逻辑。
   const char* path = skip_spaces(arguments);
   if (path == nullptr || path[0] == '\0') {
+    shell->last_status = 2;
     write_string(shell, "usage: touch <path>");
     write_newline(shell);
     return;
@@ -909,6 +924,7 @@ void handle_touch_command(ShellState* shell, const char* arguments) {
   char resolved_path[kSyscallPathCapacity];
   if (!syscall_resolve_path(shell->syscall_context, path, resolved_path,
                             sizeof(resolved_path))) {
+    shell->last_status = 2;
     write_string(shell, "touch path too long");
     write_newline(shell);
     return;
@@ -930,6 +946,7 @@ void handle_touch_command(ShellState* shell, const char* arguments) {
     write_newline(shell);
     write_string(shell, "touch_exists=1");
     write_newline(shell);
+    shell->last_status = 0;
     return;
   }
 
@@ -945,6 +962,7 @@ void handle_touch_command(ShellState* shell, const char* arguments) {
   write_newline(shell);
   write_string(shell, "touch_exists=0");
   write_newline(shell);
+  shell->last_status = 0;
 }
 
 void handle_mkdir_command(ShellState* shell, const char* arguments) {
@@ -992,6 +1010,7 @@ void handle_mkdir_command(ShellState* shell, const char* arguments) {
 }
 
 void handle_write_command(ShellState* shell, const char* arguments) {
+  if (shell != nullptr) { shell->last_status = 1; }
   if (shell == nullptr || shell->vfs == nullptr ||
       !vfs_is_mounted(shell->vfs) ||
       !syscall_context_is_ready(shell->syscall_context)) {
@@ -1005,6 +1024,7 @@ void handle_write_command(ShellState* shell, const char* arguments) {
   char path[kSyscallPathCapacity];
   const char* text = nullptr;
   if (!split_path_and_text(arguments, path, sizeof(path), &text)) {
+    shell->last_status = 2;
     write_string(shell, "usage: write <path> <text>");
     write_newline(shell);
     return;
@@ -1013,6 +1033,7 @@ void handle_write_command(ShellState* shell, const char* arguments) {
   char resolved_path[kSyscallPathCapacity];
   if (!syscall_resolve_path(shell->syscall_context, path, resolved_path,
                             sizeof(resolved_path))) {
+    shell->last_status = 2;
     write_string(shell, "write path too long");
     write_newline(shell);
     return;
@@ -1032,9 +1053,11 @@ void handle_write_command(ShellState* shell, const char* arguments) {
   write_string(shell, "write_bytes=");
   write_u64(shell, text_length);
   write_newline(shell);
+  shell->last_status = 0;
 }
 
 void handle_append_command(ShellState* shell, const char* arguments) {
+  if (shell != nullptr) { shell->last_status = 1; }
   if (shell == nullptr || shell->vfs == nullptr ||
       !vfs_is_mounted(shell->vfs) ||
       !syscall_context_is_ready(shell->syscall_context)) {
@@ -1048,6 +1071,7 @@ void handle_append_command(ShellState* shell, const char* arguments) {
   char path[kSyscallPathCapacity];
   const char* text = nullptr;
   if (!split_path_and_text(arguments, path, sizeof(path), &text)) {
+    shell->last_status = 2;
     write_string(shell, "usage: append <path> <text>");
     write_newline(shell);
     return;
@@ -1056,6 +1080,7 @@ void handle_append_command(ShellState* shell, const char* arguments) {
   char resolved_path[kSyscallPathCapacity];
   if (!syscall_resolve_path(shell->syscall_context, path, resolved_path,
                             sizeof(resolved_path))) {
+    shell->last_status = 2;
     write_string(shell, "append path too long");
     write_newline(shell);
     return;
@@ -1075,6 +1100,7 @@ void handle_append_command(ShellState* shell, const char* arguments) {
   write_string(shell, "append_bytes=");
   write_u64(shell, text_length);
   write_newline(shell);
+  shell->last_status = 0;
 }
 
 void handle_rm_command(ShellState* shell, const char* arguments) {
@@ -1116,6 +1142,7 @@ void handle_rm_command(ShellState* shell, const char* arguments) {
 }
 
 void handle_sync_command(ShellState* shell) {
+  if (shell != nullptr) { shell->last_status = 1; }
   if (shell == nullptr || shell->vfs == nullptr ||
       !vfs_is_mounted(shell->vfs)) {
     write_string(shell, "fs unavailable");
@@ -1134,9 +1161,11 @@ void handle_sync_command(ShellState* shell) {
 
   write_string(shell, "sync ok");
   write_newline(shell);
+  shell->last_status = 0;
 }
 
 void handle_run_command(ShellState* shell, const char* arguments) {
+  if (shell != nullptr) { shell->last_status = 1; }
   if (shell == nullptr ||
       shell->allocator == nullptr ||
       shell->filesystem == nullptr ||
@@ -1311,6 +1340,7 @@ void handle_run_command(ShellState* shell, const char* arguments) {
                scheduler_thread_state_name(launch_result.thread->state));
   write_newline(shell);
   write_string(shell, "run_exit_code=");
+  shell->last_status = static_cast<uint32_t>(exit_status) & 255;
   if (exit_status < 0) {
     write_char(shell, '-');
     write_u64(shell, static_cast<uint64_t>(-(exit_status + 1)) + 1);
@@ -1590,6 +1620,9 @@ bool initialize_shell(ShellState* shell,
   shell->scheduler = scheduler;
   shell->syscall_context = syscall_context;
   shell->output = *output;
+  shell->last_status = 0;
+  shell->next_job_id = 1;
+  memory_set(shell->jobs, 0, sizeof(shell->jobs));
   shell->history_count = 0;
   shell->history_next_slot = 0;
   shell->history_total_count = 0;
@@ -1625,7 +1658,7 @@ const char* shell_history_entry_text(const ShellState* shell, size_t index) {
   return shell->history_entries[slot];
 }
 
-ShellCommandResult shell_execute_line(ShellState* shell,
+static ShellCommandResult shell_execute_legacy_line(ShellState* shell,
                                       const char* line) {
   const char* trimmed_line = skip_spaces(line);
   if (trimmed_line == nullptr || trimmed_line[0] == '\0') {
@@ -1634,7 +1667,6 @@ ShellCommandResult shell_execute_line(ShellState* shell,
 
   // 先记历史，再执行命令。
   // 这样 `history` 自己也会出现在当前历史列表里，更符合直觉。
-  record_history_line(shell, trimmed_line);
 
   const char* arguments = nullptr;
 
@@ -1801,6 +1833,348 @@ ShellCommandResult shell_execute_line(ShellState* shell,
   return kShellCommandUnknown;
 }
 
+namespace {
+bool same_word(const char* a, const char* b) {
+  while (*a && *a == *b) { ++a; ++b; }
+  return *a == *b;
+}
+bool legacy_builtin(const char* name) {
+  const char* names[] = {"help", "mem", "ticks", "heap", "disk", "pwd", "cd", "ls",
+    "cat", "stat", "touch", "mkdir", "write", "append", "rm", "sync", "run", "ps",
+    "shutdown", "reboot", "irq", "bootinfo", "e820", "cpu", "uptime", "echo", "history", "clear"};
+  for (const char* builtin : names) { if (same_word(name, builtin)) { return true; } }
+  return false;
+}
+void show_performance(const ShellState* shell) {
+  PerformanceSnapshot snapshot; performance_snapshot(&snapshot);
+  const CpuInformation& cpu = cpu_information();
+  write_string(shell, "cpu_brand="); write_string(shell, cpu.brand); write_newline(shell);
+  write_string(shell, "cpu_fpu_sse_state="); write_u64(shell, cpu.floating_state_enabled); write_newline(shell);
+  const char* names[] = {"perf_abi", "perf_ticks", "perf_timer_hz", "perf_switches", "perf_yields",
+    "perf_preempt_requests", "perf_free_pages", "perf_heap_used_bytes", "perf_live_threads",
+    "perf_ready_threads", "perf_blocked_threads", "perf_sleeping_threads", "perf_log_next_sequence",
+    "perf_log_overwritten", "perf_cpu_features", "perf_tsc_raw"};
+  const uint64_t values[] = {snapshot.abi_version, snapshot.ticks, snapshot.timer_hz, snapshot.context_switches,
+    snapshot.yields, snapshot.preempt_requests, snapshot.free_pages, snapshot.heap_used_bytes,
+    snapshot.live_threads, snapshot.ready_threads, snapshot.blocked_threads, snapshot.sleeping_threads,
+    snapshot.log_next_sequence, snapshot.log_overwritten, snapshot.cpu_features, snapshot.tsc};
+  for (size_t i = 0; i < 16; ++i) {
+    write_string(shell, names[i]); write_char(shell, '='); write_u64(shell, values[i]); write_newline(shell);
+  }
+}
+void show_network(const ShellState* shell) {
+  const NetworkStatus& status = network_status();
+  const VirtioNetStatus& device = virtio_net_status();
+  write_string(shell, "network_ready="); write_u64(shell, status.ready); write_newline(shell);
+  if (!status.ready) { return; }
+  write_string(shell, "network_driver=virtio-net\n");
+  write_string(shell, "network_rx_buffers="); write_u64(shell, device.rx_buffer_count); write_newline(shell);
+  write_string(shell, "network_tx_buffers="); write_u64(shell, device.tx_buffer_count); write_newline(shell);
+  write_string(shell, "network_irq_enabled="); write_u64(shell, device.irq_enabled); write_newline(shell);
+  write_string(shell, "network_irq_line="); write_u64(shell, device.irq_line); write_newline(shell);
+  write_string(shell, "network_irq_count="); write_u64(shell, device.irq_count); write_newline(shell);
+  char address[16]; network_format_ipv4(status.address, address, sizeof(address));
+  write_string(shell, "network_ip="); write_string(shell, address); write_newline(shell);
+  network_format_ipv4(status.gateway, address, sizeof(address));
+  write_string(shell, "network_gateway="); write_string(shell, address); write_newline(shell);
+  const char* names[] = {"network_echo_port", "network_rx_packets", "network_tx_packets", "network_rx_bytes",
+    "network_tx_bytes", "network_rx_dropped", "network_tx_busy", "network_device_errors", "network_invalid",
+    "network_unsupported", "network_udp_received", "network_udp_sent", "network_udp_dropped", "network_udp_echoed"};
+  const uint64_t values[] = {status.echo_port, device.rx_packets, device.tx_packets, device.rx_bytes, device.tx_bytes,
+    device.rx_dropped, device.tx_busy, device.device_errors, status.invalid_packets, status.unsupported_packets,
+    status.udp_received, status.udp_sent, status.udp_dropped, status.udp_echoed};
+  for (size_t i = 0; i < 14; ++i) {
+    write_string(shell, names[i]); write_char(shell, '='); write_u64(shell, values[i]); write_newline(shell);
+  }
+}
+int32_t ping_command(ShellState* shell, const ShellParsedCommand& command) {
+  uint32_t address;
+  if (command.argc != 2 || !network_parse_ipv4(command.argv[1], &address)) {
+    write_string(shell, "usage: ping IPv4 (one request)\n"); return 2;
+  }
+  NetworkPingResult result{}; const bool ok = network_ping(address, 1000, &result);
+  write_string(shell, "ping_sent="); write_u64(shell, result.sent); write_newline(shell);
+  write_string(shell, "ping_received="); write_u64(shell, result.replied); write_newline(shell);
+  write_string(shell, "ping_rtt_ms="); write_u64(shell, result.round_trip_ms); write_newline(shell);
+  return ok && result.replied ? 0 : 1;
+}
+size_t append_log_number(char* text, size_t cursor, uint64_t value) {
+  char digits[20]; size_t count = 0;
+  do { digits[count++] = static_cast<char>('0' + value % 10); value /= 10; } while (value);
+  while (count) { text[cursor++] = digits[--count]; }
+  return cursor;
+}
+size_t append_log_text(char* text, size_t cursor, const char* source) {
+  while (*source) { text[cursor++] = *source++; } return cursor;
+}
+size_t format_log_record(char* text, const KernelLogRecord& record) {
+  size_t size = append_log_number(text, 0, record.sequence); text[size++] = ' ';
+  size = append_log_number(text, size, record.ticks); text[size++] = ' ';
+  size = append_log_text(text, size, kernel_log_level_name(record.level)); text[size++] = ' ';
+  size = append_log_text(text, size, record.component); text[size++] = ' ';
+  size = append_log_text(text, size, record.message); text[size++] = '\n'; text[size] = 0;
+  return size;
+}
+int32_t show_or_save_log(ShellState* shell, const char* path) {
+  // Snapshot the bounded ring once. Formatting and disk I/O happen with IRQs
+  // enabled, after the log lock is released, and never from an interrupt.
+  auto* records = static_cast<KernelLogRecord*>(kmalloc(sizeof(KernelLogRecord) * kKernelLogCapacity));
+  if (!records) { return 1; }
+  const size_t count = kernel_log_read(0, records, kKernelLogCapacity);
+  char* text = path ? static_cast<char*>(kmalloc(kKernelLogCapacity * 176 + 1)) : nullptr;
+  if (path && !text) { kfree(records); return 1; }
+  size_t size = 0;
+  for (size_t i = 0; i < count; ++i) {
+    char line[176]; const size_t bytes = format_log_record(line, records[i]);
+    if (path) { memory_copy(text + size, line, bytes); size += bytes; }
+    else { write_string(shell, line); }
+  }
+  bool ok = true;
+  if (path) {
+    ok = sys_replace_file(shell->syscall_context, path, text, size) == static_cast<int32_t>(size) &&
+         vfs_sync(shell->vfs);
+    write_string(shell, ok ? "logsave ok\n" : "logsave failed\n"); kfree(text);
+  } else {
+    const KernelLogStats stats = kernel_log_stats();
+    write_string(shell, "log_overwritten="); write_u64(shell, stats.overwritten); write_newline(shell);
+  }
+  kfree(records); return ok ? 0 : 1;
+}
+bool redirect_present(const ShellParsedCommand& command) {
+  return command.input[0] || command.output[0] || command.error[0];
+}
+void refresh_job(ShellState* shell, ShellJob& job, bool wait) {
+  if (!job.in_use || job.done) { return; }
+  bool remaining = false;
+  for (size_t i = 0; i < job.count; ++i) {
+    if (!job.pids[i]) { continue; }
+    ProcessControlBlock* process = scheduler_find_process(shell->scheduler, job.pids[i]);
+    if (!wait && process && process->state != kProcessStateExited) { remaining = true; continue; }
+    int32_t status = 127;
+    if (sys_waitpid(static_cast<int32_t>(job.pids[i]), &status) < 0) { status = 127; }
+    if (i + 1 == job.count) { job.status = status; }
+    job.pids[i] = 0;
+  }
+  job.done = !remaining;
+}
+int32_t jobs_command(ShellState* shell, bool wait) {
+  int32_t status = 0;
+  for (auto& job : shell->jobs) {
+    if (!job.in_use) { continue; }
+    refresh_job(shell, job, wait);
+    if (wait) { status = job.status; job = {}; continue; }
+    write_char(shell, '['); write_u64(shell, job.id); write_string(shell, "] ");
+    write_string(shell, job.done ? "done " : "running ");
+    write_string(shell, job.name); write_newline(shell);
+    if (job.done) { job = {}; }
+  }
+  return status;
+}
+// Save shell streams with real reference-counted duplicates. A child receives
+// these settings through spawn; restoring the parent does not undo the child.
+bool restore_streams(ShellState* shell, const int32_t saved[3]) {
+  bool ok = true;
+  for (int32_t stream = 0; stream < 3; ++stream) {
+    if (saved[stream] >= 0 && sys_dup2(shell->syscall_context, saved[stream], stream) < 0) { ok = false; }
+  }
+  return ok;
+}
+void close_descriptor(ShellState* shell, int32_t fd) {
+  if (fd >= 0) { (void)sys_close(shell->syscall_context, fd); }
+}
+bool apply_redirect(ShellState* shell, const char* path, int32_t stream, bool append) {
+  if (!*path) { return true; }
+  const uint32_t flags = stream == 0 ? kOpenRead :
+      kOpenWrite | kOpenCreate | (append ? kOpenAppend : kOpenTruncate);
+  const int32_t fd = sys_open(shell->syscall_context, path, flags);
+  if (fd < 0) { return false; }
+  const bool ok = sys_dup2(shell->syscall_context, fd, stream) >= 0;
+  close_descriptor(shell, fd); return ok;
+}
+int32_t launch_pipeline(ShellState* shell, ShellParsedLine* plan, const ShellParsedPipeline& pipeline) {
+  char paths[kShellMaxPipelineCommands][kSyscallPathCapacity] = {};
+  const char* arguments[kShellMaxPipelineCommands][kShellMaxArguments] = {};
+  size_t argument_counts[kShellMaxPipelineCommands] = {};
+  uint32_t pids[kShellMaxPipelineCommands] = {};
+  ShellJob* job = nullptr;
+  if (pipeline.background) {
+    for (auto& entry : shell->jobs) {
+      refresh_job(shell, entry, false);
+      if (!entry.in_use || entry.done) { entry = {}; job = &entry; break; }
+    }
+    if (!job) { write_string(shell, "shell: job table full; use wait\n"); return 1; }
+  }
+  // Validate all executables before pipe creation and before truncating output.
+  for (size_t i = 0; i < pipeline.count; ++i) {
+    const auto& command = plan->commands[pipeline.first + i];
+    const size_t first_argument = same_word(command.argv[0], "run") ? 1 : 0;
+    if (command.argc <= first_argument) { write_string(shell, "shell: run needs a path\n"); return 2; }
+    const char* program = command.argv[first_argument];
+    bool slash = false; for (const char* p = program; *p; ++p) { slash |= *p == '/'; }
+    char search[kSyscallPathCapacity] = {};
+    if (!slash) {
+      if (string_length(program) + 5 >= sizeof(search)) { return 127; }
+      memory_copy(search, "/bin/", 5); memory_copy(search + 5, program, string_length(program) + 1);
+      program = search;
+    }
+    if (!syscall_resolve_path(shell->syscall_context, program, paths[i], sizeof(paths[i]))) { return 127; }
+    VfsStat stat;
+    if (sys_stat_path(shell->syscall_context, paths[i], &stat) != kSyscallOk || stat.type != kVfsNodeTypeFile) {
+      write_string(shell, "unknown command: "); write_string(shell, command.argv[first_argument]);
+      write_newline(shell); return 127;
+    }
+    argument_counts[i] = command.argc - first_argument;
+    for (size_t j = 0; j < argument_counts[i]; ++j) { arguments[i][j] = command.argv[first_argument + j]; }
+  }
+  int32_t saved[3] = {-1, -1, -1};
+  int32_t pipes[kShellMaxPipelineCommands - 1][2];
+  for (auto& pair : pipes) { pair[0] = -1; pair[1] = -1; }
+  bool ok = true;
+  for (int32_t stream = 0; stream < 3 && ok; ++stream) {
+    saved[stream] = sys_dup(shell->syscall_context, stream); ok = saved[stream] >= 0;
+  }
+  for (size_t i = 0; i + 1 < pipeline.count && ok; ++i) {
+    ok = sys_pipe(shell->syscall_context, pipes[i]) >= 0;
+  }
+  for (size_t i = 0; i < pipeline.count && ok; ++i) {
+    ok = restore_streams(shell, saved);
+    if (i && ok) { ok = sys_dup2(shell->syscall_context, pipes[i - 1][0], 0) >= 0; }
+    if (i + 1 < pipeline.count && ok) { ok = sys_dup2(shell->syscall_context, pipes[i][1], 1) >= 0; }
+    const auto& command = plan->commands[pipeline.first + i];
+    if (ok) { ok = apply_redirect(shell, command.input, 0, false) &&
+                  apply_redirect(shell, command.output, 1, command.output_append) &&
+                  apply_redirect(shell, command.error, 2, command.error_append); }
+    if (!ok) { break; }
+    const int32_t pid = sys_spawn(shell->syscall_context, paths[i], arguments[i], argument_counts[i]);
+    if (pid < 0) { ok = false; break; }
+    pids[i] = static_cast<uint32_t>(pid);
+    ProcessControlBlock* process = scheduler_find_process(shell->scheduler, pids[i]);
+    // A shell command inherits just its three streams. Inheriting every spare
+    // pipe endpoint would keep write references alive and prevent EOF forever.
+    if (process) {
+      for (int32_t fd = 3; fd < static_cast<int32_t>(kFileDescriptorCapacity + 3); ++fd) {
+        (void)sys_close(&process->syscall_context, fd);
+      }
+    }
+  }
+  ok = restore_streams(shell, saved) && ok;
+  for (int32_t fd : saved) { close_descriptor(shell, fd); }
+  for (const auto& pair : pipes) { close_descriptor(shell, pair[0]); close_descriptor(shell, pair[1]); }
+  if (!ok) {
+    // No safe-point yield has occurred: created commands have not run yet.
+    for (uint32_t pid : pids) { if (pid) { (void)scheduler_discard_process(shell->scheduler, pid); } }
+    write_string(shell, "shell: pipeline setup failed\n"); return 1;
+  }
+  if (job) {
+    job->in_use = true; job->id = shell->next_job_id++; job->count = pipeline.count;
+    memory_copy(job->pids, pids, sizeof(pids));
+    memory_copy(job->name, plan->commands[pipeline.first].argv[0], kShellArgumentBytes);
+    write_char(shell, '['); write_u64(shell, job->id); write_string(shell, "] ");
+    write_u64(shell, pids[pipeline.count - 1]); write_newline(shell); return 0;
+  }
+  int32_t status = 0;
+  for (size_t i = 0; i < pipeline.count; ++i) {
+    int32_t child_status = 127;
+    if (sys_waitpid(static_cast<int32_t>(pids[i]), &child_status) < 0) { child_status = 127; }
+    if (i + 1 == pipeline.count) { status = child_status; }
+  }
+  return status;
+}
+}
+
+ShellCommandResult shell_execute_line(ShellState* shell, const char* line) {
+  if (!shell || is_empty_after_trim(line)) { return kShellCommandEmpty; }
+  record_history_line(shell, skip_spaces(line));
+  auto* plan = static_cast<ShellParsedLine*>(kmalloc(sizeof(ShellParsedLine)));
+  if (!plan) { write_string(shell, "shell: no parser memory\n"); shell->last_status = 1; return kShellCommandExecuted; }
+  const char* error = nullptr;
+  const ShellExpansion deferred{syscall_current_working_directory(shell->syscall_context), shell->last_status, true};
+  if (!shell_parse_line(line, deferred, plan, &error)) {
+    write_string(shell, "shell: "); write_string(shell, error ? error : "invalid syntax"); write_newline(shell);
+    shell->last_status = 2; kfree(plan); return kShellCommandExecuted;
+  }
+  for (size_t p = 0; p < plan->pipeline_count; ++p) {
+    const auto& pipeline = plan->pipelines[p];
+    if ((pipeline.condition == kShellOnSuccess && shell->last_status != 0) ||
+        (pipeline.condition == kShellOnFailure && shell->last_status == 0)) { continue; }
+    bool expanded = true;
+    const ShellExpansion variables{syscall_current_working_directory(shell->syscall_context), shell->last_status};
+    for (size_t c = 0; c < pipeline.count; ++c) {
+      expanded &= shell_expand_command(&plan->commands[pipeline.first + c], variables);
+    }
+    if (!expanded) { write_string(shell, "shell: expanded word exceeds 63 bytes\n"); shell->last_status = 2; continue; }
+    const auto& command = plan->commands[pipeline.first];
+    const bool plain = pipeline.count == 1 && !pipeline.background && !redirect_present(command);
+    if (plain && same_word(command.argv[0], "net")) {
+      if (command.argc == 1) { show_network(shell); shell->last_status = network_status().ready ? 0 : 1; }
+      else { write_string(shell, "usage: net\n"); shell->last_status = 2; }
+      continue;
+    }
+    if (plain && same_word(command.argv[0], "ping")) {
+      shell->last_status = static_cast<uint32_t>(ping_command(shell, command)); continue;
+    }
+    if (plain && same_word(command.argv[0], "perf")) {
+      if (command.argc == 1) { show_performance(shell); shell->last_status = 0; }
+      else { write_string(shell, "usage: perf\n"); shell->last_status = 2; }
+      continue;
+    }
+    if (plain && (same_word(command.argv[0], "dmesg") || same_word(command.argv[0], "logsave"))) {
+      const bool save = same_word(command.argv[0], "logsave");
+      if (command.argc != (save ? 2U : 1U)) {
+        write_string(shell, "usage: dmesg | logsave PATH\n"); shell->last_status = 2;
+      } else { shell->last_status = show_or_save_log(shell, save ? command.argv[1] : nullptr); }
+      continue;
+    }
+    if (plain && same_word(command.argv[0], "true")) { shell->last_status = 0; continue; }
+    if (plain && same_word(command.argv[0], "false")) { shell->last_status = 1; continue; }
+    if (plain && (same_word(command.argv[0], "jobs") || same_word(command.argv[0], "wait"))) {
+      if (command.argc != 1) { write_string(shell, "usage: jobs | wait\n"); shell->last_status = 2; }
+      else { shell->last_status = static_cast<uint32_t>(jobs_command(shell, same_word(command.argv[0], "wait"))) & 255; }
+      continue;
+    }
+    if (plain && same_word(command.argv[0], "cd")) {
+      shell->last_status = command.argc > 2 ? 2 :
+          sys_chdir(shell->syscall_context, command.argc == 1 ? "/" : command.argv[1]) == kSyscallOk ? 0 : 1;
+      if (shell->last_status) { write_string(shell, "cd: directory unavailable\n"); }
+      else if (scheduler_active_thread() == nullptr) {
+        handle_cd_command(shell, syscall_current_working_directory(shell->syscall_context));
+      }
+      continue;
+    }
+    const bool standard_tool = same_word(command.argv[0], "cat") || same_word(command.argv[0], "echo") ||
+        same_word(command.argv[0], "pwd") || same_word(command.argv[0], "ls") ||
+        same_word(command.argv[0], "mkdir") || same_word(command.argv[0], "rm");
+    // Boot smoke exercises retain verbose teaching commands against the RAM
+    // fixture. The live terminal executes ordinary tools in isolated processes.
+    const bool live_standard_tool = standard_tool && scheduler_active_thread() != nullptr;
+    if (plain && legacy_builtin(command.argv[0]) && !live_standard_tool) {
+      char normalized[kShellMaxInputBytes + 1] = {}; size_t length = 0;
+      // Legacy run has its own argument lexer. Quote each decoded argument so
+      // its diagnostic teaching output remains compatible with old exercises.
+      const bool run = same_word(command.argv[0], "run");
+      bool valid = true;
+      for (size_t i = 0; i < command.argc && valid; ++i) {
+        if (i) { normalized[length++] = ' '; }
+        if (run && i) { normalized[length++] = '"'; }
+        for (const char* word = command.argv[i]; *word; ++word) {
+          const bool escaped = run && i && (*word == '"' || *word == '\\');
+          if (length + (escaped ? 2 : 1) + 2 >= sizeof(normalized)) { valid = false; break; }
+          if (escaped) { normalized[length++] = '\\'; }
+          normalized[length++] = *word;
+        }
+        if (run && i && valid) { normalized[length++] = '"'; }
+      }
+      if (!valid) { shell->last_status = 2; continue; }
+      shell->last_status = 0;
+      if (shell_execute_legacy_line(shell, normalized) == kShellCommandUnknown) { shell->last_status = 127; }
+    } else {
+      shell->last_status = static_cast<uint32_t>(launch_pipeline(shell, plan, pipeline)) & 255;
+    }
+  }
+  kfree(plan);
+  return shell->last_status == 127 ? kShellCommandUnknown : kShellCommandExecuted;
+}
+
 const char* shell_command_result_name(ShellCommandResult result) {
   switch (result) {
     case kShellCommandEmpty:
@@ -1841,6 +2215,12 @@ ShellCommandResult shell_run_once(ShellState* shell,
       console_read_line_with_history(line_buffer, capacity, &history_provider);
   if (out_line_length != nullptr) {
     *out_line_length = line_length;
+  }
+
+  if (line_length == kConsoleLineTooLong) {
+    write_string(shell, "shell: input line too long; entire line discarded\n");
+    shell->last_status = 2;
+    return kShellCommandExecuted;
   }
 
   return shell_execute_line(shell, line_buffer);

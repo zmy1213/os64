@@ -32,6 +32,9 @@ boot/stage2.asm 传 BootInfo
 | shell | 命令解析、cwd、文件修改、run/wait/reap、观察和电源命令 | handle_run_command、shell_run_once |
 | console | VGA 输出和内核交互行编辑 | console.hpp |
 | runtime | 无宿主 libc 时的基础内存工具 | runtime.hpp |
+| cpu | CPUID、启用 x87/SSE、初始 FXSAVE 现场 | cpu.hpp |
+| log / perf | 有界结构化日志、CPU/内存/调度快照 | log.hpp、perf.hpp |
+| device / net | PCI 配置空间、virtio DMA ring、ARP/IPv4/ICMP/UDP | pci.hpp、network.hpp |
 
 ## 内存：三个分配层不要混用
 
@@ -39,7 +42,7 @@ boot/stage2.asm 传 BootInfo
 2. `paging_initialize_direct_map` 建 `0xffff800000000000 + physical` 的 supervisor 访问窗口，`map_page_in_root` 建指定虚拟→物理映射；CR3/PTE 仍保存物理地址。C++ 访问物理页内容用 `paging_physical_pointer`。
 3. `heap_alloc/heap_free` 与 `kmalloc/kfree` 管 16–20 MiB 内核堆中的小对象。固定堆容量可复用，不在每次 kfree 时归还整个物理页。
 
-低 1 MiB 保留给启动器、内核、启动卷和设备布局；**bootstrap 内核栈另在物理 `0x170000`–`0x180000` 保留 64 KiB**。entry64 的栈顶是 `0x180000`，不能把这段页误发给用户堆。
+低 1 MiB 保留给启动器、内核文件、启动卷和设备布局；BSS 另放在物理 `0x100000`–`0x160000` 的保留窗口，entry64 显式清零。**bootstrap 内核栈另在物理 `0x170000`–`0x180000` 保留 64 KiB**。不能把这些内核状态页误发给用户堆。
 
 `address_space` 管每个进程的私有页表。克隆会复制页表树，共享内核 supervisor 物理页，用户页面按新程序重新装载；不是 fork/COW。destroy 释放拥有的用户数据与页表。unmap 回收用户叶页及空私有层级，当前映射失效时刷新相应 TLB 项。
 
@@ -51,11 +54,11 @@ boot/stage2.asm 传 BootInfo
 
 用户程序可以被 PIT timer 抢占；内核仍在明确调度点切换。IRQ0 在可能切换之前发 PIC EOI，避免暂停的 IRQ 处理器阻塞后续时钟。TSS.rsp0 随当前线程指向专用进入栈。用户线程还有独立的 bootstrap/resume 栈，避免反复 int80 覆盖最初返回现场。
 
-最后一条线程退出唤醒等待者；`scheduler_reap_process` 清理 fd、页/页表、内核栈、PCB/TCB。孤儿自动回收在另一线程栈上进行。FPU/SIMD 现场、SMP、多用户线程 API 尚未实现。
+最后一条线程退出立即关闭文件/管道/UDP，唤醒等待者；`scheduler_reap_process` 清理 fd、页/页表、内核栈、PCB/TCB。孤儿自动回收在另一线程栈上进行。切换汇编在关闭中断的临界区保存/恢复各线程 x87/SSE 的 512 字节 FXSAVE 现场；AVX/XSAVE、SMP、用户线程 API 尚未实现。
 
 ## 系统调用：服务存在不等于任何指针都可用
 
-`kernel_handle_syscall` 识别用户来源，`user_syscall_arguments_valid` 检查每页 present/user/writable 与字符串结束，`current_dispatch_context` 取当前线程所属进程的 fd/cwd/output 视图。`dispatch_syscall_registers` 把 RAX 编号与 RDI/RSI/RDX/RCX 转交服务。
+`kernel_handle_syscall` 识别用户来源，`user_syscall_arguments_valid` 检查每页 present/user/writable 与字符串结束，`current_dispatch_context` 取当前线程所属进程的 fd/cwd/output 视图。`dispatch_syscall_registers` 把 RAX 编号与 RDI/RSI/RDX/RCX/R8 转交服务。
 
 当前有文件/目录/终端操作、exit/yield/sleep/getpid/spawn/waitpid、brk，以及单次 replace_file。stdin 等待能阻塞并被键盘/串口输入唤醒。用户异常走结束当前进程路径；内核异常仍诊断并停机。
 

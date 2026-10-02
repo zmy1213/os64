@@ -1,0 +1,9 @@
+{
+  "poll_network_irq_requested": false,
+  "irq_network_irq_requested": true,
+  "user_binaries_identical": true,
+  "changed_kernel_objects": [
+    "kernel/core/kernel_main.o"
+  ],
+  "note": "Aggregate source_sha256 includes test scripts changed to add build-manifest reporting; compiled user programs and all kernel objects except core/kernel_main.o are byte-identical. The core object differs due to the IRQ enable build switch."
+}

@@ -35,24 +35,27 @@ static void overlap_and_reservation() {
   info.boot_volume_sector_size = 512;  // 卷覆盖两页。
   PageAllocator allocator;
   require(initialize_page_allocator(&allocator, &info), "initialize overlap map");
-  require(count_free_pages(&allocator) == 768 - 4 - 16, "exclude reserved, stack and boot pages once");
+  require(count_free_pages(&allocator) == 768 - 4 - 16 - 96, "exclude reserved, BSS, stack and boot pages once");
   std::vector<uint64_t> pages;
   for (uint64_t page = alloc_page(&allocator); page != 0; page = alloc_page(&allocator)) {
     require(page >= 0x100000 && page < 0x400000, "protect low boot memory");
+    require(page < kAllocatorKernelDataBase || page >= kAllocatorKernelDataLimit,
+            "protect kernel zero-filled data even when E820 calls it usable");
     require(page < kAllocatorBootStackBase || page >= kAllocatorBootStackLimit,
             "protect live bootstrap kernel stack");
     require(page != 0x180000 && page != 0x200000 && page != 0x300000 && page != 0x301000,
             "reservation wins regardless of usable overlap");
     pages.push_back(page);
   }
-  require(pages.size() == 748 && count_free_pages(&allocator) == 0, "exact ENOSPC count");
+  require(pages.size() == 652 && count_free_pages(&allocator) == 0, "exact ENOSPC count");
+  require(!free_page(&allocator, 0x100000), "cannot free kernel data");
   require(!free_page(&allocator, 0x180000), "cannot free reserved page");
   require(!free_page(&allocator, pages[0] + 1), "cannot free unaligned address");
   for (uint64_t page : pages) {
     require(free_page(&allocator, page), "return allocated pages");
     require(!free_page(&allocator, page), "reject double free");
   }
-  require(count_free_pages(&allocator) == 748, "all pages reclaimed");
+  require(count_free_pages(&allocator) == 652, "all pages reclaimed");
 }
 
 static void high_pages_and_limit() {
@@ -66,11 +69,12 @@ static void high_pages_and_limit() {
   PageAllocator allocator;
   require(initialize_page_allocator(&allocator, &info), "initialize clipped high map");
   const uint64_t initial = count_free_pages(&allocator);
-  require(initial == 256 - 16 + (224ULL * 1024 * 1024 / kPageSize) - 2,
+  require(initial == 256 - 16 - 96 + (224ULL * 1024 * 1024 / kPageSize) - 2,
           "clip to 256 MiB and reserve overflow tail");
   require(alloc_page_below(&allocator, 0x100000) == 0, "below minimum fails");
-  require(alloc_page_below(&allocator, 0x101FFF) == 0x100000, "limit covers one complete page");
-  require(alloc_page_below(&allocator, 0x101FFF) == 0, "do not return partial boundary page");
+  require(alloc_page_below(&allocator, 0x101FFF) == 0, "low limit does not include reserved BSS");
+  require(alloc_page_below(&allocator, 0x161FFF) == 0x160000, "limit covers one complete page after BSS");
+  require(alloc_page_below(&allocator, 0x161FFF) == 0, "do not return partial boundary page");
   const uint64_t high = alloc_page_at_least(&allocator, 32ULL * 1024 * 1024 + 1);
   require(high == 32ULL * 1024 * 1024 + kPageSize, "align high minimum upward");
   require(page_allocator_owns_page(&allocator, high), "own high allocated page");
@@ -85,12 +89,12 @@ static void high_pages_and_limit() {
 }
 
 static void boundary_and_invalid_maps() {
-  std::vector<E820Entry> entries = {{0x100001, 0x3FFE, 1, 1}};
+  std::vector<E820Entry> entries = {{0x160001, 0x3FFE, 1, 1}};
   BootInfo info = boot_info_for(entries);
   PageAllocator allocator;
   require(initialize_page_allocator(&allocator, &info), "initialize partial page map");
   require(count_free_pages(&allocator) == 2, "usable rounding includes only complete pages");
-  require(alloc_page(&allocator) == 0x101000 && alloc_page(&allocator) == 0x102000 &&
+  require(alloc_page(&allocator) == 0x161000 && alloc_page(&allocator) == 0x162000 &&
           alloc_page(&allocator) == 0, "bounded allocations reach ENOSPC");
   info.memory_map_entry_size = 20;
   require(!initialize_page_allocator(&allocator, &info), "reject incompatible E820 layout");

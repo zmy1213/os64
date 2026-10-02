@@ -27,6 +27,8 @@
 #include "syscall/syscall.hpp"
 #include "task/elf_loader.hpp"
 #include "task/scheduler.hpp"
+#include "log/log.hpp"
+#include "net/network.hpp"
 
 namespace {
 
@@ -325,10 +327,10 @@ BlockDevice g_boot_block_device;             // 再往上一层，把 boot volum
 AtaPioDevice g_data_disk;
 BlockDevice g_data_block_device;
 Os64Fs g_data_filesystem;
-Os64Fs g_os64fs;                             // 第一版只读文件系统状态也先做成全局对象。
+Os64Fs g_os64fs;                             // 早期启动烟测使用的 RAM 文件系统；正式交互另挂数据盘。
 Os64Fs g_os64fs_write_remount_fs;            // 写路径回归里需要“重新挂载再读回来”验证；这个对象很大，放全局区避免把内核栈挤爆。
 VfsMount g_vfs;                              // VFS 根挂载点，shell 以后从这里而不是直接从 OS64FS 进入。
-FileDescriptorTable g_fd_table;              // 第一版全局 fd 表；以后有进程后会变成每个进程一张表。
+FileDescriptorTable g_fd_table;              // 早期烟测/默认内核上下文；正式进程各有描述符表。
 SyscallContext g_syscall_context;            // 这份“内核默认 syscall 上下文”仍然保留，方便 boot/smoke 阶段和没有线程时的早期调用。
 uint64_t g_kernel_object_ctor_count = 0;      // 对象层测试里一共成功调用过多少次构造函数。
 uint64_t g_kernel_object_dtor_count = 0;      // 对象层测试里一共成功调用过多少次析构函数。
@@ -4980,7 +4982,13 @@ bool run_shell_smoke_test(const BootInfo* boot_info,
   console_set_viewport(kConsoleInsetStartColumn, kConsoleInsetEndColumn);
   initialize_console(kShellTestStartRow, kShellTextColor);
 
-  SchedulerState shell_smoke_scheduler;
+  // Keep the growing scheduler table out of the bounded bootstrap stack.
+  struct SmokeSchedulerStorage {
+    SchedulerState* state;
+    ~SmokeSchedulerStorage() { if (state) { (void)scheduler_destroy(state); kfree(state); } }
+  } storage{static_cast<SchedulerState*>(kmalloc(sizeof(SchedulerState)))};
+  if (storage.state == nullptr) { return false; }
+  SchedulerState& shell_smoke_scheduler = *storage.state;
   memory_set(&shell_smoke_scheduler, 0, sizeof(shell_smoke_scheduler));
   if (!initialize_scheduler(&shell_smoke_scheduler, kSchedulerTimeSliceTicks)) {
     (void)scheduler_set_active(&g_scheduler);
@@ -5071,6 +5079,20 @@ void kernel_shell_thread_entry(void* raw_context) {
   shell_run_forever(context->shell, line_buffer, sizeof(line_buffer));
 }
 
+void network_worker_entry(void*) {
+#if OS64_NETWORK_IRQ_ENABLED
+  const bool irq = network_enable_irq(scheduler_active_thread());
+#else
+  const bool irq = false;
+#endif
+  kernel_log_write(irq ? kLogInfo : kLogWarning, "network",
+                   irq ? "RX IRQ wakes worker; idle polling disabled" : "IRQ unavailable; bounded timer polling");
+  for (;;) {
+    (void)network_poll(32);
+    network_wait_for_event();
+  }
+}
+
 bool start_kernel_shell_under_scheduler() {
   if (!scheduler_is_ready(&g_scheduler) || !interrupts_are_enabled()) {
     return false;
@@ -5095,9 +5117,16 @@ bool start_kernel_shell_under_scheduler() {
       scheduler_create_kernel_thread(&g_scheduler, shell_process,
                                      "shell-main",
                                      kernel_shell_thread_entry,
-                                     &shell_context, 0,
+                                     &shell_context, 32768,
                                      kThreadPriorityNormal);
   if (shell_thread == nullptr) {
+    return false;
+  }
+  if (network_status().ready &&
+      scheduler_create_kernel_thread(&g_scheduler, shell_process, "network-poll",
+                                     network_worker_entry, nullptr, 32768,
+                                     kThreadPriorityNormal) == nullptr) {
+    kernel_log_write(kLogError, "network", "network worker allocation failed");
     return false;
   }
 
@@ -5178,6 +5207,8 @@ extern "C" [[noreturn]] void kernel_handle_user_mode_exit(
 }
 
 extern "C" void kernel_main(const BootInfo* boot_info) {
+  kernel_log_initialize();
+  kernel_log_write(kLogInfo, "boot", "64-bit kernel entered");
   draw_terminal_chrome();
   write_status_line(3, "hello from os64 kernel");
 
@@ -5482,6 +5513,11 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
     serial_write_string("serial_input unavailable");
     serial_write_crlf();
   }
+  kernel_log_write(kLogInfo, "runtime", "persistent filesystem and shell ready");
+  const bool network_ready = network_initialize(&g_page_allocator);
+  kernel_log_write(network_ready ? kLogInfo : kLogWarning, "network",
+                   network_ready ? "virtio-net ready; IPv4 UDP echo port 9000" : "no supported virtio-net device");
+  serial_write_string("network_ready="); serial_write_u64(network_ready); serial_write_crlf();
   enable_interrupts();  // 下面要把 shell 作为真实内核线程交给调度器，所以先把 IRQ 重新打开。
   if (!start_kernel_shell_under_scheduler()) {
     disable_interrupts();
@@ -5507,6 +5543,11 @@ extern "C" void kernel_main(const BootInfo* boot_info) {
 
 extern "C" void kernel_handle_exception(const InterruptFrame* frame,
                                          uint64_t fault_address) {
+  if (frame != nullptr) {
+    const ThreadControlBlock* current = scheduler_active_thread();
+    kernel_log_process_event(kLogError, exception_name(frame->vector),
+                            current && current->owner ? current->owner->pid : 0);
+  }
   if (frame != nullptr && (frame->cs & 3) == 3) {
     serial_write_string("user_fault_vector=");
     serial_write_u64(frame->vector);

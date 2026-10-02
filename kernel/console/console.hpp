@@ -57,6 +57,9 @@ void console_clear();
 //
 // 返回值是这一行真正读到了多少个可见字符，不包含结尾 '\0'。
 // capacity 至少应 >= 2，这样才能容纳“1 个字符 + 结尾 0”。
+// 一旦输入超过 capacity-1，就消费剩余按键直到回车，清空 buffer，
+// 并返回 kConsoleLineTooLong。调用方必须拒绝整行，不能执行缓冲中的前缀。
+constexpr size_t kConsoleLineTooLong = SIZE_MAX;
 size_t console_read_line(char* buffer, size_t capacity);
 
 // 带 history 浏览能力的版本。

@@ -1,4 +1,5 @@
 #include "interrupts/interrupts.hpp"
+#include "net/network.hpp"
 
 #include "boot/segments.hpp"
 #include "interrupts/keyboard.hpp"
@@ -430,6 +431,14 @@ extern "C" void kernel_handle_irq(const RegisterInterruptFrame* frame) {
     handle_keyboard_irq();
   } else if (frame->vector == static_cast<uint8_t>(kPicMasterVectorBase + 4)) {
     handle_serial_irq();
+  }
+
+  // A shared PCI IRQ may also belong to another device. The network driver
+  // acknowledges only its own ISR source and wakes a thread; no packet parsing
+  // or serial/disk output runs in this interrupt handler.
+  if (frame->vector >= kPicMasterVectorBase &&
+      frame->vector < kPicMasterVectorBase + kHardwareIrqCount) {
+    (void)network_handle_irq(static_cast<uint8_t>(frame->vector - kPicMasterVectorBase));
   }
 
   // IRQ 收到以后，不管具体是哪一路，最后都要记得 EOI。

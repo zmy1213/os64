@@ -274,7 +274,7 @@ CPU 违反权限或访问未映射页会产生 page fault（页错误）。本�
 
 内核运行在 ring 0，能管理页表和设备。普通程序运行在 ring 3，权限受限。系统调用是程序请求内核服务的受控入口，例如“把这些字符写到屏幕”或“打开一个文件”。
 
-Shell 的内建 `cat` 是内核代码调用文件接口；`run /bin/cat` 是装载独立 ELF，切入 ring 3 后通过 syscall 读文件。两者都显示内容，但执行路径不同。这是一个很好的学习对照实验。
+正常交互的 `cat` 会在 `/bin` 找到用户 ELF，切入 ring 3 后通过 syscall 读文件；`run /bin/cat` 执行同一个程序并额外打印装载/退出诊断。启动时 RAM fixture 的旧 Shell 自测仍保留内核内建 `cat`，方便对照历史里程碑；不能把那段自测输出当作现在交互命令的执行位置。
 
 ### 4.5 看 C++ 时的语法路标
 
@@ -308,7 +308,7 @@ Shell 的内建 `cat` 是内核代码调用文件接口；`run /bin/cat` 是装�
 5. [卷生成脚本](../scripts/make-volume.py) 生成 RAM 自测卷和数据盘模板。用户 ELF 成为模板中的 `/bin/...` 文件。
 6. [镜像布局脚本](../scripts/make-boot-image.py) 计算内核扇区数，生成 `kernel_meta.inc`，汇编 stage1/stage2，再组装软盘镜像。
 
-不要手改生成的 `kernel_meta.inc`；内核变大时扇区数会变化。脚本也会检查内核的加载段和 BSS 是否越过启动卷的物理位置，不能靠增大某个读盘计数解决所有布局冲突。
+不要手改生成的 `kernel_meta.inc`；内核变大时扇区数会变化。脚本检查内核文件段不越过物理 `0x80000` 的启动卷；BSS 是无文件字节的另一段，固定放在物理 `0x100000`–`0x160000` 的保留窗口，entry64 在调用 C++ 前显式清零。只增大读盘计数不能解决 RAM 布局冲突。
 
 ### 5.2 BIOS 与 stage1
 
@@ -363,6 +363,7 @@ stage2 最后把 `BootInfo` 地址放进 RDI，并跳到内核入口。`BootInfo
 | 地址范围 | 含义 | 用户能否访问 |
 | --- | --- | --- |
 | 低 0–2 MiB | 启动恒等映射，低地址内核与早期数据 | supervisor 页面不可由 ring 3 访问 |
+| 物理 `0x100000`–`0x160000`（低地址恒等映射） | 内核 BSS 保留窗口，entry64 显式清零实际 BSS | supervisor |
 | 物理 `0x170000`–`0x180000`（低地址恒等映射） | 保留的 64 KiB bootstrap 内核栈，栈顶 `0x180000` | supervisor |
 | `0x400000`–`0x800000` | 每个进程自己的 4 MiB 用户窗口 | 按映射与权限决定 |
 | ELF 结束后页边界–当前 break | 用户堆 | 已申请的页可读写，NX |
@@ -387,7 +388,7 @@ stage2 最后把 `BootInfo` 地址放进 RDI，并跳到内核入口。`BootInfo
 
 读 [page_allocator.*](../kernel/memory/page_allocator.cpp) 时，先找初始化、`alloc_page`、`free_page`、`count_free_pages`。每页 4 KiB；管理范围最高 256 MiB，并继续尊重 BIOS E820 的可用区间。实际默认 QEMU RAM 是 128 MiB，因此“上限 256 MiB”不代表它真的有这么多可分配 RAM。
 
-低 1 MiB 保留给启动器、内核、启动卷及设备布局；bootstrap 内核栈另外占用物理 `0x170000`–`0x180000`，必须单独保留。内核栈不全在低 1 MiB，忽略这根仍在使用的栈会让大用户堆覆盖启动现场。
+低 1 MiB 保留给启动器、内核文件、启动卷及设备布局；内核 BSS 另外保留物理 `0x100000`–`0x160000`，bootstrap 栈另保留 `0x170000`–`0x180000`。E820 的 usable 只说明这是 RAM，不能说明这些内核状态已经可以分配给用户。忽略 BSS/栈保留会让用户堆覆盖全局状态或启动现场。
 
 分配器用总计 16 KiB 的两张位图记录哪些页可供分配、哪些已经分配。位图是把许多“是/否”压进字节中的表：第 N 个位对应第 N 页。分配时选一个可用且未分配的页并标记；释放时检查这个页是否属于管理范围且真的被分配，拒绝重复释放。它不再只回收旧低地址池。
 
@@ -453,7 +454,7 @@ guard 不是“能捕获一切栈溢出”的魔法：它是栈下方故意留�
 
 进程是“资源的主人”：自己的页表、用户内存、文件描述符表、当前目录、退出状态。线程是“CPU 正在执行的那条路线”：寄存器、栈、运行/等待状态。当前一般用户进程只有一条主线程；内核调度结构可以容纳更多线程，但没有通用用户线程创建 API。
 
-当前固定最多 8 个 PCB（进程记录）、16 个 TCB（线程记录），Shell/idle 等也会用资源。不能把这理解成能无限次同时 spawn；反复顺序运行之所以可行，是因为退出后会回收槽位。
+当前固定最多 16 个 PCB（进程记录）、32 个 TCB（线程记录），Shell/idle 等也会用资源。不能把这理解成能无限次同时 spawn；反复顺序运行之所以可行，是因为退出后会回收槽位。
 
 ### 7.2 顺着源码追一次启动
 
@@ -486,11 +487,11 @@ run /bin/sleep 100
 run /bin/spin 10000000
 ```
 
-第一项应看到 `spawn child ok` 和 `spawn_test child_status=0`。这里是用户父进程通过系统调用创建用户子进程。spawn 继承 cwd 和控制台输出，但不复制父进程打开的普通 fd；waitpid 只允许等待自己的子进程。
+第一项应看到 `spawn child ok` 和 `spawn_test child_status=0`。这里是用户父进程通过系统调用创建用户子进程。spawn 继承 cwd 和打开的 fd 引用；父子可以通过继承的管道交换数据，普通文件偏移也共享。waitpid 只允许等待自己的子进程。
 
 ### 7.4 退出为何不留下永久垃圾
 
-最后一条线程退出时进程进入 exited。`scheduler_wait_process` 负责等和取状态；`scheduler_reap_process` 关闭 fd、释放用户页/私有页表/内核栈并清理 PCB/TCB。waitpid 把等待和回收串起来；Shell 的 run 则显式做这两步。
+最后一条线程退出时进程进入 exited。`scheduler_wait_process` 负责等和取状态；退出时立即关闭 fd 与 UDP 端点，避免等待回收前阻塞其他进程；`scheduler_reap_process` 释放用户页/私有页表/内核栈并清理 PCB/TCB。waitpid 把等待和回收串起来；Shell 的 run 则显式做这两步。
 
 父进程先退出时，其子进程会被标记自动回收。调度器在另一根栈上回收，不能释放当前正在执行的栈再继续用它。更多细节见 [进程运行时](./PROCESS_RUNTIME.md)。
 
@@ -505,7 +506,7 @@ print("hello")
 → int 0x80 → 内核检查与分发 → 结果放回 RAX → 返回用户程序
 ```
 
-RAX 的 9 是本项目“write”的编号；fd 1 是 stdout。相同 `int 0x80` 指令在 Linux 上不等于这套 ABI。ABI 是双方约定的编号、参数位置、结构布局和返回值。这里最多四个参数使用 RDI/RSI/RDX/RCX。
+RAX 的 9 是本项目“write”的编号；fd 1 是 stdout。相同 `int 0x80` 指令在 Linux 上不等于这套 ABI。ABI 是双方约定的编号、参数位置、结构布局和返回值。这里最多五个参数使用 RDI/RSI/RDX/RCX/R8，UDP send 用到了第五个。
 
 在 [interrupt_stubs.asm](../kernel/interrupts/interrupt_stubs.asm) 看寄存器保存，在 [syscall.cpp](../kernel/syscall/syscall.cpp) 找 `kernel_handle_syscall`、`user_syscall_arguments_valid`、`dispatch_syscall_registers`。关键不是把调用号转成函数名，而是进入内核后仍不能相信用户传来的地址。
 
@@ -639,6 +640,11 @@ make test
 | `make test-memory-user` | 大 ELF、1 MiB 堆、缩堆清零、栈/NX、编辑与失败/冷启动保存 |
 | `make test-page-fault` | 故意触发内核页错误，检查诊断路径 |
 | `make test-invalid-opcode` | 故意触发内核非法指令，检查诊断路径 |
+| `make test-shell-host`、`make test-ipc` | 引号/语法边界、真实多进程管道、重定向、EOF/回收 |
+| `make test-syscall-boundaries` | 新管道/日志/性能/UDP 接口拒绝坏参数后仍正常工作，不泄漏资源或改盘 |
+| `make test-network-host`、`make test-network` | 恶意包校验与真实网卡收发、用户 UDP 和网络压力 |
+| `make test-log-host`、`make test-performance` | 日志环覆盖、浮点隔离、8/12 进程与管道压力 |
+| `make benchmark` | 按性能教程准备 Linux 内核后，同配置 TCG 对照；独立于普通回归 |
 
 异常测试的目标是看到预期诊断和测试通过，不是启动后保持交互。系统回归使用自己的数据盘副本，并核对正式 `build/data.img` 未变；不要手工让故障注入实验写个人盘。不要并发运行测试：它们共享构建输出。
 
@@ -661,6 +667,8 @@ make test
 
 ## 12. 接下来怎样读和扩展
 
+想知道与现代通用系统还有哪些差距，读 [现代操作系统对照](./MODERN_OS_COMPARISON.md)。它区分已有能力与未来目标，并解释单 CPU 上的多进程与真正多 CPU 并行为什么不同。
+
 第一次可分成四次学习，每次留下一项可以复述的结果：
 
 1. 读第 1–3 章，运行 hello，保存一个文件并跨重启验证。复述宿主/客体和三份镜像的区别。
@@ -670,4 +678,39 @@ make test
 
 之后按 [文档索引](./README.md) 选对应历史专题，不需要按 40 多篇从头到尾背完。每次读一个函数，记三行：它收到什么，它改变了谁，它失败时如何撤销。看懂这三件事，比记住每个缩写更能帮你改系统。
 
-当前还没有 SMP、FPU/SIMD 上下文、用户多线程接口、fork/exec 替换、信号、管道、动态链接、POSIX/Linux ABI、demand paging、完整多用户权限、网络、图形桌面、UEFI 或现代存储/USB 驱动。不要把“内存上限扩大、编辑器能保存”解释成现代通用 OS 已完成；它们让下一步更大的程序和更真实的失败场景可以在这个教学系统里被验证。
+当前已经有阻塞管道、引用计数描述符、现代 Shell 的常用语法、ARP/IPv4/ICMP/UDP、内核日志，以及 x87/SSE 浮点现场。还没有 SMP、用户多线程接口、fork/exec 替换、信号、动态链接、POSIX/Linux ABI、demand paging、完整多用户权限、AVX/XSAVE、TCP/DNS/DHCP/IPv6、图形桌面、UEFI 或现代存储/USB 驱动。不要把“内存上限扩大、编辑器能保存”解释成现代通用 OS 已完成；它们让下一步更大的程序和更真实的失败场景可以在这个教学系统里被验证。
+
+## 13. 从单个程序走到协作和测量
+
+### 13.1 把数据交给另一个程序
+
+在 os64 输入：
+
+```text
+echo "one two" | cat | wc
+```
+
+期望得到 `1 2 8`：一行、两个词、八个字节（含最后换行）。`echo` 产生字节，`cat` 读到多少就传多少，`wc` 在结束时计数。`|` 不把第一个程序的全部输出先存成文件，而是建立一个内存里的有界字节队列，让三个程序交错运行。
+
+生产者写满 4096 字节会睡眠，读者取走数据后唤醒它；读者遇到空队列时也会睡眠。最后一个写端关闭且队列已经读空才是 EOF。若 Shell 错把多余写端留在其他子进程里，读者会永远等不到结束。因此“先启动全部管段、关闭所有多余端、再等待”是实现中的关键顺序。按 [IPC/Shell 教程](./IPC_SHELL_TUTORIAL.md) 追 `shell/parser.cpp → launch_pipeline → sys_spawn → fd.cpp`。
+
+### 13.2 与系统外面通信
+
+先运行 `net`，期望 `network_ready=1`。再输入 `ping 10.0.2.2`，检查 `ping_received=1`。这里的 `10.0.2.2` 是 QEMU 的网络网关；数据必须经过虚拟网卡、网卡描述符、Ethernet、IP 和 ICMP，已经离开 Shell 的字符串处理层。
+
+没有基础先不要背协议字段。[网络教程](./NETWORK_TUTORIAL.md) 用“给网卡一个缓冲区”“找下一跳地址”“检查消息长度和校验”串起代码，再做宿主 UDP 发包/回显实验。当前是静态地址的 IPv4/UDP 网络，不能因为 ping 通就认为 HTTPS 浏览器已经能运行：浏览器还需要 TCP、DNS、TLS 和更多用户库。
+
+### 13.3 速度必须与正确结果一起看
+
+```text
+run /bin/fp_test
+run /bin/bench 8 20000000
+perf
+dmesg
+```
+
+`fp_test` 让多个程序使用不同浮点寄存器和控制状态，再交错让出/睡眠/被时钟抢占；只有恢复后的值都正确才算隔离通过。`bench` 让多个子进程计算可独立校验的整数序列，记录完成时间、切换次数和物理页回收。单 CPU 上八个计算进程共享同一个核心，并不会自动得到八倍算力。
+
+`perf` 是某一刻的计数快照，两个快照的差才说明期间发生了多少操作；`dmesg` 是时间有序的事件记录。日志只保留最近 256 条，`log_overwritten` 告诉你早期记录是否被覆盖。需要留文件时先创建工作目录，再执行 `logsave /work/kernel.log`。
+
+在宿主运行 `make benchmark` 会用同一计算源码、相同 QEMU 模拟器/CPU/内存对照 Linux，保存原始样本和报告。第一次先按 [性能教程](./PERFORMANCE_TUTORIAL.md) 下载官方 Linux 实验资产；该命令要求资产已经存在。报告会说明时钟精度、模拟器、进程创建差异和功能条件，不将一个合成循环的名次当成整个系统的名次。计时公式、管道吞吐和下一步优化顺序也在性能教程中。

@@ -6,8 +6,11 @@
 #include "boot/boot_info.hpp"
 
 constexpr uint64_t kPageSize = 4096;
-// bootloader、内核和启动卷都在低 1 MiB 内；这一段从不交给分配器。
+// bootloader、内核文件字节和启动卷在低 1 MiB 内；这一段从不交给分配器。
 constexpr uint64_t kAllocatorMinAddress = 0x100000;
+// 与 linker.ld 的独立 BSS 窗口一致；硬件 E820 的 usable 不等于可分配。
+constexpr uint64_t kAllocatorKernelDataBase = 0x100000;
+constexpr uint64_t kAllocatorKernelDataLimit = 0x160000;
 // entry64.asm 的内核启动栈从 0x180000 向下长，单独保留 64 KiB。
 constexpr uint64_t kAllocatorBootStackBase = 0x170000;
 constexpr uint64_t kAllocatorBootStackLimit = 0x180000;

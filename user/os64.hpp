@@ -2,12 +2,14 @@
 #define OS64_USER_HPP
 #include <stddef.h>
 #include <stdint.h>
+#include "perf.hpp"
 
-// int 0x80: RAX number, RDI/RSI/RDX/RCX arguments, RAX signed result.
+// int 0x80: RAX number, RDI/RSI/RDX/RCX/R8 arguments, RAX signed result.
 inline int64_t syscall(uint64_t number, uint64_t a=0, uint64_t b=0,
-                       uint64_t c=0, uint64_t d=0) {
+                       uint64_t c=0, uint64_t d=0, uint64_t e=0) {
   register uint64_t rax asm("rax") = number;
-  asm volatile("int $0x80" : "+a"(rax) : "D"(a), "S"(b), "d"(c), "c"(d)
+  register uint64_t r8 asm("r8") = e;
+  asm volatile("int $0x80" : "+a"(rax) : "D"(a), "S"(b), "d"(c), "c"(d), "r"(r8)
                : "memory", "cc");
   return static_cast<int64_t>(rax);
 }
@@ -32,9 +34,22 @@ inline int64_t read(int fd, void* data, size_t size) {
   return syscall(3,fd,reinterpret_cast<uint64_t>(data),size);
 }
 inline int64_t close(int fd) { return syscall(4,fd); }
+inline int64_t pipe(int32_t descriptors[2]) {
+  return syscall(22,reinterpret_cast<uint64_t>(descriptors));
+}
+inline int64_t dup2(int old_fd, int new_fd) { return syscall(23,old_fd,new_fd); }
+inline int64_t dup(int old_fd) { return syscall(24,old_fd); }
+constexpr int64_t BROKEN_PIPE=-7;
 inline int64_t yield() { return syscall(11); }
 inline int64_t sleep(uint64_t ms) { return syscall(14,ms); }
 inline int64_t sync() { return syscall(18); }
+inline uint64_t ticks() { return static_cast<uint64_t>(syscall(30)); }
+inline int64_t read_log(KernelLogRecord* records, size_t count, uint64_t after_sequence=0) {
+  return syscall(31,reinterpret_cast<uint64_t>(records),count,after_sequence);
+}
+inline int64_t perf_snapshot(PerformanceSnapshot* output) {
+  return syscall(32,reinterpret_cast<uint64_t>(output));
+}
 // break 是“当前用户堆的末尾地址”，不是已经使用的字节数。
 // brk(0) 查询末尾；失败仍返回旧末尾，所以调用方必须比较返回值。
 inline uintptr_t brk(uintptr_t new_break=0) {

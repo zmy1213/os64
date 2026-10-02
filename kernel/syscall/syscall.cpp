@@ -6,6 +6,8 @@
 #include "runtime/runtime.hpp"
 #include "task/scheduler.hpp"
 #include "memory/paging.hpp"
+#include "net/network.hpp"
+#include "log/log.hpp"
 
 namespace {
 
@@ -17,6 +19,11 @@ const Os64Fs* g_process_filesystem = nullptr;
 VfsMount* g_process_vfs = nullptr;
 constexpr size_t kMaxUserArguments = 8;
 constexpr size_t kMaxUserTransfer = 69632;
+uint32_t user_network_owner() {
+  auto* thread=scheduler_active_thread();
+  return thread && thread->execution_mode==kThreadExecutionModeUser &&
+         thread->owner && !thread->owner->is_kernel_process?thread->owner->pid:0;
+}
 
 extern "C" bool kernel_user_mode_exit_is_armed();
 extern "C" [[noreturn]] void kernel_handle_user_mode_exit(uint64_t return_value);
@@ -188,34 +195,12 @@ bool syscall_fd_is_open(SyscallContext* context, int32_t fd) {
          fd_is_open(context->fd_table, fd);
 }
 
-bool syscall_fd_is_reserved(int32_t fd) {
-  return fd >= kSyscallStandardInputFd &&
-         fd < kSyscallFirstFileFd;
-}
-
-bool syscall_fd_is_output(int32_t fd) {
-  return fd == kSyscallStandardOutputFd ||
-         fd == kSyscallStandardErrorFd;
-}
-
-bool syscall_fd_is_file(int32_t fd) {
-  return fd >= kSyscallFirstFileFd;
-}
-
 int32_t table_fd_to_syscall_fd(int32_t table_fd) {
-  if (table_fd < 0) {
-    return table_fd;
-  }
-
-  return table_fd + kSyscallFirstFileFd;
+  return fd_slot_to_public(table_fd);
 }
 
 int32_t syscall_fd_to_table_fd(int32_t syscall_fd) {
-  if (!syscall_fd_is_file(syscall_fd)) {
-    return kInvalidFileDescriptor;
-  }
-
-  return syscall_fd - kSyscallFirstFileFd;
+  return fd_public_to_slot(syscall_fd);
 }
 
 bool syscall_write_handler_is_ready(const SyscallContext* context) {
@@ -359,6 +344,31 @@ bool user_syscall_arguments_valid(const SyscallInterruptFrame* frame) {
     case kSyscallNumberReplaceFile:
       return user_path_valid(frame->rdi) && frame->rdx <= kMaxUserTransfer &&
              user_range_valid(frame->rsi, frame->rdx, false);
+    case kSyscallNumberReadLog:
+      return frame->rsi <= 64 &&
+             user_range_valid(frame->rdi, frame->rsi * sizeof(KernelLogRecord), true);
+    case kSyscallNumberPerformanceSnapshot:
+      return user_range_valid(frame->rdi, sizeof(PerformanceSnapshot), true);
+    case kSyscallNumberPipe:
+      return user_range_valid(frame->rdi, 2*sizeof(int32_t), true);
+    case kSyscallNumberDup2:
+      return frame->rdi < kPublicFileDescriptorCapacity &&
+             frame->rsi < kPublicFileDescriptorCapacity;
+    case kSyscallNumberDup:
+      return frame->rdi < kPublicFileDescriptorCapacity;
+    case kSyscallNumberUdpOpen:
+      return frame->rdi > 0 && frame->rdi <= UINT16_MAX;
+    case kSyscallNumberUdpClose:
+      return frame->rdi <= INT32_MAX;
+    case kSyscallNumberUdpSend:
+      return frame->rdi <= INT32_MAX && frame->rsi <= UINT32_MAX &&
+             frame->rdx > 0 && frame->rdx <= UINT16_MAX &&
+             frame->r8 <= kNetworkUdpMaxPayload &&
+             user_range_valid(frame->rcx, frame->r8, false);
+    case kSyscallNumberUdpReceive:
+      return frame->rdi <= INT32_MAX && frame->rcx <= kNetworkUdpMaxPayload &&
+             user_range_valid(frame->rsi, sizeof(NetworkDatagram), true) &&
+             user_range_valid(frame->rdx, frame->rcx, true);
     default:
       return true;
   }
@@ -410,7 +420,8 @@ int64_t dispatch_syscall_registers(uint64_t syscall_number,
                                    uint64_t argument0,
                                    uint64_t argument1,
                                    uint64_t argument2,
-                                   uint64_t argument3) {
+                                   uint64_t argument3,
+                                   uint64_t argument4) {
   SyscallContext* context = current_dispatch_context();
   if (!syscall_context_is_ready(context)) {
     return syscall_status_result(kSyscallInvalidArgument);
@@ -529,6 +540,35 @@ int64_t dispatch_syscall_registers(uint64_t syscall_number,
     case kSyscallNumberReplaceFile:
       return sys_replace_file(context, reinterpret_cast<const char*>(argument0),
                                reinterpret_cast<const void*>(argument1), argument2);
+    case kSyscallNumberTicks:
+      return static_cast<int64_t>(timer_tick_count());
+    case kSyscallNumberReadLog:
+      return sys_read_log(reinterpret_cast<KernelLogRecord*>(argument0),
+                          static_cast<size_t>(argument1), argument2);
+    case kSyscallNumberPerformanceSnapshot:
+      return sys_performance_snapshot(reinterpret_cast<PerformanceSnapshot*>(argument0));
+    case kSyscallNumberPipe:
+      return sys_pipe(context, reinterpret_cast<int32_t*>(argument0));
+    case kSyscallNumberDup2:
+      return sys_dup2(context, static_cast<int32_t>(argument0), static_cast<int32_t>(argument1));
+    case kSyscallNumberDup:
+      return sys_dup(context, static_cast<int32_t>(argument0));
+    case kSyscallNumberUdpOpen:
+      if (!user_network_owner() || !argument0 || argument0 > UINT16_MAX) return kSyscallInvalidArgument;
+      return network_udp_open(static_cast<uint16_t>(argument0), user_network_owner());
+    case kSyscallNumberUdpClose:
+      if (!user_network_owner()) return kSyscallInvalidArgument;
+      return network_udp_close(static_cast<int32_t>(argument0), user_network_owner())?0:-2;
+    case kSyscallNumberUdpSend:
+      if (!user_network_owner()) return kSyscallInvalidArgument;
+      return network_udp_send(static_cast<int32_t>(argument0), static_cast<uint32_t>(argument1),
+          static_cast<uint16_t>(argument2), reinterpret_cast<const void*>(argument3),
+          argument4, 1000, user_network_owner());
+    case kSyscallNumberUdpReceive:
+      if (!user_network_owner()) return kSyscallInvalidArgument;
+      return network_udp_receive(static_cast<int32_t>(argument0),
+          reinterpret_cast<NetworkDatagram*>(argument1), reinterpret_cast<void*>(argument2),
+          argument3, user_network_owner());
     default:
       (void)argument3;
       return syscall_status_result(kSyscallInvalidArgument);
@@ -800,16 +840,6 @@ int32_t sys_read(SyscallContext* context, int32_t fd,
     return kSyscallInvalidArgument;
   }
 
-  if (fd == kSyscallStandardInputFd) {
-    // `read(0, ...)` 走的是键盘字符流，而不是文件系统。
-    return read_stdin_stream(buffer, bytes_to_read);
-  }
-
-  if (syscall_fd_is_reserved(fd)) {
-    return kSyscallUnsupported;
-  }
-
-  // 其它 `3+` 的 fd 再映射回内核真实 fd 表槽位。
   const int32_t table_fd = syscall_fd_to_table_fd(fd);
   if (!syscall_fd_is_open(context, table_fd)) {
     return kSyscallBadFileDescriptor;
@@ -818,10 +848,11 @@ int32_t sys_read(SyscallContext* context, int32_t fd,
   if (!fd_can_read(context->fd_table, table_fd)) {
     return kSyscallUnsupported;
   }
-
-  const size_t bytes_read =
+  if (fd_kind(context->fd_table, table_fd) == kDescriptorTerminalInput)
+    return read_stdin_stream(buffer, bytes_to_read);
+  const int32_t bytes_read =
       fd_read(context->fd_table, table_fd, buffer, bytes_to_read);
-  if (bytes_read > kMaxSyscallPositiveResult) {
+  if (bytes_read < 0) {
     return kSyscallIoError;
   }
 
@@ -842,7 +873,10 @@ int32_t sys_write(SyscallContext* context, int32_t fd,
     return kSyscallInvalidArgument;
   }
 
-  if (syscall_fd_is_output(fd)) {
+  const int32_t table_fd = syscall_fd_to_table_fd(fd);
+  if (!syscall_fd_is_open(context, table_fd)) return kSyscallBadFileDescriptor;
+  if (!fd_can_write(context->fd_table, table_fd)) return kSyscallUnsupported;
+  if (fd_kind(context->fd_table, table_fd) == kDescriptorTerminalOutput) {
     if (!syscall_write_handler_is_ready(context)) {
       return kSyscallUnsupported;
     }
@@ -850,7 +884,7 @@ int32_t sys_write(SyscallContext* context, int32_t fd,
     // 当前 stdout/stderr 还没有真正 TTY 设备，
     // 所以先把字节流交给外部注入的 write_handler。
     const size_t bytes_written =
-        context->write_handler(fd, buffer, bytes_to_write,
+        context->write_handler(fd_terminal_number(context->fd_table, table_fd), buffer, bytes_to_write,
                                context->write_context);
     if (bytes_written > kMaxSyscallPositiveResult) {
       return kSyscallIoError;
@@ -859,19 +893,8 @@ int32_t sys_write(SyscallContext* context, int32_t fd,
     return static_cast<int32_t>(bytes_written);
   }
 
-  if (fd == kSyscallStandardInputFd) {
-    return kSyscallUnsupported;
-  }
-
-  const int32_t table_fd = syscall_fd_to_table_fd(fd);
-  if (!syscall_fd_is_open(context, table_fd)) {
-    return kSyscallBadFileDescriptor;
-  }
-
-  if (!fd_can_write(context->fd_table, table_fd)) {
-    return kSyscallUnsupported;
-  }
   const int32_t written = fd_write(context->fd_table, table_fd, buffer, bytes_to_write);
+  if (written == kFdBrokenPipe) return kSyscallBrokenPipe;
   return written < 0 ? kSyscallIoError : written;
 }
 
@@ -943,14 +966,8 @@ SyscallStatus sys_close(SyscallContext* context, int32_t fd) {
     return kSyscallInvalidArgument;
   }
 
-  // 标准输入输出这些保留 fd 当前不允许走普通 close 语义。
-  if (syscall_fd_is_reserved(fd)) {
-    return kSyscallUnsupported;
-  }
-
   const int32_t table_fd = syscall_fd_to_table_fd(fd);
-  if (table_fd < 0 || static_cast<size_t>(table_fd) >= kFileDescriptorCapacity ||
-      !context->fd_table->entries[table_fd].open) {
+  if (!fd_is_open(context->fd_table, table_fd)) {
     return kSyscallBadFileDescriptor;
   }
 
@@ -960,11 +977,6 @@ SyscallStatus sys_close(SyscallContext* context, int32_t fd) {
 SyscallStatus sys_seek(SyscallContext* context, int32_t fd, uint32_t offset) {
   if (!syscall_context_is_ready(context)) {
     return kSyscallInvalidArgument;
-  }
-
-  // seek 只对真正打开的普通文件 fd 生效。
-  if (syscall_fd_is_reserved(fd)) {
-    return kSyscallUnsupported;
   }
 
   const int32_t table_fd = syscall_fd_to_table_fd(fd);
@@ -981,10 +993,6 @@ SyscallStatus sys_stat(SyscallContext* context, int32_t fd,
                        VfsStat* out_stat) {
   if (!syscall_context_is_ready(context) || out_stat == nullptr) {
     return kSyscallInvalidArgument;
-  }
-
-  if (syscall_fd_is_reserved(fd)) {
-    return kSyscallUnsupported;
   }
 
   const int32_t table_fd = syscall_fd_to_table_fd(fd);
@@ -1053,10 +1061,12 @@ int32_t sys_spawn(SyscallContext* context, const char* path,
   }
   if (!copy_string(launch.process->syscall_context.current_working_directory,
                     kSyscallPathCapacity, context->current_working_directory) ||
+      !fd_inherit(&launch.process->file_descriptors, context->fd_table) ||
       !scheduler_prepare_user_arguments(launch.process, launch.thread, argc, arguments)) {
     (void)scheduler_discard_process(g_process_scheduler, launch.process->pid);
     return kSyscallIoError;
   }
+  kernel_log_process_event(kLogDebug, "spawn", launch.process->pid);
   return static_cast<int32_t>(launch.process->pid);
 }
 
@@ -1114,13 +1124,7 @@ SyscallStatus sys_unlink(SyscallContext* context, const char* path) {
         return true;
       }
     }
-    for (size_t i = 0; i < kFileDescriptorCapacity; ++i) {
-      const auto& entry = candidate->fd_table->entries[i];
-      if (entry.open && entry.file.handle.inode.inode_number == stat.inode_number) {
-        return true;
-      }
-    }
-    return false;
+    return fd_references_inode(candidate->fd_table, stat.inode_number);
   };
   if (busy_context(context)) {
     return kSyscallUnsupported;
@@ -1144,6 +1148,16 @@ SyscallStatus sys_sync(SyscallContext* context) {
   return vfs_sync(&mount) ? kSyscallOk : kSyscallIoError;
 }
 
+int32_t sys_read_log(KernelLogRecord* output, size_t capacity, uint64_t after_sequence) {
+  if (capacity > 64 || (capacity != 0 && output == nullptr)) return kSyscallInvalidArgument;
+  return static_cast<int32_t>(kernel_log_read(after_sequence, output, capacity));
+}
+SyscallStatus sys_performance_snapshot(PerformanceSnapshot* output) {
+  if (output == nullptr) return kSyscallInvalidArgument;
+  performance_snapshot(output);
+  return kSyscallOk;
+}
+
 // 一次文件系统事务完成替换，不采用“先清空，再写入”两次独立操作。
 int32_t sys_replace_file(SyscallContext* context, const char* path,
                          const void* buffer, size_t size) {
@@ -1156,6 +1170,25 @@ int32_t sys_replace_file(SyscallContext* context, const char* path,
   VfsMount mount = *context->fd_table->vfs;
   return vfs_write_file(&mount, resolved, buffer, size)
       ? static_cast<int32_t>(size) : kSyscallIoError;
+}
+
+int32_t sys_pipe(SyscallContext* context, int32_t descriptors[2]) {
+  if (!syscall_context_is_ready(context) || !descriptors) return kSyscallInvalidArgument;
+  int32_t slots[2];
+  if (!fd_pipe(context->fd_table, slots)) return kSyscallIoError;
+  descriptors[0]=fd_slot_to_public(slots[0]);
+  descriptors[1]=fd_slot_to_public(slots[1]);
+  return 0;
+}
+int32_t sys_dup2(SyscallContext* context, int32_t old_fd, int32_t new_fd) {
+  if (!syscall_context_is_ready(context)) return kSyscallInvalidArgument;
+  int32_t result=fd_dup2(context->fd_table, fd_public_to_slot(old_fd), fd_public_to_slot(new_fd));
+  return result<0?kSyscallBadFileDescriptor:fd_slot_to_public(result);
+}
+int32_t sys_dup(SyscallContext* context, int32_t old_fd) {
+  if (!syscall_context_is_ready(context)) return kSyscallInvalidArgument;
+  int32_t result=fd_dup(context->fd_table, fd_public_to_slot(old_fd));
+  return result<0?kSyscallBadFileDescriptor:fd_slot_to_public(result);
 }
 
 // brk 只改变当前进程的堆。实际页按 4 KiB 分配，break 按字节记录。
@@ -1225,7 +1258,9 @@ extern "C" void kernel_handle_syscall(SyscallInterruptFrame* frame) {
   capture_current_user_trap_frame(frame);
 
   if (frame_came_from_user_mode(frame) && !user_syscall_arguments_valid(frame)) {
-    frame->rax = encode_syscall_result(kSyscallInvalidArgument);
+    // UDP 的 -1 表示“暂时无包/ARP忙”，非法参数要保持其独立的 -2 约定。
+    const bool udp=frame->rax>=kSyscallNumberUdpOpen && frame->rax<=kSyscallNumberUdpReceive;
+    frame->rax = encode_syscall_result(udp ? -2 : kSyscallInvalidArgument);
     return;
   }
 
@@ -1255,7 +1290,8 @@ extern "C" void kernel_handle_syscall(SyscallInterruptFrame* frame) {
                                  frame->rdi,
                                  frame->rsi,
                                  frame->rdx,
-                                 frame->rcx));
+                                 frame->rcx,
+                                 frame->r8));
 
   if (should_enable_interrupts) {
     disable_interrupts();

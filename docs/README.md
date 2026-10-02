@@ -7,6 +7,10 @@
 3. [进程运行时](./PROCESS_RUNTIME.md)：argv、spawn/wait/退出回收、直接映射与物理页、brk、ELF/NX、64 KiB 栈与 guard 的精确边界。
 4. [持久化存储](./PERSISTENT_STORAGE.md)：RAM/ATA、可写 OS64FS v3、失败回滚、容量限制与已验证/未保证的行为。
 5. [用户程序与编辑器](../user/README.md)：edit 完整命令演练、内存库、用户 ABI；[内核目录说明](../kernel/README.md) 补模块关系。
+6. [进程协作与 Shell](./IPC_SHELL_TUTORIAL.md)：从字节流理解 pipe、dup、继承、阻塞/唤醒，再实验现代命令语法。
+7. [网络从零教程](./NETWORK_TUTORIAL.md)：网卡、DMA、Ethernet/ARP/IPv4/ICMP/UDP、宿主和客体收发、校验与压力测试。
+8. [CPU、日志与性能](./PERFORMANCE_TUTORIAL.md)：浮点现场、可观察计数、计算与 IPC 压力、同 QEMU Linux 对照及实测限制。
+9. [与现代操作系统的差距](./MODERN_OS_COMPARISON.md)：区分已实现与未来能力，理解单核并发、用户线程和 SMP 基础，以及五个可验证的后续阶段。
 
 根目录 [README](../README.md) 是快速使用入口。第一次 `make build` 创建数据盘；已有数据盘更新 `/bin` 时先关闭 QEMU，再 `make update-tools`，不要把 `reset-data` 当普通更新。完整回归入口是 `make test`。
 

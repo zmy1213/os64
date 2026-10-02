@@ -34,6 +34,13 @@
 | 保存失败怎样保护原文 | kernel/fs/os64fs.cpp 的 mutate | staged_read/staged_write、校验/回滚 |
 | edit 修改与保存 | user/programs/edit.cpp | memory.cpp、replace_file、sys_replace_file |
 | 新工具安装保留笔记 | scripts/update-tools.py、tools/update_tools.cpp | OS64FS 副本验证、镜像替换 |
+| 引号/管道怎样变成多个进程 | kernel/shell/parser.cpp、shell.cpp 的 launch_pipeline | fd_dup2、sys_spawn、所有管段先启动再等待 |
+| 空管道读者为何不忙等 | kernel/fs/fd.cpp | 4096 字节环、引用计数、CLI 下登记等待者、EOF |
+| 浮点计算切换后为何不串值 | kernel/cpu/cpu.cpp、kernel/task/context_switch.asm | CPUID、初始化、每线程 FXSAVE/FXRSTOR |
+| 多进程计算如何校验与测时 | user/programs/bench.cpp、user/bench_workload.hpp | 独立期望值、ticks、waitpid、scripts/test-performance.py |
+| 日志为何有容量上限 | kernel/log/log.cpp、kernel/perf/perf.cpp | 固定记录环、游标、快照、logsave |
+| net / ping 怎样到网卡 | kernel/device/pci.cpp、kernel/net/virtio_net.cpp | DMA 描述符、used ring、PIC IRQ |
+| UDP 包怎样交给自己的进程 | kernel/net/network.cpp、user/udp.hpp | IPv4 校验、UDP socket owner、退出关闭 |
 
 表里列的是仓库相对路径；可在代码编辑器按文件名打开，也可在宿主用 `rg 函数名 kernel user scripts` 搜索。函数行号会随修改改变，理解调用关系比记行号更可靠。
 
@@ -50,7 +57,7 @@
 
 看到同一个类型被多层包装，不要先问“为什么这么绕”，先问“这一层增加了什么状态或约定”。文件句柄增加当前位置，fd 表增加整数索引，syscall 增加权限边界，Shell 增加命令解释。
 
-## 3. 三条推荐专题路线
+## 3. 推荐专题路线
 
 ### 从启动读到用户程序
 
@@ -82,7 +89,18 @@
 4. 地址空间 unmap/destroy 与空页表回收。
 5. 物理页 available/allocated 位图与 free_page。
 
-全 256 MiB 管理范围仍受实际 E820 可用内存约束；低 1 MiB 和 `0x170000`–`0x180000` bootstrap 栈另行保留。
+全 256 MiB 管理范围仍受实际 E820 可用内存约束；低 1 MiB、`0x100000`–`0x160000` 内核 BSS 窗口和 `0x170000`–`0x180000` bootstrap 栈另行保留。
+
+### 从多进程实验读到调度与协作
+
+1. `bench` 的工作者参数、完整结果校验和父进程计时。
+2. spawn → ELF/页表/描述符继承 → 就绪队列。
+3. PIT IRQ → 用户 trap frame → 抢占请求 → 保存/恢复寄存器和浮点现场。
+4. `bench_ipc` → pipe 环 → 登记 blocked → 对端读写/关闭唤醒。
+5. `perf` / `dmesg` → 快照和固定日志，不在热路径打印。
+6. Linux adapter → 相同机器码校验 → 两个真实客体交替测量。
+
+先读 [性能教程](./PERFORMANCE_TUTORIAL.md) 第 1–4 节，再读 [进程协作教程](./IPC_SHELL_TUTORIAL.md)。当前只有一个 CPU，多进程共享其时间；增加进程表槽位与真正启动多个 CPU 是两件不同的工作。
 
 ## 4. 如何使用旧教程
 

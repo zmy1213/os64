@@ -8,7 +8,7 @@ mkdir -p "$BUILD_DIR/user"
 rm -f "$BUILD_DIR/user/"*.elf "$BUILD_DIR/user/"*.o
 USER_FLAGS=( -I "$ROOT_DIR/user" -ffreestanding -fno-exceptions -fno-rtti
   -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only
-  -fno-builtin
+  -fno-builtin -fno-omit-frame-pointer
   -Os -Wall -Wextra -fno-asynchronous-unwind-tables -fno-unwind-tables )
 if [[ "$CLANGXX_BIN" == *clang++* ]]; then
   USER_FLAGS=( --target=x86_64-elf "${USER_FLAGS[@]}" )

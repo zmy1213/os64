@@ -51,13 +51,15 @@ shell 等待该 PID 退出，打印退出码，然后显式回收它，因此反
 | 11 yield | 主动让出 CPU，恢复后从原 syscall 的下一条指令继续 |
 | 13 getpid | 返回当前进程 PID |
 | 14 sleep | 毫秒换算为 PIT tick 后阻塞，到期由 timer 唤醒 |
-| 15 spawn | 装载新 ELF，继承 cwd 和控制台输出，成功返回子 PID |
+| 15 spawn | 装载新 ELF，继承 cwd 和打开的描述符，成功返回子 PID |
 | 16 waitpid | 只允许等待自己的子进程，获取退出码并回收其资源 |
 | 20 brk | 查询/改变当前进程用户堆末尾，立即分配或释放页 |
 | 21 replace_file | 在一次文件事务中创建或替换整个文件，供编辑器保存 |
 
 spawn 设置 `parent_pid` 为当前线程所属进程的 PID。新进程获得独立 fd 表，
-不会复制父进程已经打开的普通文件描述符。cwd 及输出回调由系统调用层复制。
+表内引用继承父进程打开的文件或管道，普通文件的偏移也由这些引用共享。
+子进程关闭自己的 fd 不会删除父进程的引用；管道最后一个写端引用关闭后，
+读者读完缓存才看到 EOF。cwd 及输出回调由系统调用层复制。
 
 内核的 `scheduler_wait_process` 只等待，不回收。调用者阻塞在
 `waiting_for_pid` 上；目标进程最后一条线程退出时唤醒等待者。这比循环
@@ -100,6 +102,7 @@ ELF staging 页在所有返回路径上释放；装载或线程创建失败时�
 | 地址范围 | 当前用途 |
 | --- | --- |
 | 0–2 MiB 虚拟地址 | 保留启动恒等映射，低地址内核及早期数据 |
+| 物理 `0x100000`–`0x160000` | 独立内核 BSS 保留窗口；entry64 显式清零 |
 | 物理 `0x170000`–`0x180000` | 专门保留 64 KiB bootstrap 内核栈，栈顶由 entry64 设置 |
 | `0x400000`–`0x800000` 虚拟地址 | 每个进程独立的 4 MiB 用户窗口 |
 | ELF 段结束后的页边界–当前 break | 已申请的用户堆，最大末尾 `0x7ef000` |
@@ -111,7 +114,7 @@ ELF staging 页在所有返回路径上释放；装载或线程创建失败时�
 表中每个上界都不包含自身。`entry64.asm` 把内核入口 RSP 设置为物理
 `0x180000` 对应的低恒等映射地址；这根 bootstrap 栈不在低 1 MiB 内。
 物理分配器必须额外保留 `0x170000`–`0x180000`，否则更大的用户堆可能覆盖
-仍在使用的启动调用现场。低 1 MiB 则整体保留给 bootloader、内核、启动卷及设备区间。
+仍在使用的启动调用现场。低 1 MiB 则整体保留给 bootloader、内核文件、启动卷及设备区间；BSS 窗口还要另外保留，避免全局状态被发给用户页。
 
 创建正式用户进程之前，内核预映射完整 4 MiB 内核堆，再克隆页表树。
 后续 syscall 中申请的 fd 缓冲、事务对象和内核栈因此能在所有进程中使用
@@ -168,7 +171,8 @@ demand paging 或交换区。
 
 ## 切换和中断
 
-上下文切换同时保存 RSP、callee-saved 寄存器、CR3 和 RFLAGS。切栈期间
+上下文切换同时保存 RSP、callee-saved 寄存器、CR3、RFLAGS 和每线程
+16 字节对齐的 512 字节 x87/SSE FXSAVE 现场；bootstrap 也有独立副本。切栈期间
 关闭中断，恢复目标上下文后恢复其 IF 状态。否则，用户 int80 进入内核时
 清掉的 IF 可能被 shell 继承，导致等待键盘时再也收不到中断。
 
@@ -190,9 +194,13 @@ PIT IRQ0 完成 tick 记账后、在可能切换线程之前发送 PIC EOI。中
 
 ## 当前边界与验证
 
-PCB 固定 8 个，TCB 固定 16 个，idle 和 shell 也占用槽位。实现面向单 CPU、
+PCB 固定 16 个，TCB 固定 32 个，idle 和 shell 也占用槽位。实现面向单 CPU、
 单个用户主线程的自有程序，没有 fork、exec 替换、signals、用户 mmap、
-动态链接器、POSIX/Linux ABI、FPU/SIMD 上下文、SMP、权限用户模型或 demand paging。
+动态链接器、POSIX/Linux ABI、AVX/XSAVE、SMP、权限用户模型或 demand paging。
+已实现的 x87/SSE 现场由每个 TCB 的 16 字节对齐 512 字节缓冲保存，切换汇编
+在关中断后执行 FXSAVE64/FXRSTOR64，避免 IRQ 观察到只切了一半的线程状态。
+进程退出立即关闭文件、管道及归属的 UDP 句柄；页面和内核栈在 wait/reap 时释放。
+父子描述符及 dup 共享打开对象和文件偏移。详细操作见 [IPC/Shell 教程](./IPC_SHELL_TUTORIAL.md)。
 用户栈已有 guard 与固定 64 KiB 映射；内核栈仍没有普遍的硬件溢出 guard。
 
 `make test-system` 覆盖正式启动、argv、spawn/wait、用户 sleep/抢占、坏指针、
@@ -203,3 +211,8 @@ PCB 固定 8 个，TCB 固定 16 个，idle 和 shell 也占用槽位。实现�
 缩堆清零/边界拒绝、16 KiB 实际局部栈数组、重复运行回收、stack guard/NX、
 编辑器多行/超限处理与冷启动保存；NX 测试以启动日志支持状态为条件。
 完整测试命令和最新结果以仓库 README 及实际测试输出为准。
+
+`make test-performance` 在 QEMU 中检查 x87/SSE 初始化与隔离、8/12 工作者
+结果/页回收、八工作者定时器进度、32 MiB 管道和性能/日志 ABI 的指针边界。
+`make test-log-host` 用 sanitizer 检查日志环与独立计算验证器。测时、p50/p99、
+单核限制及可选 Linux 客体对照见 [性能教程](./PERFORMANCE_TUTORIAL.md)。

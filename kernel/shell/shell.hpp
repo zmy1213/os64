@@ -10,6 +10,7 @@
 #include "storage/block_device.hpp"
 #include "storage/boot_volume.hpp"
 #include "syscall/syscall.hpp"
+#include "shell/parser.hpp"
 
 struct SchedulerState;
 struct Os64Fs;
@@ -17,6 +18,16 @@ struct VfsMount;
 
 constexpr size_t kShellHistoryCapacity = 24;       // 文件系统命令变多后，先记最近 24 条命令，仍然保持固定 ring buffer。
 constexpr size_t kShellHistoryEntryCapacity = 256;
+constexpr size_t kShellJobCapacity = 4;
+struct ShellJob {
+  bool in_use;
+  bool done;
+  uint32_t id;
+  uint32_t pids[kShellMaxPipelineCommands];
+  size_t count;
+  int32_t status;
+  char name[kShellArgumentBytes];
+};
 
 // shell 只要求外界提供一个“输出 1 个字符”的最小能力。
 // 这样它就不用关心自己是在写 VGA、串口，还是两边一起写。
@@ -39,6 +50,9 @@ struct ShellState {
   SchedulerState* scheduler;       // `run <path>` 最后要把新建 user thread 挂到哪一份 scheduler 上。
   SyscallContext* syscall_context; // `pwd/cd/ls/cat/stat` 现在统一走 syscall 上下文，不再私藏一份 cwd。
   ShellOutput output;              // 所有 shell 输出最终都走这个回调。
+  uint32_t last_status;
+  uint32_t next_job_id;
+  ShellJob jobs[kShellJobCapacity];
   uint16_t history_count;          // 当前 ring buffer 里实际存了多少条命令。
   uint16_t history_next_slot;      // 下一条命令应该写进哪个槽位。
   uint64_t history_total_count;    // 自 shell 初始化以来，一共执行过多少条非空命令。

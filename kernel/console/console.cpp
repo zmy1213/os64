@@ -297,6 +297,7 @@ size_t console_read_line_with_history(char* buffer,
   size_t length = 0;
   size_t cursor = 0;
   size_t rendered_length = 0;
+  bool overflow = false;
   ConsoleCursor line_start = current_cursor();
   serial_begin_input_line();
   const size_t available_history_count = history_entry_count(history);
@@ -333,6 +334,19 @@ size_t console_read_line_with_history(char* buffer,
       // 如果 timer 已经把时间片用尽的请求挂起来了，
       // 那就趁这个等待输入的安全点把 CPU 让给别的线程。
       (void)scheduler_yield_if_requested();
+    }
+
+    if (overflow) {
+      // 已经丢掉过字符，就不可能保证 buffer 是用户输入的完整命令。
+      // 连退格和历史键也不再修补这条草稿；消费到回车后明确拒绝整行，
+      // 避免截断后的前缀先写文件，或把剩下半条命令当成下一行执行。
+      if (event.kind == kKeyboardInputCharacter && event.character == '\n') {
+        console_write_char('\n');
+        serial_end_input_line();
+        buffer[0] = '\0';
+        return kConsoleLineTooLong;
+      }
+      continue;
     }
 
     // 下面这一大段就是“最小行编辑器”的状态机：
@@ -471,7 +485,8 @@ size_t console_read_line_with_history(char* buffer,
     }
 
     if (length + 1 >= capacity) {
-      continue;  // 缓冲区满了就先忽略后续字符，保证结尾 '\0' 还有位置可写。
+      overflow = true;
+      continue;
     }
 
     for (size_t i = length; i > cursor; --i) {

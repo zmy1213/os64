@@ -20,8 +20,14 @@ if header[0][:4] != b'\x7fELF' or header[9] != 56:
     raise SystemExit('Invalid ELF64 kernel program headers')
 for index in range(header[10]):
     segment = struct.unpack_from('<IIQQQQQQ', elf, header[5] + index * header[9])
-    if segment[0] == 1 and segment[3] + segment[6] > 0x80000:
-        raise SystemExit('Kernel load segment or BSS overlaps the boot volume at physical 0x80000')
+    if segment[0] != 1:
+        continue
+    address, file_bytes, memory_bytes = segment[3], segment[5], segment[6]
+    if file_bytes:
+        if address < 0x10000 or address + memory_bytes > 0x80000:
+            raise SystemExit('Kernel file segment overlaps the boot volume at physical 0x80000')
+    elif memory_bytes and (address < 0x100000 or address + memory_bytes > 0x160000):
+        raise SystemExit('Kernel zero-fill segment exceeds the reserved BSS window')
 metadata = f'''%define KERNEL_LOAD_ADDR 0x00010000
 %define KERNEL_LOAD_SEGMENT 0x1000
 %define KERNEL_LOAD_OFFSET 0x0000

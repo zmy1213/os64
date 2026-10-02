@@ -4,7 +4,7 @@
 
 目前已连通从启动到日常交互的完整教学流程：64 位内核、可回收物理页和内核堆、用户地址空间与动态堆、时钟抢占与阻塞调度、ELF 用户进程、系统调用、可保存到磁盘的文件系统、键盘/串口终端、Shell 和用户态行式文本编辑器。
 
-目标平台是 QEMU 的单核传统 PC：BIOS、VGA 文本显示、8259 PIC、PIT、PS/2 键盘、16550 串口和 IDE ATA 数据盘。
+目标平台是 QEMU 的单核传统 PC：BIOS、VGA 文本显示、8259 PIC、PIT、PS/2 键盘、16550 串口、IDE ATA 数据盘和 PCI virtio-net 网卡。当前已有阻塞管道、描述符继承、UDP 网络、内核日志与多进程压力测试；性能结果按实测记录。
 
 ## 从零开始读
 
@@ -62,16 +62,49 @@ shutdown
 
 `run /bin/fault` 与 `run /bin/ud2` 用于演示用户页错误和非法指令隔离；退出后 Shell 继续工作。`run /bin/badptr` 演示系统调用拒绝错误指针。`run /bin/fs_test /large.txt` 验证跨直接块和间接块的文件读写。
 
-常用内建命令：
+常用命令（普通工具在用户态运行，系统观察和 cwd 控制由 Shell 提供）：
 
 | 用途 | 命令 |
 | --- | --- |
 | 文件和目录 | `pwd`、`cd`、`ls`、`cat`、`stat`、`touch`、`mkdir`、`write`、`append`、`rm`、`sync` |
-| 程序与进程 | `run`、`ps` |
-| 系统信息 | `mem`、`heap`、`disk`、`ticks`、`uptime`、`irq`、`bootinfo`、`e820`、`cpu` |
+| 程序与进程 | 直接输入 `/bin` 中命令名、`run`、`ps`、`jobs`、`wait` |
+| 系统信息 | `mem`、`heap`、`disk`、`ticks`、`uptime`、`irq`、`bootinfo`、`e820`、`cpu`、`perf`、`dmesg`、`logsave` |
+| 网络 | `net`、`ping IPv4`、用户 `udp_test` |
 | 终端与电源 | `help`、`echo`、`history`、`clear`、`reboot`、`shutdown` |
 
 在 Shell 单独运行 `run /bin/edit /work/lesson.txt`。编辑器运行后，在 `edit> ` 输入 `append hello`、`print`、`save`、`quit`；回到 Shell 后 `cat /work/lesson.txt`。未保存时 `quit` 会提醒，`quit!` 丢弃内存修改。它是逐行操作的文本编辑器，最大文本 32 KiB，不是全屏编辑器。用户程序、内存库和 ABI 见 [user/README.md](user/README.md)。
+
+## 进程协作、网络与性能实验
+
+在 os64 中可直接执行以下例子：
+
+```text
+echo "one two" | cat | wc
+echo hello > /work/output.txt
+echo again >> /work/output.txt
+cat < /work/output.txt | wc
+false && echo skipped || echo recovered
+echo $?
+sleep 100 &
+jobs
+wait
+run /bin/pipe_test
+run /bin/fp_test
+run /bin/bench 8 20000000
+perf
+dmesg
+logsave /work/kernel.log
+net
+ping 10.0.2.2
+```
+
+Shell 在 `/bin` 查找不带斜线的命令；支持引号、转义、`$?`/`$PWD`/固定 `$PATH`、四段管道、输入/输出/错误重定向、条件执行及简单后台任务。每段在独立用户进程中运行，所有管段先启动再等待；文件位置与管道端点经引用计数共享。这里还没有完整 POSIX 脚本语言、环境变量表、通配符、信号或 TTY 作业控制，详见 [进程协作与 Shell 教程](docs/IPC_SHELL_TUTORIAL.md)。
+
+默认启动脚本添加 virtio-net legacy PCI 网卡和 QEMU user 网络，客体地址 `10.0.2.15`，宿主 `127.0.0.1:5555` 转发到客体 UDP 回显端口 9000。真实驱动通过 DMA 描述符队列传递 Ethernet 帧，协议实现 ARP、IPv4、ICMP 和 UDP；用户 UDP 句柄按进程隔离并在退出时关闭。没有网卡仍能启动。TCP、DNS、DHCP、IPv6、Wi-Fi 尚未实现，配置和从零实验见 [网络教程](docs/NETWORK_TUTORIAL.md)。
+
+内核默认 `-O2` 编译，可用 `KERNEL_OPT_LEVEL=0 make build` 保留便于逐句调试的版本。x87、SSE/SSE2 的浮点现场通过 FXSAVE/FXRSTOR 随线程保存；内核仍用通用寄存器编译，尚未开放 AVX/XSAVE。日志是有界 256 条内存环，带序号、时钟、等级和组件，覆盖最旧记录会计数；不在 IRQ 热路径同步写串口或磁盘，`logsave` 才主动保存。
+
+[性能教程](docs/PERFORMANCE_TUTORIAL.md) 说明如何校验计算结果、测多进程与管道、读取调度计数，并在相同 QEMU/单 CPU/128 MiB 条件下对照 Linux。性能指标分别解释吞吐、延迟、尾延迟、丢包和资源回收；任何结果都不能直接外推为“所有工作负载最快”。
 
 ## 镜像和保存
 
@@ -85,6 +118,7 @@ shutdown
 | `boot_volume.bin` | 启动自测使用的固定 RAM 卷模板 |
 | `kernel.elf`、`kernel.bin` | 可调试的内核 ELF 与裸内核映像 |
 | `user/` | 独立编译的用户 ELF 文件 |
+| `build-manifest.json` | 实际优化级、IRQ 构建开关、工具版本、源码与镜像/用户程序摘要，用于复核性能实验 |
 
 首次构建创建 `data.img`。之后的构建和 `make clean` 保留它，clean 也保留 `data.img.backup-*`，已有文件不会被模板覆盖。更新内核不需要重置数据盘；用户工具重新编译后，盘里的旧工具也会保留。
 
@@ -117,18 +151,26 @@ make test
 - 内核页错误和非法指令的诊断路径。
 - 宿主 ASan/UBSan 存储测试，检查空间不足、坏元数据、部分 I/O 失败与回滚。
 - 宿主物理页位图测试，以及 QEMU 大于旧 4 KiB 上限的 ELF、1 MiB 用户堆、缩堆清零、重复回收、64 KiB 栈、guard/NX、编辑器操作和冷启动保存测试。
+- Shell 解析器 sanitizer、真实多进程管道/EOF/EPIPE/共享偏移/小写入原子性/重定向、超长整行拒绝与重复释放。
+- 网络协议恶意帧与校验测试、实际 virtio ARP/ICMP/UDP、宿主回显、用户 UDP 权限/退出清理、丢包与 RTT 记录。
+- 管道、日志/性能、UDP 系统调用的坏指针和整数边界；拒绝后功能仍可用，资源和磁盘保持稳定。
+- 日志环覆盖/边界 sanitizer、x87/SSE 初始值与切换隔离、8/12 工作者计算、8 进程定时进度、32 MiB 管道校验，以及日志保存后的冷启动读取。
 
-系统测试使用自己的临时数据盘，并检查用户 `build/data.img` 的摘要保持不变。日志位于 `build/system-test/`、`build/memory-user-test/` 和 `build/*.serial.log`。各项也可以单独运行：`make test-stage1`、`make test-system`、`make test-storage-host`、`make test-memory-host`、`make test-memory-user`、`make test-page-fault`、`make test-invalid-opcode`。
+系统测试使用自己的临时数据盘，并检查用户 `build/data.img` 的摘要保持不变。日志位于 `build/system-test/`、`build/memory-user-test/`、`build/ipc-test/`、`build/syscall-boundary-test/`、`build/network-test/`、`build/performance-results/` 和 `build/*.serial.log`。单项入口及预期现象见 [主教程第 11 章验证表](docs/BEGINNER_TUTORIAL.md)。
+
+`make benchmark` 是独立的 Linux 对照实验，按 [性能教程](docs/PERFORMANCE_TUTORIAL.md) 准备官方 Linux 资产后执行，不包含在普通回归中。它会逐项检查正确性和计算机器码，再输出原始样本与统计。
 
 ## 当前边界
 
 这是能独立启动、运行用户程序并保存文件的教学系统。物理页管理覆盖 E820 可用区间中的低 256 MiB，通过 `0xffff800000000000` 起的内核直接映射访问，分配页可回收；超过该管理上限的内存暂不使用，默认 QEMU RAM 为 128 MiB。
 
-固定上限仍有：8 个进程、16 条线程、4–8 MiB 用户窗口。用户栈是 64 KiB（`0x7f0000`–`0x800000`），下方有一页不映射的 guard；动态堆由 `brk` 立即分配，不能越过 `0x7ef000`。ELF 文件最多 69,632 字节、8 个程序头、256 张装载页，拒绝 RWX 段和占用栈区域的段。支持 NX 的 CPU 上代码不可写，数据/堆/栈不可执行；启动日志报告 `nx_enabled`。内核堆仍固定在 16–20 MiB，预映射并由进程共享。
+固定上限仍有：16 个进程、32 条线程、4–8 MiB 用户窗口。用户栈是 64 KiB（`0x7f0000`–`0x800000`），下方有一页不映射的 guard；动态堆由 `brk` 立即分配，不能越过 `0x7ef000`。ELF 文件最多 69,632 字节、8 个程序头、256 张装载页，拒绝 RWX 段和占用栈区域的段。支持 NX 的 CPU 上代码不可写，数据/堆/栈不可执行；启动日志报告 `nx_enabled`。内核堆仍固定在 16–20 MiB，预映射并由进程共享。
 
 文件系统数据盘当前有 64 个 inode 槽位；格式最多支持 128 个 inode 槽位，单文件最多 69,632 字节。`rm` 可以删除文件和空目录，仍打开的文件与活动工作目录不能删除。
 
-用户态支持时钟抢占；内核线程在受控的睡眠、阻塞和让出点调度。尚未实现 SMP、多用户权限、`fork`/`exec` 替换、信号、管道、动态链接、demand paging/换页、FPU/SIMD 上下文、网络协议栈、图形桌面、USB/AHCI/NVMe 或 UEFI，不能运行 Linux 二进制，也没有做真实硬件兼容认证。用户栈保护不代表所有内核栈都有 guard；运行时文件事务不提供断电一致性。
+用户态支持时钟抢占；内核线程在受控的睡眠、阻塞和让出点调度。尚未实现 SMP、多用户权限、`fork`/`exec` 替换、信号、动态链接、demand paging/换页、AVX/XSAVE、TCP/IPv6、图形桌面、USB/AHCI/NVMe 或 UEFI，不能运行 Linux 二进制，也没有做真实硬件兼容认证。用户栈保护不代表所有内核栈都有 guard；运行时文件事务不提供断电一致性。
+
+[现代操作系统对照](docs/MODERN_OS_COMPARISON.md) 按已实现/未实现逐项列出差距，并以多进程计算与调度为重点给出后续五阶段验收。单核增加进程数让任务轮流运行，真正的多核并行还需要 AP 启动、每 CPU 状态、跨核同步、IPI 和 TLB shootdown。
 
 ## 阅读实现
 

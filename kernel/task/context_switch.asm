@@ -63,6 +63,10 @@ scheduler_switch_context:
 scheduler_switch_context_and_root:
     pushfq
     cli
+    ; RCX/R8 point at aligned 512-byte x87/SSE states. Both operations happen
+    ; with interrupts disabled; a timer must not observe a half-switched owner.
+    fxsave64 [rcx]
+    fxrstor64 [r8]
     push rbp
     push rbx
     push r12
